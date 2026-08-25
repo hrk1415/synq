@@ -1,0 +1,69 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #0a0a0b;
+  --color-surface: #121214;
+  --color-surface-elevated: #1a1a1e;
+  --color-border: #27272a;
+  --color-accent: #3b82f6;
+  --color-accent-hover: #2563eb;
+  --color-secondary-accent: #8b5cf6;
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-text-primary: #fafafa;
+  --color-text-secondary: #a1a1aa;
+  --color-text-muted: #71717a;
+}
+
+@layer base {
+  * {
+    @apply border-zinc-800;
+  }
+  body {
+    @apply text-zinc-100 antialiased;
+    background:
+      linear-gradient(140deg, rgba(10, 10, 11, 0.32) 0%, rgba(10, 10, 11, 0.12) 40%, rgba(10, 10, 11, 0.15) 60%, rgba(10, 10, 11, 0.48) 100%),
+      linear-gradient(140deg, #5C447A 0%, #9C6A97 22%, #CB8E9F 45%, #F3B294 70%, #FFEAA9 100%);
+    background-attachment: fixed;
+    background-size: cover;
+    min-height: 100vh;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-violet-400;
+  }
+  .synq-dashboard-bg {
+    background:
+      linear-gradient(140deg, rgba(10, 10, 11, 0.18) 0%, rgba(10, 10, 11, 0) 40%, rgba(10, 10, 11, 0) 60%, rgba(10, 10, 11, 0.22) 100%),
+      linear-gradient(140deg, #5C447A 0%, #9C6A97 22%, #CB8E9F 45%, #F3B294 70%, #FFEAA9 100%);
+  }
+  .glow {
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.15), 0 0 40px rgba(59, 130, 246, 0.05);
+  }
+  .glow-sm {
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.1);
+  }
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #27272a;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
+}
+
+::selection {
+  background: rgba(59, 130, 246, 0.3);
+  color: white;
+}
