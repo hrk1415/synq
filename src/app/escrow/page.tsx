@@ -16,7 +16,6 @@ import { shortenAddress, cn, evidenceUrl } from '@/lib/utils';
 import { getTokenInfo, chainKeyForId, isSupportedChain } from '@/lib/contracts/addresses';
 import { useDealContract } from '@/hooks/useDealContract';
 import { useDealStatuses, dealStatusLabel } from '@/hooks/useDealStatuses';
-import { BuyerSellerGuide } from '@/components/shared/BuyerSellerGuide';
 import { ChainGuard } from '@/components/shared/ChainGuard';
 
 const ZERO = '0x0000000000000000000000000000000000000000';
@@ -65,8 +64,33 @@ export default function EscrowPage() {
   const dealAddressList = useMemo(() => dedupedDeals.map((d: any) => String(d.dealAddress)), [dedupedDeals]);
   const { statuses: listStatuses } = useDealStatuses(dealAddressList);
 
+  // sort active deals first
+  const sortedDeals = useMemo(() => {
+    return [...dedupedDeals].sort((a: any, b: any) => {
+      const sA = listStatuses[String(a.dealAddress).toLowerCase()] ?? 0;
+      const sB = listStatuses[String(b.dealAddress).toLowerCase()] ?? 0;
+      return (sA === 1 ? 0 : 1) - (sB === 1 ? 0 : 1);
+    });
+  }, [dedupedDeals, listStatuses]);
+
   const [selectedDeal, setSelectedDeal] = useState(0);
-  const currentDeal = dedupedDeals[selectedDeal];
+
+  // Keep the active deal selected & highlighted: whenever the on-chain statuses
+  // arrive, jump to the first active deal so it stays in view at the top.
+  const activeIndex = useMemo(() => {
+    const idx = sortedDeals.findIndex((d: any) => {
+      const s = listStatuses[String(d.dealAddress).toLowerCase()];
+      return s === 1;
+    });
+    return idx;
+  }, [sortedDeals, listStatuses]);
+
+  useEffect(() => {
+    if (activeIndex >= 0) setSelectedDeal(activeIndex);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+  }, [activeIndex]);
+
+  const currentDeal = sortedDeals[selectedDeal];
   const dealAddr = currentDeal?.dealAddress as `0x${string}` | undefined;
 
   const deal = useDealContract(dealAddr);
@@ -349,8 +373,6 @@ export default function EscrowPage() {
         <h1 className="text-2xl font-bold text-white">Smart Escrow</h1>
         <p className="text-zinc-400 text-sm mt-1">Manage and monitor your on-chain escrowed transactions.</p>
       </div>
-
-      <BuyerSellerGuide />
 
       <ChainGuard what="the escrow contracts are" />
 
@@ -773,7 +795,7 @@ export default function EscrowPage() {
                 <CardDescription>Select a deal to view escrow</CardDescription>
               </CardHeader>
               <CardContent className="space-y-2 max-h-[260px] overflow-y-auto">
-                {dedupedDeals.map((d: any, i: number) => {
+                {sortedDeals.map((d: any, i: number) => {
                   const st = listStatuses[String(d.dealAddress).toLowerCase()];
                   return (
                     <button

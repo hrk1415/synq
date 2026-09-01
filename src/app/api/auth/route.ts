@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
       return Response.json({ error: 'Invalid wallet address' }, { status: 400 });
     }
     if (url.searchParams.get('mode') === 'email_status') {
-      const users = getAll('users');
+      const users = await getAll('users');
       const user = users.find((u: any) => u.walletAddress?.toLowerCase() === wallet.toLowerCase());
       const email = user?.email ? String(user.email) : null;
       return Response.json({
@@ -65,7 +65,7 @@ export async function GET(req: NextRequest) {
   if (!payload) {
     return Response.json({ error: 'Invalid token' }, { status: 401 });
   }
-  const users = getAll('users');
+  const users = await getAll('users');
   const user = users.find((u: any) => u.id === payload.userId);
   if (!user) {
     return Response.json({ error: 'User not found' }, { status: 404 });
@@ -119,10 +119,10 @@ export async function POST(req: NextRequest) {
       }
       usedSignatures.add(sigKey);
 
-      const users = getAll('users');
+      const users = await getAll('users');
       let user = users.find((u: any) => u.walletAddress?.toLowerCase() === walletAddress.toLowerCase());
       if (!user) {
-        user = create('users', {
+        user = await create('users', {
           name: name || `User ${walletAddress.slice(0, 6)}`,
           walletAddress,
           ...newUserFields(),
@@ -144,10 +144,10 @@ export async function POST(req: NextRequest) {
       const expiresAt = new Date(Date.now() + CODE_TTL_MIN * 60_000).toISOString();
 
       // Invalidate any outstanding codes for this address.
-      for (const v of query('verifications', (v: any) => String(v.email).toLowerCase() === normalized)) {
-        remove('verifications', v.id);
+      for (const v of await query('verifications', (v: any) => String(v.email).toLowerCase() === normalized)) {
+        await remove('verifications', v.id);
       }
-      create('verifications', {
+      await create('verifications', {
         email: normalized,
         name: name || undefined,
         // Hashed, so reading data/db.json does not hand over a live sign-in code.
@@ -177,18 +177,18 @@ export async function POST(req: NextRequest) {
         return Response.json({ error: 'email and code are required' }, { status: 400 });
       }
       const normalized = String(email).toLowerCase().trim();
-      const record = query('verifications', (v: any) => String(v.email).toLowerCase() === normalized)
+      const record = (await query('verifications', (v: any) => String(v.email).toLowerCase() === normalized))
         .sort((a: any, b: any) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
 
       if (!record) {
         return Response.json({ error: 'No sign-in code was requested for this address' }, { status: 401 });
       }
       if (Date.parse(record.expiresAt) < Date.now()) {
-        remove('verifications', record.id);
+        await remove('verifications', record.id);
         return Response.json({ error: 'Code expired. Request a new one.' }, { status: 401 });
       }
       if (Number(record.attempts || 0) >= CODE_MAX_ATTEMPTS) {
-        remove('verifications', record.id);
+        await remove('verifications', record.id);
         return Response.json({ error: 'Too many incorrect attempts. Request a new code.' }, { status: 429 });
       }
 
@@ -197,15 +197,15 @@ export async function POST(req: NextRequest) {
       const match = expected.length === given.length
         && crypto.timingSafeEqual(Buffer.from(given, 'hex'), Buffer.from(expected, 'hex'));
       if (!match) {
-        update('verifications', record.id, { attempts: Number(record.attempts || 0) + 1 });
+        await update('verifications', record.id, { attempts: Number(record.attempts || 0) + 1 });
         return Response.json({ error: 'Incorrect code' }, { status: 401 });
       }
 
-      remove('verifications', record.id);
-      const users = getAll('users');
+      await remove('verifications', record.id);
+      const users = await getAll('users');
       let user = users.find((u: any) => String(u.email).toLowerCase() === normalized);
       if (!user) {
-        user = create('users', {
+        user = await create('users', {
           name: record.name || normalized.split('@')[0],
           email: normalized,
           ...newUserFields(),
@@ -226,7 +226,7 @@ export async function POST(req: NextRequest) {
         return Response.json({ error: 'Valid email required' }, { status: 400 });
       }
       const normalized = String(email).toLowerCase().trim();
-      const users = getAll('users');
+      const users = await getAll('users');
       const clash = users.find(
         (u: any) => String(u.email || '').toLowerCase() === normalized
           && u.walletAddress?.toLowerCase() !== String(walletAddress).toLowerCase()
@@ -236,10 +236,10 @@ export async function POST(req: NextRequest) {
       }
       const plainCode = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
       const expiresAt = new Date(Date.now() + CODE_TTL_MIN * 60_000).toISOString();
-      for (const v of query('verifications', (v: any) => String(v.email).toLowerCase() === normalized)) {
-        remove('verifications', v.id);
+      for (const v of await query('verifications', (v: any) => String(v.email).toLowerCase() === normalized)) {
+        await remove('verifications', v.id);
       }
-      create('verifications', {
+      await create('verifications', {
         email: normalized,
         walletAddress: String(walletAddress).toLowerCase(),
         codeHash: crypto.createHash('sha256').update(plainCode).digest('hex'),
@@ -266,18 +266,18 @@ export async function POST(req: NextRequest) {
       }
       const normalized = String(email).toLowerCase().trim();
       const walletLower = String(walletAddress).toLowerCase();
-      const record = query('verifications', (v: any) => String(v.email).toLowerCase() === normalized)
+      const record = (await query('verifications', (v: any) => String(v.email).toLowerCase() === normalized))
         .filter((v: any) => !v.walletAddress || String(v.walletAddress).toLowerCase() === walletLower)
         .sort((a: any, b: any) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
       if (!record) {
         return Response.json({ error: 'No binding code was requested for this address' }, { status: 401 });
       }
       if (Date.parse(record.expiresAt) < Date.now()) {
-        remove('verifications', record.id);
+        await remove('verifications', record.id);
         return Response.json({ error: 'Code expired. Request a new one.' }, { status: 401 });
       }
       if (Number(record.attempts || 0) >= CODE_MAX_ATTEMPTS) {
-        remove('verifications', record.id);
+        await remove('verifications', record.id);
         return Response.json({ error: 'Too many incorrect attempts. Request a new code.' }, { status: 429 });
       }
       const given = crypto.createHash('sha256').update(String(code).trim()).digest('hex');
@@ -285,21 +285,21 @@ export async function POST(req: NextRequest) {
       const match = expected.length === given.length
         && crypto.timingSafeEqual(Buffer.from(given, 'hex'), Buffer.from(expected, 'hex'));
       if (!match) {
-        update('verifications', record.id, { attempts: Number(record.attempts || 0) + 1 });
+        await update('verifications', record.id, { attempts: Number(record.attempts || 0) + 1 });
         return Response.json({ error: 'Incorrect code' }, { status: 401 });
       }
-      remove('verifications', record.id);
-      const users = getAll('users');
+      await remove('verifications', record.id);
+      const users = await getAll('users');
       let user = users.find((u: any) => u.walletAddress?.toLowerCase() === walletLower);
       if (!user) {
-        user = create('users', {
+        user = await create('users', {
           name: `User ${String(walletAddress).slice(0, 6)}`,
           walletAddress: String(walletAddress),
           email: normalized,
           ...newUserFields(),
         });
       } else {
-        user = update('users', user.id, { email: normalized });
+        user = await update('users', user.id, { email: normalized });
       }
       return Response.json({ ok: true, bound: true, email: normalized, user });
     }

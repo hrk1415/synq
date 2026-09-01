@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import nodemailer from 'nodemailer';
+import { getAll } from './db';
 
 const esc = (s: unknown) =>
   String(s ?? '')
@@ -10,8 +11,6 @@ const esc = (s: unknown) =>
     .replace(/"/g, '&quot;');
 
 function fallbackLog(to: string, subject: string, body: string) {
-  const dir = path.join(process.cwd(), 'data');
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   const line = [
     `[${new Date().toISOString()}]`,
     `TO: ${to}`,
@@ -20,7 +19,15 @@ function fallbackLog(to: string, subject: string, body: string) {
     body.replace(/\n/g, ' | '),
     '',
   ].join('\n');
-  fs.appendFileSync(path.join(dir, 'emails.log'), line + '\n');
+  try {
+    const dir = path.join(process.cwd(), 'data');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(path.join(dir, 'emails.log'), line + '\n');
+  } catch (e: any) {
+    // A serverless host's filesystem is read-only, so this log is best-effort.
+    // Never let a failed log write turn into a 500 on the calling request.
+    console.error(`[notify] could not write data/emails.log (${e?.code || e?.message || e}). Message follows:\n${line}`);
+  }
 }
 
 /**
@@ -179,7 +186,7 @@ async function sendMail(to: string, subject: string, html: string, text: string)
 }
 
 export interface NotifyPayload {
-  event: 'deal_confirmed' | 'work_submitted' | 'deal_completed' | 'deal_completed_seller' | 'deal_cancelled' | 'payment_released';
+  event: 'deal_confirmed' | 'work_submitted' | 'deal_completed' | 'deal_completed_seller' | 'deal_cancelled' | 'payment_released' | 'order_inquiry' | 'chat_message';
   recipientEmail?: string;
   recipientName?: string;
   recipientWallet?: string;
@@ -188,12 +195,21 @@ export interface NotifyPayload {
   dealId?: string;
   note?: string;
   evidence?: string;
+  /** Chat sender's display name, for order_inquiry / chat_message. */
+  fromName?: string;
+  /** First line(s) of the message, shown in the email body. */
+  messagePreview?: string;
+  /** Deep link back into the app (e.g. /messages). */
+  link?: string;
 }
 
-export function resolveEmailFromDb(wallet: string, name: string): string {
+export async function resolveEmailFromDb(wallet: string, name: string): Promise<string> {
   try {
-    const db = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'data', 'db.json'), 'utf-8'));
-    const users: any[] = db?.users || [];
+    // Was: read data/db.json directly. That file is empty on a Redis-backed
+    // deploy (users live in Redis), so buyer/seller lookups silently failed and
+    // every notification fell back to NOTIFY_FALLBACK_EMAIL. Go through the db
+    // layer so it works with whichever backend is configured.
+    const users: any[] = await getAll('users');
     const byWallet = users.find(
       (u: any) => u.walletAddress && String(u.walletAddress).toLowerCase() === String(wallet).toLowerCase()
     );
@@ -234,7 +250,7 @@ function layout(title: string, heading: string, rows: [string, string][], footer
 }
 
 export async function notifyDealConfirmedToSeller(p: NotifyPayload) {
-  const email = p.recipientEmail || resolveEmailFromDb(String(p.recipientWallet || ''), String(p.recipientName || ''));
+  const email = p.recipientEmail || await resolveEmailFromDb(String(p.recipientWallet || ''), String(p.recipientName || ''));
   const to = email || fallbackRecipient();
   const title = 'You have a new deal to work on';
   const heading = 'A buyer just confirmed a deal with you. Funds are locked in escrow until you deliver.';
@@ -250,7 +266,7 @@ export async function notifyDealConfirmedToSeller(p: NotifyPayload) {
 }
 
 export async function notifyBuyerWorkSubmitted(p: NotifyPayload) {
-  const email = p.recipientEmail || resolveEmailFromDb(String(p.recipientWallet || ''), String(p.recipientName || ''));
+  const email = p.recipientEmail || await resolveEmailFromDb(String(p.recipientWallet || ''), String(p.recipientName || ''));
   const to = email || fallbackRecipient();
   const title = 'Work submitted on your deal';
   const heading = 'The seller has submitted work with evidence for your review. Approve to release escrow, or request a revision.';
@@ -267,7 +283,7 @@ export async function notifyBuyerWorkSubmitted(p: NotifyPayload) {
 }
 
 export async function notifyBuyerDealCompleted(p: NotifyPayload) {
-  const email = p.recipientEmail || resolveEmailFromDb(String(p.recipientWallet || ''), String(p.recipientName || ''));
+  const email = p.recipientEmail || await resolveEmailFromDb(String(p.recipientWallet || ''), String(p.recipientName || ''));
   const to = email || fallbackRecipient();
   const title = 'Your deal is complete';
   const heading = 'All milestones are approved. The deal is completed and escrow has been distributed.';
@@ -277,7 +293,7 @@ export async function notifyBuyerDealCompleted(p: NotifyPayload) {
     ['Reference', p.dealId || '—'],
   ];
   if (p.note) rows.push(['Note', p.note]);
-  const { html, text } = layout(title, heading, rows, 'Thank you for using Synq. Leave a review for the seller to help build trust on the marketplace.');
+  const { html, text } = layout(title, heading, rows, 'Thank you for using Synq. Leave a review for the seller to help build trust on the Deal Port.');
   const res = await sendMail(to, title, html, text);
   return { ...res, event: p.event, recipientResolved: !!email };
 }
@@ -298,7 +314,7 @@ export async function sendEmailVerificationCode(to: string, code: string, minute
   return sendMail(to, title, html, text);
 }
 export async function notifySellerDealCompleted(p: NotifyPayload) {
-  const email = p.recipientEmail || resolveEmailFromDb(String(p.recipientWallet || ''), String(p.recipientName || ''));
+  const email = p.recipientEmail || await resolveEmailFromDb(String(p.recipientWallet || ''), String(p.recipientName || ''));
   const to = email || fallbackRecipient();
   const title = 'Deal completed - payment received';
   const heading = 'The buyer approved the final milestone. The escrowed payment has been released to your wallet.';
@@ -314,7 +330,7 @@ export async function notifySellerDealCompleted(p: NotifyPayload) {
 }
 
 export async function notifyDealCancelled(p: NotifyPayload) {
-  const email = p.recipientEmail || resolveEmailFromDb(String(p.recipientWallet || ''), String(p.recipientName || ''));
+  const email = p.recipientEmail || await resolveEmailFromDb(String(p.recipientWallet || ''), String(p.recipientName || ''));
   const to = email || fallbackRecipient();
   const title = 'A deal you are part of was cancelled';
   const heading = 'The buyer cancelled this deal. Any escrow balance was refunded to the buyer and the contract accepts no further actions.';
@@ -330,7 +346,7 @@ export async function notifyDealCancelled(p: NotifyPayload) {
 }
 
 export async function notifySellerPaymentReleased(p: NotifyPayload) {
-  const email = p.recipientEmail || resolveEmailFromDb(String(p.recipientWallet || ''), String(p.recipientName || ''));
+  const email = p.recipientEmail || await resolveEmailFromDb(String(p.recipientWallet || ''), String(p.recipientName || ''));
   const to = email || fallbackRecipient();
   const title = 'Payment received';
   const heading = 'The buyer approved your work and the escrowed amount for this milestone has been released to your wallet.';
@@ -341,6 +357,46 @@ export async function notifySellerPaymentReleased(p: NotifyPayload) {
   if (p.note) rows.push(['Milestone', p.note]);
   rows.push(['Reference', p.dealId || '-']);
   const { html, text } = layout(title, heading, rows, 'Funds were transferred on-chain from the deal contract straight to your wallet. Keep delivering to unlock the next milestone.');
+  const res = await sendMail(to, title, html, text);
+  return { ...res, event: p.event, recipientResolved: !!email };
+}
+
+/**
+ * A buyer opened a chat and sent their first order/brief to a seller. Fired
+ * server-side on every new order message so the seller hears about it even when
+ * they are not on the site.
+ */
+export async function notifySellerOrderInquiry(p: NotifyPayload) {
+  const email = p.recipientEmail || await resolveEmailFromDb(String(p.recipientWallet || ''), String(p.recipientName || ''));
+  const to = email || fallbackRecipient();
+  const title = 'New order — a buyer wants to work with you';
+  const heading = `${p.fromName || 'A buyer'} sent you an order on Synq. Open the chat to discuss the details and agree on terms.`;
+  const rows: [string, string][] = [
+    ['From', p.fromName || 'A buyer'],
+  ];
+  if (p.dealTitle) rows.push(['Service', p.dealTitle]);
+  if (p.messagePreview) rows.push(['Message', p.messagePreview]);
+  const link = p.link || '/messages';
+  const { html, text } = layout(title, heading, rows, `Reply from the Messages page: ${link}`);
+  const res = await sendMail(to, title, html, text);
+  return { ...res, event: p.event, recipientResolved: !!email };
+}
+
+/**
+ * A new chat reply. Fired server-side for every message that is not the initial
+ * order (e.g. the buyer gets emailed when the seller replies).
+ */
+export async function notifyNewChatMessage(p: NotifyPayload) {
+  const email = p.recipientEmail || await resolveEmailFromDb(String(p.recipientWallet || ''), String(p.recipientName || ''));
+  const to = email || fallbackRecipient();
+  const title = `New message from ${p.fromName || 'someone'} on Synq`;
+  const heading = `${p.fromName || 'Someone'} sent you a message on Synq.`;
+  const rows: [string, string][] = [
+    ['From', p.fromName || 'A user'],
+  ];
+  if (p.messagePreview) rows.push(['Message', p.messagePreview]);
+  const link = p.link || '/messages';
+  const { html, text } = layout(title, heading, rows, `Open the conversation on the Messages page: ${link}`);
   const res = await sendMail(to, title, html, text);
   return { ...res, event: p.event, recipientResolved: !!email };
 }

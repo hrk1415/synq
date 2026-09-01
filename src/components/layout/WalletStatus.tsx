@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Wallet, ChevronDown, ChevronRight, LogOut, Copy, Check, ExternalLink, X, Loader2, User, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useRegistry } from '@/hooks/useRegistryContract';
+import { Avatar } from '@/components/shared/Avatar';
 
 declare global {
   interface Window {
@@ -81,6 +82,27 @@ export default function WalletStatus() {
       window.removeEventListener('focus', refreshDisplayName);
     };
   }, []);
+
+  // Profile photo for the top bar. Refetched on focus and whenever the display
+  // name is saved (Profile page dispatches synq:displayname on save).
+  const [avatarSrc, setAvatarSrc] = useState<string | null>(null);
+  useEffect(() => {
+    if (!address) { setAvatarSrc(null); return; }
+    let cancelled = false;
+    const load = () =>
+      fetch(`/api/profile?wallet=${address}`)
+        .then((r) => r.json())
+        .then((d) => { if (!cancelled) setAvatarSrc(d?.avatar || null); })
+        .catch(() => { /* keep initials */ });
+    load();
+    window.addEventListener('focus', load);
+    window.addEventListener('synq:displayname', load);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', load);
+      window.removeEventListener('synq:displayname', load);
+    };
+  }, [address]);
 
   // Live uniqueness check — the username becomes the user's on-chain digital identity
   const trimmedName = usernameInput.trim();
@@ -161,13 +183,13 @@ export default function WalletStatus() {
     return (
       <div className="relative">
         <button onClick={() => { refreshDisplayName(); setOpen(!open); }} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-zinc-700 bg-zinc-800/50 text-sm text-zinc-300 hover:bg-zinc-700 hover:text-white transition-all">
+          <Avatar name={displayName || registry.username || ''} src={avatarSrc} size={22} className="rounded-md" />
           <div className="w-2 h-2 rounded-full bg-green-400" />
           <span className="hidden sm:inline">
+            {/* Top-bar shows the display name only — the @username is redundant
+                clutter here (still available in the dropdown's Username card). */}
             {displayName ? (
-              <>
-                <span className="text-blue-400">{displayName}</span>
-                {registry.username && <span className="text-zinc-500"> @{registry.username}</span>}
-              </>
+              <span className="text-blue-400">{displayName}</span>
             ) : (
               registry.username || truncateAddress(address!)
             )}

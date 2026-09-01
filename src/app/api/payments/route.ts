@@ -6,7 +6,7 @@ export async function GET(req: NextRequest) {
   const user = getUserFromRequest(req);
   // Anonymous callers used to receive every user's payment history. Require auth.
   if (!user) return unauthorized();
-  const payments = getAll('payments').filter((p: any) => p.userId === user.userId);
+  const payments = (await getAll('payments')).filter((p: any) => p.userId === user.userId);
   return Response.json({ payments });
 }
 
@@ -16,14 +16,14 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const payment = create('payments', {
+    const payment = await create('payments', {
       ...body,
       userId: user.userId,
       status: 'pending',
       timestamp: new Date().toISOString(),
     });
 
-    create('activities', {
+    await create('activities', {
       type: 'payment_sent',
       title: 'Payment Sent',
       description: `Payment of $${body.amount} sent to ${body.recipient}`,

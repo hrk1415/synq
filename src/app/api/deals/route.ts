@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
   // Was: unauthenticated callers got getAll('deals') — every user's deals — while
   // authenticated ones got only their own. Anonymous must never see more.
   if (!user) return unauthorized();
-  const deals = getAll('deals').filter((d: any) => d.userId === user.userId);
+  const deals = (await getAll('deals')).filter((d: any) => d.userId === user.userId);
   return Response.json({ deals });
 }
 
@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const deal = create('deals', {
+    const deal = await create('deals', {
       ...body,
       userId: user.userId,
       status: body.status || 'draft',
@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
       }).catch(() => {});
     }
 
-    create('activities', {
+    await create('activities', {
       type: 'deal_created',
       title: 'Deal Created',
       description: `${deal.title} deal was created`,

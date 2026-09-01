@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Settings, User, Bell, Wallet, Globe, ChevronRight, Check, Copy, ExternalLink, Power, Loader2, Mail, AlertTriangle } from 'lucide-react';
+import { Settings, User, Bell, Wallet, Globe, ChevronRight, Check, Copy, ExternalLink, Power, Loader2, Mail, AlertTriangle, Camera, Trash2, Briefcase, Plus, Pencil } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,17 @@ import { Separator } from '@/components/ui/separator';
 import { useAccount, useChainId, useBalance, useDisconnect, useSwitchChain } from 'wagmi';
 import { shortenAddress } from '@/lib/utils';
 import { getExplorerUrl } from '@/lib/chain';
+import { Avatar } from '@/components/shared/Avatar';
+import ProfileEmail from '@/components/shared/ProfileEmail';
+import { resizeImageToDataUrl } from '@/lib/image';
+import { formatUnits } from 'viem';
+import { useDirectoryContract } from '@/hooks/useDirectoryContract';
+import { isSupportedChain, chainLabel, DEFAULT_CHAIN_ID } from '@/lib/contracts/addresses';
+
+// On-chain freelancer directory profile — moved here from the Deal Port page so
+// a user manages their public listing from their own Profile.
+const SELLER_CATEGORIES = ['Web Development', 'Design', 'Smart Contract', 'Content'];
+const EMPTY_REG = { name: '', category: 'Web Development', skills: '', rate: '', bio: '' };
 
 type ToggleKey = 'dealUpdates' | 'payments' | 'agentActivity';
 
@@ -60,18 +71,139 @@ export default function SettingsPage() {
   const [username, setUsername] = useLocal<string>('settings:username', '');
   const [nameDraft, setNameDraft] = useState(username);
   const [nameStatus, setNameStatus] = useState<'idle' | 'saved' | 'error'>('idle');
+  const [savingName, setSavingName] = useState(false);
 
-  const saveDisplayName = () => {
+  // Profile photo lives on the DB user record (base64), so it shows in chat and
+  // the top bar across devices — localStorage alone couldn't do that.
+  const [avatar, setAvatar] = useState<string | null>(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoError, setPhotoError] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  // Persist to the wallet-keyed profile. No-op (localStorage only) when the
+  // wallet isn't connected — there's nothing to key the record on.
+  const persistProfile = useCallback(
+    async (patch: { name?: string; avatar?: string }): Promise<boolean> => {
+      if (!address) return false;
+      try {
+        const res = await fetch('/api/profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ walletAddress: address, ...patch }),
+        });
+        return res.ok;
+      } catch {
+        return false;
+      }
+    },
+    [address],
+  );
+
+  // Prefill name + photo from the DB when the connected wallet changes.
+  useEffect(() => {
+    if (!address) { setAvatar(null); return; }
+    let cancelled = false;
+    fetch(`/api/profile?wallet=${address}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled) return;
+        if (d?.avatar) setAvatar(d.avatar);
+        // Don't clobber a name the user is mid-editing; only seed an empty field.
+        if (d?.name && !username) { setNameDraft(d.name); setUsername(d.name); }
+      })
+      .catch(() => { /* offline / not found — keep initials */ });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [address]);
+
+  const saveDisplayName = async () => {
     try {
       window.localStorage.setItem('settings:username', JSON.stringify(nameDraft));
       setUsername(nameDraft);
       window.dispatchEvent(new CustomEvent('synq:displayname', { detail: nameDraft }));
+      setSavingName(true);
+      // Mirror to the DB so chat/top-bar see it. Ignore failure for the local
+      // save — the name is already stored in this browser.
+      await persistProfile({ name: nameDraft, ...(avatar ? { avatar } : {}) });
+      setSavingName(false);
       setNameStatus('saved');
       window.setTimeout(() => setNameStatus('idle'), 2000);
     } catch {
+      setSavingName(false);
       setNameStatus('error');
     }
   };
+
+  const onPickPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (fileRef.current) fileRef.current.value = ''; // allow re-picking the same file
+    if (!file) return;
+    setPhotoError('');
+    if (!address) { setPhotoError('Connect your wallet to save a photo.'); return; }
+    setPhotoBusy(true);
+    try {
+      const dataUrl = await resizeImageToDataUrl(file, 256, 0.8);
+      setAvatar(dataUrl);
+      const ok = await persistProfile({ avatar: dataUrl });
+      if (!ok) setPhotoError('Could not save the photo. Try again.');
+    } catch (err: any) {
+      setPhotoError(err?.message || 'Could not process that image.');
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
+  const removePhoto = async () => {
+    setPhotoError('');
+    setAvatar(null);
+    await persistProfile({ avatar: '' });
+  };
+
+  // ---- On-chain freelancer profile (the Deal Port listing) ----
+  const directory = useDirectoryContract(address);
+  const [regForm, setRegForm] = useState(EMPTY_REG);
+  const [regError, setRegError] = useState('');
+  const regPrefilled = useRef(false);
+
+  // Reset the prefill flag whenever the connected wallet changes.
+  useEffect(() => { regPrefilled.current = false; }, [address]);
+
+  // Seed the form from the existing on-chain profile the first time the section
+  // is opened (or when the profile finishes loading while it is open).
+  useEffect(() => {
+    if (openSection !== 'Register to Synq Market' || regPrefilled.current) return;
+    if (directory.myRegistered && directory.myProfile) {
+      let rateVal: string;
+      try { rateVal = String(Number(formatUnits(BigInt(directory.myProfile.rate || 0), 18))); } catch { rateVal = ''; }
+      setRegForm({
+        name: String(directory.myProfile.name || ''),
+        category: String(directory.myProfile.category || 'Web Development'),
+        skills: (directory.myProfile.skills || []).join(', '),
+        rate: rateVal,
+        bio: String(directory.myProfile.bio || ''),
+      });
+      regPrefilled.current = true;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openSection, directory.myRegistered, directory.myProfile]);
+
+  const submitRegProfile = () => {
+    if (!address) { setRegError('Connect your wallet first'); return; }
+    if (regForm.name.trim().length < 2) { setRegError('Enter your name (2-40 chars)'); return; }
+    const rate = Number(regForm.rate);
+    if (!rate || rate <= 0 || !isFinite(rate)) { setRegError('Enter a valid rate'); return; }
+    const skills = regForm.skills.split(',').map((s) => s.trim()).filter(Boolean).slice(0, 8);
+    if (skills.length === 0) { setRegError('Add at least one skill'); return; }
+    setRegError('');
+    try {
+      const args = [regForm.name.trim(), regForm.category, skills, BigInt(Math.round(rate * 1e18)), regForm.bio.trim()] as const;
+      if (directory.myRegistered) directory.updateProfile(...args);
+      else directory.registerProfile(...args);
+    } catch (e: any) {
+      setRegError(`Failed: ${String(e?.message || e).slice(0, 120)}`);
+    }
+  };
+
   const [toggles, setToggles] = useLocal<Record<ToggleKey, boolean>>('settings:toggles', {
     dealUpdates: true, payments: true, agentActivity: false,
   });
@@ -112,6 +244,7 @@ export default function SettingsPage() {
 
   const sections = [
     { icon: User, label: 'Profile', desc: 'Manage your personal information' },
+    { icon: Briefcase, label: 'Register to Synq Market', desc: 'Your public listing on the Deal Port' },
     { icon: Bell, label: 'Notifications', desc: 'Configure alert preferences' },
     { icon: Wallet, label: 'Wallet', desc: 'Connected wallets and addresses' },
     { icon: Globe, label: 'Network', desc: 'Preferred blockchain networks' },
@@ -120,11 +253,13 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-white">Settings</h1>
-        <p className="text-zinc-400 text-sm mt-1">Manage your account and preferences.</p>
+        <h1 className="text-2xl font-bold text-white">Profile</h1>
+        <p className="text-zinc-400 text-sm mt-1">Manage your profile, photo, and preferences.</p>
       </div>
 
-      <div className="grid md:grid-cols-2 gap-4">
+      {/* Single column: expanding one section stacks in place instead of
+          stretching an empty sibling card beside it in a 2-col grid. */}
+      <div className="space-y-4 max-w-3xl">
         {sections.map((section) => (
           <Card
             key={section.label}
@@ -149,6 +284,43 @@ export default function SettingsPage() {
                   {section.label === 'Profile' && (
                     <>
                       <div>
+                        <label className="text-xs text-zinc-500 block mb-2">Profile Photo</label>
+                        <div className="flex items-center gap-4">
+                          <Avatar name={nameDraft || username} src={avatar} size={64} />
+                          <div className="space-y-2">
+                            <input
+                              ref={fileRef}
+                              type="file"
+                              accept="image/*"
+                              onChange={onPickPhoto}
+                              className="hidden"
+                            />
+                            <div className="flex items-center gap-2">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={photoBusy}
+                                onClick={() => fileRef.current?.click()}
+                                className="gap-1.5"
+                              >
+                                {photoBusy ? <Loader2 size={14} className="animate-spin" /> : <Camera size={14} />}
+                                {avatar ? 'Change photo' : 'Upload photo'}
+                              </Button>
+                              {avatar && (
+                                <Button type="button" size="sm" variant="ghost" onClick={removePhoto} className="gap-1.5 text-red-400 hover:text-red-300">
+                                  <Trash2 size={14} /> Remove
+                                </Button>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-zinc-600">JPG or PNG. Resized to 256px and stored on your profile.</p>
+                          </div>
+                        </div>
+                        {photoError && <p className="text-xs text-red-400 mt-1">{photoError}</p>}
+                        {!address && <p className="text-[11px] text-zinc-600 mt-1">Connect your wallet to save a photo.</p>}
+                      </div>
+                      <Separator className="bg-zinc-800/60" />
+                      <div>
                         <label className="text-xs text-zinc-500 block mb-1">Display Name</label>
                         <div className="flex items-center gap-2">
                           <Input
@@ -158,7 +330,10 @@ export default function SettingsPage() {
                             placeholder="Enter your display name"
                             className="max-w-xs"
                           />
-                          <Button type="button" size="sm" onClick={saveDisplayName} className="shrink-0">Save</Button>
+                          <Button type="button" size="sm" onClick={saveDisplayName} disabled={savingName} className="shrink-0 gap-1.5">
+                            {savingName && <Loader2 size={14} className="animate-spin" />}
+                            Save
+                          </Button>
                         </div>
                         {nameStatus === 'saved' && (
                           <p className="text-xs text-emerald-400 mt-1 flex items-center gap-1">
@@ -170,6 +345,7 @@ export default function SettingsPage() {
                           <p className="text-xs text-red-400 mt-1">Could not save — browser storage is blocked.</p>
                         )}
                       </div>
+                      <ProfileEmail address={address} />
                       <div>
                         <p className="text-xs text-zinc-500 mb-1">Wallet Address</p>
                         <div className="flex items-center gap-2">
@@ -187,6 +363,66 @@ export default function SettingsPage() {
                         <p className="text-xs text-zinc-500">Currently saved as @{username}</p>
                       )}
                       <p className="text-xs text-zinc-600">Shown in the top bar next to your on-chain @username.</p>
+                    </>
+                  )}
+
+                  {section.label === 'Register to Synq Market' && (
+                    <>
+                      <p className="text-xs text-zinc-500">
+                        This is your public listing on the Deal Port.{' '}
+                        {directory.myRegistered ? 'Edit it below and save the changes on-chain.' : 'Register once to start receiving orders from buyers.'}
+                      </p>
+                      <div>
+                        <label className="text-xs text-zinc-500 mb-1 block">Name</label>
+                        <Input value={regForm.name} onChange={(e) => setRegForm({ ...regForm, name: e.target.value })} placeholder="Your name or studio" maxLength={40} />
+                      </div>
+                      <div>
+                        <label className="text-xs text-zinc-500 mb-1 block">Category</label>
+                        <select
+                          value={regForm.category}
+                          onChange={(e) => setRegForm({ ...regForm, category: e.target.value })}
+                          className="w-full h-11 rounded-xl border border-zinc-700 bg-zinc-800/50 px-4 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
+                        >
+                          {SELLER_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-xs text-zinc-500 mb-1 block">Skills (comma separated, max 8)</label>
+                        <Input value={regForm.skills} onChange={(e) => setRegForm({ ...regForm, skills: e.target.value })} placeholder="React, Next.js, Tailwind" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-zinc-500 mb-1 block">Rate (ETH per project)</label>
+                        <Input type="number" value={regForm.rate} onChange={(e) => setRegForm({ ...regForm, rate: e.target.value })} placeholder="10" min="1" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-zinc-500 mb-1 block">Bio (max 300 chars)</label>
+                        <textarea
+                          value={regForm.bio}
+                          onChange={(e) => setRegForm({ ...regForm, bio: e.target.value })}
+                          placeholder="Describe what you offer..."
+                          maxLength={300}
+                          className="w-full h-24 rounded-lg border border-zinc-700 bg-zinc-800/50 px-4 py-3 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 resize-none"
+                        />
+                      </div>
+                      {regError && <p className="text-xs text-red-400">{regError}</p>}
+                      {directory.writeError && (
+                        <p className="text-xs text-red-400">
+                          Transaction failed: {String((directory.writeError as any).shortMessage || (directory.writeError as any).message || directory.writeError).slice(0, 120)}
+                        </p>
+                      )}
+                      {directory.txReceipt.isSuccess && (
+                        <div className="p-2 rounded-lg bg-green-600/10 border border-green-500/20 text-xs text-green-400 flex items-center gap-1.5">
+                          <Check size={12} /> Profile saved on-chain!
+                        </div>
+                      )}
+                      <Button onClick={submitRegProfile} disabled={directory.isPending || !isConnected || !isSupportedChain(chainId)} className="gap-2">
+                        {directory.isPending ? <Loader2 size={16} className="animate-spin" /> : directory.myRegistered ? <Pencil size={16} /> : <Plus size={16} />}
+                        {directory.isPending ? 'Signing...' : directory.myRegistered ? 'Update On-Chain Profile' : 'Register On-Chain Profile'}
+                      </Button>
+                      {!isConnected && <p className="text-[11px] text-zinc-600">Connect your wallet to register your on-chain profile.</p>}
+                      {isConnected && !isSupportedChain(chainId) && (
+                        <p className="text-xs text-amber-400">Switch your wallet to {chainLabel(DEFAULT_CHAIN_ID)} to register.</p>
+                      )}
                     </>
                   )}
 
@@ -271,7 +507,7 @@ export default function SettingsPage() {
                       <p className="text-xs text-zinc-500 mb-2">Switch your wallet to a supported chain. Synq works best on Sepolia testnet.</p>
                       <div className="flex flex-wrap gap-2">
                         {[
-                          { id: 11155111, name: 'Sepolia (Recommended)', note: 'Deals + marketplace live' },
+                          { id: 11155111, name: 'Sepolia (Recommended)', note: 'Deals + Deal Port live' },
                           { id: 1, name: 'Ethereum Mainnet', note: 'Deploy at your own risk' },
                           { id: 8453, name: 'Base', note: 'Low fees, L2' },
                         ].map((net) => (

@@ -150,7 +150,7 @@ export async function findSellers(prompt: string, chainId: number = 11155111): P
 
     const sellers = (profiles || []).filter((p) => p && p.wallet && String(p.wallet) !== '0x0000000000000000000000000000000000000000');
     if (sellers.length === 0) {
-      return { type: 'sellers', sellers: [], message: 'No on-chain profiles registered in the marketplace yet. Ask sellers to register on the Marketplace page first.' };
+      return { type: 'sellers', sellers: [], message: 'No on-chain profiles registered in the Deal Port yet. Ask sellers to register on the Deal Port page first.' };
     }
 
     const terms = tokenizeSellerQuery(prompt);
@@ -186,14 +186,14 @@ export async function findSellers(prompt: string, chainId: number = 11155111): P
       type: 'sellers',
       sellers: withScore,
       message: withScore.length > 0
-        ? `Found ${withScore.length} matching ${withScore.length === 1 ? 'seller' : 'sellers'} in Synq's marketplace based on your request. Select one to create a deal.`
+        ? `Found ${withScore.length} matching ${withScore.length === 1 ? 'seller' : 'sellers'} in Synq's Deal Port based on your request. Select one to create a deal.`
         : 'I could not find matching sellers for that request. Try describing a skill or service (e.g. "React developer" or "smart contract audit").',
     };
   } catch (e: any) {
     try {
-      return { type: 'sellers', sellers: [], message: 'Marketplace lookup failed. Please try again.', error: String(e?.message || e) };
+      return { type: 'sellers', sellers: [], message: 'Deal Port lookup failed. Please try again.', error: String(e?.message || e) };
     } catch {
-      return { type: 'sellers', sellers: [], message: 'Marketplace lookup failed. Please try again.' };
+      return { type: 'sellers', sellers: [], message: 'Deal Port lookup failed. Please try again.' };
     }
   }
 }

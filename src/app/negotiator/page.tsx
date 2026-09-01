@@ -231,7 +231,7 @@ export default function NegotiatorPage() {
                       {msg.sellers && (
                         <div className="mt-4 space-y-3">
                           <Separator className="bg-zinc-700/50" />
-                          <p className="text-xs text-zinc-400">Marketplace matches:</p>
+                          <p className="text-xs text-zinc-400">Deal Port matches:</p>
                           <div className="grid gap-3">
                             {msg.sellers.map((s, si) => (
                               <motion.div
@@ -262,7 +262,7 @@ export default function NegotiatorPage() {
                                   </div>
                                 </div>
                                 {s.bio && <p className="text-xs text-zinc-400 line-clamp-2 mb-2">{s.bio}</p>}
-                                <Button size="sm" className="gap-1" onClick={() => router.push(`/deal/new?seller=${s.wallet}&type=${encodeURIComponent(s.category)}`)}>
+                                <Button size="sm" className="gap-1" onClick={() => router.push(`/chatpay?seller=${s.wallet}&type=${encodeURIComponent(s.category)}`)}>
                                   <ArrowRight size={14} /> Order {s.name}
                                 </Button>
                               </motion.div>

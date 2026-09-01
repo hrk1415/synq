@@ -9,7 +9,7 @@ const norm = (s: unknown) => String(s || '').toLowerCase().trim();
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const deal = getById('deals', id);
+  const deal = await getById('deals', id);
   if (!deal) return Response.json({ error: 'Deal not found' }, { status: 404 });
   return Response.json({ deal });
 }
@@ -21,8 +21,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   try {
     const body = await req.json();
-    const prev = getById('deals', id);
-    const deal = update('deals', id, { ...body, updatedAt: new Date().toISOString() });
+    const prev = await getById('deals', id);
+    const deal = await update('deals', id, { ...body, updatedAt: new Date().toISOString() });
     if (!deal) return Response.json({ error: 'Deal not found' }, { status: 404 });
 
     const prevStatus = norm(prev?.status);

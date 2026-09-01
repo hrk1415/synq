@@ -8,7 +8,7 @@ export async function GET(req: NextRequest) {
   if (!dealAddress || milestoneId === null) {
     return Response.json({ verification: null });
   }
-  const rows = query('verifications', (v: any) =>
+  const rows = await query('verifications', (v: any) =>
     String(v.dealAddress || '').toLowerCase() === dealAddress && String(v.milestoneId) === String(milestoneId)
   );
   return Response.json({ verification: rows[rows.length - 1] || null });
@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
       evidenceHash: String(evidenceHash),
     });
 
-    const record = create('verifications', {
+    const record = await create('verifications', {
       dealAddress,
       milestoneId: Number(milestoneId),
       completionPct: result.completionPct,

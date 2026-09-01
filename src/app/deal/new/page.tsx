@@ -3,7 +3,7 @@
 import { useState, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, ArrowRight, Check, Sparkles, Bot, Loader2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Sparkles, Bot, Loader2, MessageSquare } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -150,7 +150,7 @@ function NewDealForm() {
     if (sellers.length === 0) {
       setMatches([]);
       setMatchState('done');
-      setMatchError('No sellers are registered in the marketplace yet. Register a seller profile on the Marketplace page first.');
+      setMatchError('No sellers are registered in the Deal Port yet. Register a seller profile on the Deal Port page first.');
       return;
     }
     const scored = sellers
@@ -229,7 +229,7 @@ function NewDealForm() {
             <p className="text-sm text-zinc-400 mb-4">The AI agent will find the best seller for your deal. No address needed.</p>
             {searchParams.get('seller') && form.counterparty === searchParams.get('seller') && (
               <div className="p-2 rounded-lg bg-emerald-600/10 border border-emerald-500/20 text-xs text-emerald-400">
-                Seller selected from the marketplace — this is the freelancer's wallet address.
+                Seller selected from the Deal Port — this is the freelancer's wallet address.
               </div>
             )}
             {form.counterparty.length === 42 && !matches.some((m: any) => String(m.p.wallet) === form.counterparty) && (
@@ -565,7 +565,22 @@ function NewDealForm() {
               <p className="text-zinc-400 text-sm mb-4">
                 Your deal has been created on-chain. Transaction: {shortenAddress(factory.txReceipt.data?.transactionHash || '')}
               </p>
-              <Button onClick={() => router.push('/deals')}>View My Deals</Button>
+              <div className="flex items-center justify-center gap-3">
+                <Button onClick={() => router.push('/deals')}>View My Deals</Button>
+                {form.counterparty && (
+                  <Button
+                    variant="outline"
+                    className="gap-1.5"
+                    onClick={() => {
+                      const q = new URLSearchParams({ to: form.counterparty });
+                      if (form.type) q.set('type', form.type);
+                      router.push(`/messages?${q.toString()}`);
+                    }}
+                  >
+                    <MessageSquare size={16} /> Message Seller
+                  </Button>
+                )}
+              </div>
             </motion.div>
           ) : (
             <AnimatePresence mode="wait">

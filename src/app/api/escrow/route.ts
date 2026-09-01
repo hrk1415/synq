@@ -6,7 +6,7 @@ export async function GET(req: NextRequest) {
   const user = getUserFromRequest(req);
   // Anonymous callers used to receive every user's escrows. Require auth.
   if (!user) return unauthorized();
-  const escrows = getAll('escrows').filter((e: any) => e.userId === user.userId);
+  const escrows = (await getAll('escrows')).filter((e: any) => e.userId === user.userId);
   return Response.json({ escrows });
 }
 
@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const escrow = create('escrows', {
+    const escrow = await create('escrows', {
       ...body,
       userId: user.userId,
       createdAt: new Date().toISOString(),

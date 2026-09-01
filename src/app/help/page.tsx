@@ -21,7 +21,7 @@ export default function HelpPage() {
         <p className="text-zinc-400 text-sm mt-1">Learn how to use Synq effectively.</p>
       </div>
 
-      <BuyerSellerGuide />
+      <BuyerSellerGuide showFaq />
 
       <Card>
         <CardHeader>
@@ -32,7 +32,7 @@ export default function HelpPage() {
           {faqs.map((faq, i) => (
             <div key={i} className="p-4 rounded-lg bg-zinc-800/30 border border-zinc-800/50">
               <h3 className="text-sm font-medium text-white mb-1">{faq.q}</h3>
-              <p className="text-sm text-zinc-400">{faq.a}</p>
+              <p className="text-sm text-zinc-300">{faq.a}</p>
             </div>
           ))}
         </CardContent>
