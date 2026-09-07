@@ -455,4 +455,14 @@ export default function NegotiatorPage() {
             </CardHeader>
             <CardContent>
               {address ? (
-                <div className="text-sm text-zinc-300 font-mono tr
+                <div className="text-sm text-zinc-300 font-mono truncate">{address}</div>
+              ) : (
+                <p className="text-sm text-zinc-500">Connect your wallet to create deals</p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
