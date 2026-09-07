@@ -2,8 +2,8 @@
   "_format": "hh-sol-cache-2",
   "files": {
     "G:\\RIALO\\nexotiq\\contracts\\NexotiqDeal.sol": {
-      "lastModificationDate": 1787492042856,
-      "contentHash": "870e9d6d98920de60f710c7421d242a3",
+      "lastModificationDate": 1788362084220,
+      "contentHash": "0c90c713c646bd6316ed2f60376c1785",
       "sourceName": "contracts/NexotiqDeal.sol",
       "solcConfig": {
         "version": "0.8.28",

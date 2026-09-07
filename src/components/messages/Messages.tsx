@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAccount } from 'wagmi';
 import { motion } from 'framer-motion';
-import { Send, Loader2, ShieldCheck, MessageSquare, Package, Store } from 'lucide-react';
+import { Send, Loader2, ShieldCheck, MessageSquare, Package, Store, Calendar, DollarSign, SplitSquareHorizontal, CheckCircle, Clock } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -18,7 +18,17 @@ interface Conversation {
   buyerName?: string;
   sellerName?: string;
   subject?: string;
-  orderMeta?: { type?: string };
+  dealAddress?: string;
+  orderMeta?: {
+    type?: string;
+    requirements?: string;
+    budget?: string;
+    deadline?: string;
+    paymentSplit?: '50/50' | 'full';
+    confirmed?: boolean;
+    confirmedAt?: string;
+    confirmedBy?: string;
+  };
   lastMessageAt?: string;
   lastMessagePreview?: string;
   lastMessageFrom?: string;
@@ -33,8 +43,15 @@ interface Message {
   toWallet: string;
   fromName?: string;
   body: string;
-  kind?: 'text' | 'order';
-  orderMeta?: { type?: string };
+  kind?: 'text' | 'order' | 'confirm';
+  orderMeta?: {
+    type?: string;
+    requirements?: string;
+    budget?: string;
+    deadline?: string;
+    paymentSplit?: '50/50' | 'full';
+    confirmed?: boolean;
+  };
   createdAt: string;
   readAt?: string;
 }
@@ -49,9 +66,11 @@ interface DraftTarget {
 const lc = (w?: string) => String(w || '').toLowerCase();
 const isWallet = (w?: string | null): w is string => !!w && /^0x[0-9a-fA-F]{40}$/.test(w);
 
-function orderTemplate(type?: string | null) {
-  const svc = type ? `${type} ` : '';
-  return `Hi! I'd like to order your ${svc}service.\n\nMy requirements / conditions:\n- \n\nBudget: \nDeadline: `;
+interface OrderFormState {
+  requirements: string;
+  budget: string;
+  deadline: string;
+  paymentSplit: '50/50' | 'full';
 }
 
 export default function Messages() {
@@ -64,6 +83,7 @@ export default function Messages() {
   const nameParam = params.get('name');
   const typeParam = params.get('type');
   const intentParam = params.get('intent');
+  const dealParam = params.get('deal');
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [listLoaded, setListLoaded] = useState(false);
@@ -74,6 +94,10 @@ export default function Messages() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [otherAvatar, setOtherAvatar] = useState<string | null>(null);
+  const [orderForm, setOrderForm] = useState<OrderFormState>({ requirements: '', budget: '', deadline: '', paymentSplit: 'full' });
+  const [confirming, setConfirming] = useState(false);
+  const [quickDeadline, setQuickDeadline] = useState('');
+  const [quickSending, setQuickSending] = useState(false);
 
   const appliedParam = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -143,7 +167,10 @@ export default function Messages() {
         orderIntent: intentParam === 'order',
       });
       setActiveId(null);
-      if (intentParam === 'order') setInput(orderTemplate(typeParam));
+      if (intentParam === 'order') {
+        setOrderForm({ requirements: '', budget: '', deadline: '', paymentSplit: 'full' });
+        setInput('');
+      }
     }
   }, [me, listLoaded, conversations, toParam, nameParam, typeParam, intentParam]);
 
@@ -164,6 +191,14 @@ export default function Messages() {
   }, [activeConversation, draft, me]);
 
   const subject = activeConversation?.subject || draft?.subject || '';
+
+  // Order state for the active thread: is the current user the seller, and has
+  // the order been confirmed yet?
+  const activeOrderMeta = activeConversation?.orderMeta;
+  const isSellerOfOrder = !!activeConversation && !!me && lc(String(activeConversation.sellerWallet)) === me;
+  const isBuyerOfOrder = !!activeConversation && !!me && lc(String(activeConversation.buyerWallet)) === me;
+  const orderConfirmed = !!activeOrderMeta?.confirmed;
+  const hasOrder = !!activeConversation && (!!activeOrderMeta || messages.some((m) => m.kind === 'order' || m.kind === 'confirm'));
 
   // Fetch the other party's photo for the header.
   useEffect(() => {
@@ -194,11 +229,40 @@ export default function Messages() {
 
   const send = async () => {
     const text = input.trim();
-    if (!text || !me || sending) return;
+    if (!me || sending) return;
     if (!isWallet(other?.wallet)) { setError('No recipient selected.'); return; }
     const firstOrder = !!draft?.orderIntent && !activeId && messages.length === 0;
     setSending(true);
     setError('');
+
+    // Build the message body and orderMeta from the structured form.
+    let body = text;
+    let meta: Record<string, any> | undefined;
+    if (firstOrder) {
+      const reqs = orderForm.requirements.trim();
+      const budget = orderForm.budget.trim();
+      const deadline = orderForm.deadline.trim();
+      if (!reqs) {
+        setError('Write your basic requirement to place the order.');
+        setSending(false);
+        return;
+      }
+      meta = {
+        type: draft?.subject || undefined,
+        requirements: reqs,
+        budget: budget || undefined,
+        deadline: deadline || undefined,
+        paymentSplit: orderForm.paymentSplit,
+      };
+      body = [
+        'Hi! I\'d like to order your service.',
+        '',
+        `Requirements:\n${reqs}`,
+        budget ? `Budget: ${budget}` : '',
+        deadline ? `Deadline: ${deadline}` : '',
+        `Payment: ${orderForm.paymentSplit === '50/50' ? '50% upfront, 50% on approval' : 'Full amount in escrow'}`,
+      ].filter(Boolean).join('\n');
+    }
     try {
       const res = await fetch('/api/messages', {
         method: 'POST',
@@ -206,16 +270,18 @@ export default function Messages() {
         body: JSON.stringify({
           fromWallet: me,
           toWallet: other!.wallet,
-          body: text,
+          body,
           kind: firstOrder ? 'order' : 'text',
-          orderMeta: firstOrder ? { type: draft?.subject } : undefined,
+          orderMeta: firstOrder ? meta : undefined,
           fromName: myName || undefined,
+          dealAddress: firstOrder ? dealParam || undefined : undefined,
         }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data?.error || 'Could not send message.'); return; }
       setInput('');
       setDraft(null);
+      setOrderForm({ requirements: '', budget: '', deadline: '', paymentSplit: 'full' });
       setActiveId(data.conversation.id);
       await Promise.all([loadThread(data.conversation.id), loadList()]);
     } catch {
@@ -225,10 +291,62 @@ export default function Messages() {
     }
   };
 
+  const confirmOrder = async () => {
+    if (!me || !isWallet(other?.wallet) || !activeId || confirming) return;
+    setConfirming(true);
+    setError('');
+    try {
+      const res = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversationId: activeId, sellerWallet: me }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data?.error || 'Could not confirm order.'); return; }
+      await Promise.all([loadThread(activeId), loadList()]);
+    } catch {
+      setError('Could not confirm order. Check your connection and try again.');
+    } finally {
+      setConfirming(false);
+    }
+  };
+
+  const sendQuick = async (msg: string) => {
+    if (!me || !isWallet(other?.wallet) || !activeId || quickSending || !msg.trim()) return;
+    setQuickSending(true);
+    try {
+      const res = await fetch('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fromWallet: me,
+          toWallet: other!.wallet,
+          body: msg.trim(),
+          kind: 'text',
+          fromName: myName || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data?.error || 'Could not send.'); return; }
+      await Promise.all([loadThread(activeId), loadList()]);
+    } catch {
+      setError('Could not send. Check your connection.');
+    } finally {
+      setQuickSending(false);
+    }
+  };
+
   const createDeal = () => {
     if (!isWallet(other?.wallet)) return;
     const q = new URLSearchParams({ seller: other!.wallet });
     if (subject) q.set('type', subject);
+    const om = activeConversation?.orderMeta;
+    if (om?.budget) q.set('budget', om.budget);
+    if (om?.deadline) q.set('deadline', om.deadline);
+    if (om?.paymentSplit) q.set('payment', om.paymentSplit);
+    // Carry the conversation id so the newly created on-chain deal can be linked
+    // back to this thread (and so roles can be reconciled to the on-chain truth).
+    if (activeId) q.set('conversationId', activeId);
     router.push(`/deal/new?${q.toString()}`);
   };
 
@@ -322,9 +440,32 @@ export default function Messages() {
                 </p>
                 {subject && <p className="text-xs text-zinc-500 truncate">Re: {subject}</p>}
               </div>
-              <Button size="sm" variant="outline" onClick={createDeal} className="gap-1.5 shrink-0">
-                <ShieldCheck size={14} /> Create escrow deal
-              </Button>
+              {hasOrder && isSellerOfOrder && !orderConfirmed && (
+                <Button size="sm" variant="outline" onClick={confirmOrder} disabled={confirming} className="gap-1.5 shrink-0 border-green-500/40 text-green-400 hover:bg-green-500/10">
+                  {confirming ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />} Confirm Order
+                </Button>
+              )}
+              {hasOrder && orderConfirmed && (
+                <Badge variant="success" className="gap-1 shrink-0">
+                  <CheckCircle size={12} /> Order confirmed
+                </Badge>
+              )}
+              {/* The on-chain deal is always created by the buyer (msg.sender).
+                  Only show "Create escrow deal" to the buyer, and hide it once a
+                  deal is already linked so a second, role-confused deal can't be
+                  spawned. Sellers instead get a link to the existing deal. A new
+                  draft (no conversation yet) is always composed by the buyer. */}
+              {activeConversation?.dealAddress ? (
+                <Button size="sm" variant="outline" onClick={() => router.push(`/deals/${activeConversation.dealAddress}`)} className="gap-1.5 shrink-0">
+                  <ShieldCheck size={14} /> View Deal
+                </Button>
+              ) : isBuyerOfOrder || !activeConversation ? (
+                <Button size="sm" variant="outline" onClick={createDeal} className="gap-1.5 shrink-0">
+                  <ShieldCheck size={14} /> Create escrow deal
+                </Button>
+              ) : (
+                <span className="text-xs text-zinc-500 shrink-0">Waiting for the buyer to create the escrow deal</span>
+              )}
             </div>
 
             <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -332,7 +473,7 @@ export default function Messages() {
                 <div className="h-full flex items-center justify-center text-center">
                   <p className="text-sm text-zinc-500 max-w-xs">
                     {draft?.orderIntent
-                      ? 'Describe your order and conditions below, then send. The seller gets an email right away.'
+                      ? 'Fill in the order form below: requirements, budget, deadline and payment split. The seller gets an email right away.'
                       : 'No messages yet. Say hello 👋'}
                   </p>
                 </div>
@@ -340,6 +481,7 @@ export default function Messages() {
               {messages.map((m) => {
                 const mine = lc(m.fromWallet) === me;
                 const isOrder = m.kind === 'order';
+                const om = m.orderMeta || {};
                 return (
                   <motion.div
                     key={m.id}
@@ -349,20 +491,55 @@ export default function Messages() {
                   >
                     <div
                       className={cn(
-                        'max-w-[80%] rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap break-words',
+                        'max-w-[80%] rounded-2xl px-4 py-2.5 text-sm break-words',
                         isOrder
-                          ? 'border border-blue-500/40 bg-blue-600/10 text-blue-50 rounded-tl-md'
-                          : mine
-                            ? 'bg-blue-600 text-white rounded-tr-md'
-                            : 'bg-zinc-800/60 border border-zinc-700/50 text-zinc-200 rounded-tl-md',
+                          ? 'border border-blue-500/40 bg-blue-600/10 text-blue-50 rounded-tl-md w-full sm:max-w-[420px]'
+                          : m.kind === 'confirm'
+                            ? 'border border-emerald-500/40 bg-emerald-600/10 text-emerald-50 rounded-tl-md'
+                            : mine
+                              ? 'bg-blue-600 text-white rounded-tr-md'
+                              : 'bg-zinc-800/60 border border-zinc-700/50 text-zinc-200 rounded-tl-md',
                       )}
                     >
                       {isOrder && (
-                        <div className="flex items-center gap-1.5 mb-1 text-xs font-medium text-blue-300">
-                          <Package size={12} /> Order{m.orderMeta?.type ? ` · ${m.orderMeta.type}` : ''}
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-1.5 text-xs font-medium text-blue-300">
+                            <Package size={12} /> Order Request{om.type ? ` · ${om.type}` : ''}
+                            {orderConfirmed && (
+                              <Badge variant="success" className="text-[10px] gap-1"><CheckCircle size={10} /> Confirmed</Badge>
+                            )}
+                          </div>
+                          {om.requirements && (
+                            <div className="text-sm text-blue-50 whitespace-pre-wrap">
+                              <span className="block text-[10px] uppercase tracking-wide text-blue-300/80 mb-0.5">Requirements</span>
+                              {om.requirements}
+                            </div>
+                          )}
+                          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-blue-100/90">
+                            {om.budget && (
+                              <span className="flex items-center gap-1"><DollarSign size={12} /> {om.budget}</span>
+                            )}
+                            {om.deadline && (
+                              <span className="flex items-center gap-1"><Calendar size={12} /> {new Date(om.deadline).toLocaleDateString()}</span>
+                            )}
+                            {om.paymentSplit && (
+                              <span className="flex items-center gap-1">
+                                <SplitSquareHorizontal size={12} />
+                                {om.paymentSplit === '50/50' ? '50% now · 50% on approval' : 'Full in escrow'}
+                              </span>
+                            )}
+                          </div>
+                          {!om.requirements && m.body && (
+                            <p className="text-sm text-blue-50 whitespace-pre-wrap">{m.body}</p>
+                          )}
                         </div>
                       )}
-                      {m.body}
+                      {!isOrder && m.kind !== 'confirm' && m.body}
+                      {m.kind === 'confirm' && (
+                        <div className="flex items-center gap-1.5 text-sm text-emerald-200">
+                          <CheckCircle size={14} /> {m.body}
+                        </div>
+                      )}
                       <div className={cn('text-[10px] mt-1', mine && !isOrder ? 'text-blue-200/70' : 'text-zinc-500')}>
                         {formatTimeAgo(m.createdAt)}
                       </div>
@@ -375,25 +552,122 @@ export default function Messages() {
             {error && <p className="px-4 text-xs text-red-400">{error}</p>}
 
             <div className="p-3 border-t border-zinc-800/50">
-              <div className="flex items-end gap-2 bg-zinc-800/50 border border-zinc-700/50 rounded-xl px-3 py-2 focus-within:border-blue-500/50 transition-all">
-                <textarea
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
-                  }}
-                  rows={1}
-                  placeholder="Write a message… (Enter to send, Shift+Enter for a new line)"
-                  className="flex-1 bg-transparent text-sm text-white placeholder:text-zinc-500 outline-none resize-none max-h-32 py-1"
-                />
-                <button
-                  onClick={send}
-                  disabled={!input.trim() || sending}
-                  className="p-2 rounded-lg bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all shrink-0"
-                >
-                  {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                </button>
-              </div>
+              {draft?.orderIntent && !activeId ? (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 text-xs text-zinc-400 font-medium">
+                    <Package size={14} className="text-blue-400" /> Place your order
+                  </div>
+                  <textarea
+                    value={orderForm.requirements}
+                    onChange={(e) => setOrderForm({ ...orderForm, requirements: e.target.value })}
+                    rows={3}
+                    placeholder="Describe your requirements and conditions…"
+                    className="w-full bg-zinc-800/50 border border-zinc-700/50 rounded-xl px-3 py-2 text-sm text-white placeholder:text-zinc-500 outline-none resize-none focus:border-blue-500/50 transition-all"
+                  />
+                  <div className="flex gap-3 flex-wrap">
+                    <div className="flex-1 min-w-[140px]">
+                      <label className="text-[10px] text-zinc-500 block mb-1">Budget</label>
+                      <input
+                        value={orderForm.budget}
+                        onChange={(e) => setOrderForm({ ...orderForm, budget: e.target.value })}
+                        placeholder="e.g. 0.5 ETH"
+                        className="w-full bg-zinc-800/50 border border-zinc-700/50 rounded-lg px-3 py-1.5 text-sm text-white placeholder:text-zinc-500 outline-none focus:border-blue-500/50 transition-all"
+                      />
+                    </div>
+                    <div className="flex-1 min-w-[140px]">
+                      <label className="text-[10px] text-zinc-500 block mb-1">Deadline</label>
+                      <input
+                        type="date"
+                        value={orderForm.deadline}
+                        onChange={(e) => setOrderForm({ ...orderForm, deadline: e.target.value })}
+                        className="w-full bg-zinc-800/50 border border-zinc-700/50 rounded-lg px-3 py-1.5 text-sm text-white outline-none focus:border-blue-500/50 transition-all [color-scheme:dark]"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-zinc-500 block mb-1">Escrow payment</label>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setOrderForm({ ...orderForm, paymentSplit: 'full' })}
+                        className={cn(
+                          'flex-1 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all',
+                          orderForm.paymentSplit === 'full'
+                            ? 'border-blue-500/50 bg-blue-600/20 text-blue-300'
+                            : 'border-zinc-700/50 bg-zinc-800/50 text-zinc-400 hover:text-white hover:border-zinc-600',
+                        )}
+                      >
+                        <SplitSquareHorizontal size={12} className="inline mr-1" /> Full in escrow
+                      </button>
+                      <button
+                        onClick={() => setOrderForm({ ...orderForm, paymentSplit: '50/50' })}
+                        className={cn(
+                          'flex-1 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all',
+                          orderForm.paymentSplit === '50/50'
+                            ? 'border-blue-500/50 bg-blue-600/20 text-blue-300'
+                            : 'border-zinc-700/50 bg-zinc-800/50 text-zinc-400 hover:text-white hover:border-zinc-600',
+                        )}
+                      >
+                        <SplitSquareHorizontal size={12} className="inline mr-1" /> 50/50 Split
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex justify-end">
+                    <Button
+                      size="sm"
+                      onClick={send}
+                      disabled={sending || !orderForm.requirements.trim()}
+                      className="gap-1.5"
+                    >
+                      {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                      {sending ? 'Placing…' : 'Place Order'}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {hasOrder && isBuyerOfOrder && !orderConfirmed && (
+                    <div className="flex items-center gap-2 mb-3 flex-wrap">
+                      <input
+                        type="date"
+                        value={quickDeadline}
+                        onChange={(e) => setQuickDeadline(e.target.value)}
+                        className="bg-zinc-800/50 border border-zinc-700/50 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none [color-scheme:dark] w-36"
+                      />
+                      <button
+                        onClick={() => {
+                          if (!quickDeadline) return;
+                          sendQuick(`Deadline: ${new Date(quickDeadline).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}`);
+                          setQuickDeadline('');
+                        }}
+                        disabled={!quickDeadline || quickSending}
+                        className="px-2.5 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-300 hover:text-white hover:border-zinc-500 disabled:opacity-50 transition-all"
+                      >
+                        {quickSending ? 'Adding…' : 'Add deadline'}
+                      </button>
+                      <span className="text-[10px] text-zinc-500">Optional — add details as a message at the end</span>
+                    </div>
+                  )}
+                  <div className="flex items-end gap-2 bg-zinc-800/50 border border-zinc-700/50 rounded-xl px-3 py-2 focus-within:border-blue-500/50 transition-all">
+                    <textarea
+                      value={input}
+                      onChange={(e) => setInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+                      }}
+                      rows={1}
+                      placeholder={hasOrder && isBuyerOfOrder ? 'Type optional requirement… (Enter to send)' : 'Write a message… (Enter to send, Shift+Enter for a new line)'}
+                      className="flex-1 bg-transparent text-sm text-white placeholder:text-zinc-500 outline-none resize-none max-h-32 py-1"
+                    />
+                    <button
+                      onClick={send}
+                      disabled={!input.trim() || sending}
+                      className="p-2 rounded-lg bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all shrink-0"
+                    >
+                      {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </>
         )}

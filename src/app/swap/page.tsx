@@ -214,7 +214,10 @@ export default function SwapPage() {
   const outDisplay = outValue ? Number(outValue).toLocaleString(undefined, { maximumFractionDigits: 4 }) : '0';
 
   return (
-    <div className="max-w-lg mx-auto space-y-5">
+    <div className="relative min-h-screen overflow-hidden">
+      <img src="/rose-gold-bg.svg" alt="" aria-hidden className="absolute inset-0 w-full h-full object-cover opacity-15 blur-sm" />
+      <div className="absolute inset-0 bg-gradient-to-b from-zinc-950/60 via-zinc-950/40 to-zinc-950 pointer-events-none" />
+      <div className="relative max-w-lg mx-auto space-y-5">
       <div>
         <h1 className="text-2xl font-bold text-white">Swap</h1>
       </div>
@@ -380,6 +383,7 @@ export default function SwapPage() {
           )}
         </>
       )}
+    </div>
     </div>
   );
 }

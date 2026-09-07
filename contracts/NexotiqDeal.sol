@@ -279,7 +279,9 @@ contract NexotiqDeal is ReentrancyGuard {
         _notifySettled(releasedToSeller);
     }
 
-    function cancelDeal() external onlyBuyer inStatus(DealStatus.Active) {
+    function cancelDeal() external onlyParty inStatus(DealStatus.Active) {
+        // Escrow is always refunded to the buyer (the party who funded it),
+        // regardless of which party initiated the cancellation.
         if (_isNative()) {
             uint256 balance = address(this).balance;
             if (balance > 0) {

@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import { Search, Loader2 } from 'lucide-react';
+import { formatUnits } from 'viem';
 import { Input } from '@/components/ui/input';
 import { useAccount } from 'wagmi';
 import { useDirectoryContract } from '@/hooks/useDirectoryContract';
@@ -32,16 +33,15 @@ export default function MarketplacePage() {
   }, [profiles, category, search]);
 
   const order = (p: any) => {
-    // Ordering now opens a chat with the seller (order pre-filled) instead of
-    // jumping straight into the escrow wizard. The buyer sends their conditions
-    // first; either side can spin up an on-chain deal from the chat header.
+    // Ordering opens the on-chain deal wizard with the seller's price
+    // pre-filled. Once the deal is created the buyer can message the seller.
     const q = new URLSearchParams({
-      to: String(p.wallet),
+      seller: String(p.wallet),
       type: String(p.category || ''),
+      budget: Number(formatUnits(BigInt(p.rate || 0), 18)) > 0 ? String(Number(formatUnits(BigInt(p.rate || 0), 18))) : '',
       name: String(p.name || ''),
-      intent: 'order',
     });
-    router.push(`/messages?${q.toString()}`);
+    router.push(`/deal/new?${q.toString()}`);
   };
 
   return (

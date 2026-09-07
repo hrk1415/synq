@@ -29,6 +29,7 @@ export default function DealDetailPage() {
   const [actionError, setActionError] = useState('');
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [cancelNotifyTo, setCancelNotifyTo] = useState<string | null>(null);
+  const [cancelNotifyRole, setCancelNotifyRole] = useState<string>('seller');
   const cancelHashRef = useRef<string | null>(null);
 
   // The receipt hook stays isSuccess for older txs, so wait for a NEW hash
@@ -37,7 +38,8 @@ export default function DealDetailPage() {
     if (!cancelNotifyTo || !deal.txReceipt.isSuccess) return;
     const hash = deal.txReceipt.data?.transactionHash ? String(deal.txReceipt.data.transactionHash) : null;
     if (hash && hash !== cancelHashRef.current) {
-      const seller = cancelNotifyTo;
+      const recipient = cancelNotifyTo;
+      const role = cancelNotifyRole;
       setCancelNotifyTo(null);
       cancelHashRef.current = null;
       fetch('/api/notify', {
@@ -45,14 +47,14 @@ export default function DealDetailPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           event: 'deal_cancelled',
-          recipientWallet: seller,
-          recipientName: 'seller',
+          recipientWallet: recipient,
+          recipientName: role,
           dealTitle: String(deal.title || ''),
           dealAmount: deal.totalValue ? fmt(deal.totalValue) : '',
         }),
       }).catch(() => {});
     }
-  }, [cancelNotifyTo, deal.txReceipt.isSuccess, deal.txReceipt.data, deal.title, deal.totalValue]);
+  }, [cancelNotifyTo, cancelNotifyRole, deal.txReceipt.isSuccess, deal.txReceipt.data, deal.title, deal.totalValue]);
 
   const tokenApprove = useWriteContract();
   const approveReceipt = useWaitForTransactionReceipt({ hash: tokenApprove.data });
@@ -61,6 +63,8 @@ export default function DealDetailPage() {
   const token = getTokenInfo(chainKeyForId(chainId), assetAddress);
   const isToken = assetAddress !== ZERO;
   const isBuyer = !!address && !!deal.buyer && address.toLowerCase() === String(deal.buyer).toLowerCase();
+  const isSeller = !!address && !!deal.seller && address.toLowerCase() === String(deal.seller).toLowerCase();
+  const isParty = isBuyer || isSeller;
   const isActive = Number(deal.status) === 1;
   const funded = !!deal.escrowBalance && !!deal.totalValue && BigInt(String(deal.escrowBalance)) >= BigInt(String(deal.totalValue));
   const approveRequired = isToken && isBuyer && isActive && !funded;
@@ -255,7 +259,7 @@ export default function DealDetailPage() {
               <Button className="w-full justify-start gap-2" size="sm" variant="outline" disabled><Shield size={14} /> View Protection</Button>
               <Button className="w-full justify-start gap-2" size="sm" variant="outline" disabled><Bot size={14} /> AI Analysis</Button>
               <Separator />
-              {isBuyer && isActive && (
+              {isParty && isActive && (
                 <Button
                   className="w-full justify-start gap-2"
                   size="sm"
@@ -287,10 +291,10 @@ export default function DealDetailPage() {
                     </div>
                     <p className="text-sm text-zinc-400 mb-1">
                       {Number(deal.escrowBalance) > 0
-                        ? `Any escrow balance (~${fmt(deal.escrowBalance)}) will be refunded back to your wallet (buyer).`
+                        ? `Any escrow balance (~${fmt(deal.escrowBalance)}) will be refunded back to the buyer's wallet.`
                         : 'The deal will be marked as Cancelled on-chain.'}
                     </p>
-                    <p className="text-xs text-zinc-500 mb-4">This action cannot be undone. The seller will see the deal as cancelled.</p>
+                    <p className="text-xs text-zinc-500 mb-4">This action cannot be undone. The {isBuyer ? 'seller' : 'buyer'} will see the deal as cancelled.</p>
                     <div className="flex gap-2">
                       <Button variant="outline" size="sm" className="flex-1 gap-1" onClick={() => setConfirmCancel(false)} disabled={deal.isPending}>
                         <X size={14} /> Keep Deal
@@ -304,7 +308,11 @@ export default function DealDetailPage() {
                           setActionError('');
                           setConfirmCancel(false);
                           cancelHashRef.current = deal.txReceipt.data?.transactionHash ? String(deal.txReceipt.data.transactionHash) : null;
-                          setCancelNotifyTo(String(deal.seller || ''));
+                          // Notify the counterparty (the other side of the deal).
+                          const counterparty = isBuyer ? String(deal.seller || '') : String(deal.buyer || '');
+                          const role = isBuyer ? 'seller' : 'buyer';
+                          setCancelNotifyTo(counterparty);
+                          setCancelNotifyRole(role);
                           deal.cancelDeal();
                         }}
                       >

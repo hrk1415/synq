@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, Suspense } from 'react';
+import { useState, useRef, useEffect, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ArrowLeft, ArrowRight, Check, Sparkles, Bot, Loader2, MessageSquare } from 'lucide-react';
@@ -9,9 +9,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { useAccount, useChainId } from 'wagmi';
-import { parseUnits } from 'viem';
+import { parseUnits, decodeEventLog } from 'viem';
 import { useFactoryContract } from '@/hooks/useFactoryContract';
 import { formatCurrency, shortenAddress } from '@/lib/utils';
+import { nexotiqFactoryABI } from '@/lib/contracts/abis';
 import { getTokenInfo, chainKeyForId, isSupportedChain, DEFAULT_CHAIN_ID } from '@/lib/contracts/addresses';
 import { ChainGuard } from '@/components/shared/ChainGuard';
 import { useDirectoryContract } from '@/hooks/useDirectoryContract';
@@ -60,19 +61,20 @@ function NewDealForm() {
   const [matches, setMatches] = useState<any[]>([]);
   const [matchState, setMatchState] = useState<'idle' | 'matching' | 'done'>('idle');
   const [matchError, setMatchError] = useState('');
+  const prefilledDeadline = searchParams.get('deadline') || '';
   const [form, setForm] = useState({
     type: searchParams.get('type') || '',
     counterparty: searchParams.get('seller') || '',
-    budget: '',
+    budget: searchParams.get('budget') || '',
     deliverables: '',
-    deadline: '',
-    paymentStructure: 'full',
+    deadline: prefilledDeadline ? String(Math.floor(new Date(`${prefilledDeadline}T23:59`).getTime() / 1000)) : '',
+    paymentStructure: searchParams.get('payment') === '50/50' ? 'half' : 'full',
     protection: true,
     protectionLevel: 'enhanced',
     aiEnhanced: false,
     asset: ZERO,
   });
-  const [deadlineDate, setDeadlineDate] = useState('');
+  const [deadlineDate, setDeadlineDate] = useState(prefilledDeadline);
   const [deadlineTime, setDeadlineTime] = useState('23:59');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
@@ -194,6 +196,68 @@ function NewDealForm() {
   };
 
   const txConfirmed = factory.txReceipt.isSuccess;
+  const notifiedRef = useRef(false);
+
+  // The factory emits `DealCreated(dealAddr, buyer, seller, totalValue, dealId)`,
+  // but writeContract only returns the tx hash. Recover the new deal address from
+  // the receipt logs so we can link it to the chat conversation.
+  const getCreatedDealAddress = (receipt: any): string | null => {
+    const logs = receipt?.logs || [];
+    for (const log of logs) {
+      try {
+        const decoded = decodeEventLog({
+          abi: nexotiqFactoryABI,
+          data: (log.data || '0x') as any,
+          topics: (log.topics || []) as any,
+        });
+        if (decoded.eventName === 'DealCreated') {
+          const args = decoded.args as any;
+          if (args && args.dealAddr) return String(args.dealAddr);
+        }
+      } catch {
+        /* not this event */
+      }
+    }
+    return null;
+  };
+
+  const createdDealAddress = txConfirmed ? getCreatedDealAddress(factory.txReceipt.data) : null;
+
+  useEffect(() => {
+    if (txConfirmed && !notifiedRef.current) {
+      notifiedRef.current = true;
+      fetch('/api/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          event: 'deal_confirmed',
+          recipientWallet: form.counterparty,
+          recipientName: 'seller',
+          dealTitle: form.type || 'Deal',
+          dealAmount: form.budget,
+        }),
+      }).catch(() => {});
+
+      // Link the on-chain deal to the chat thread. When the buyer opened the
+      // wizard from an existing conversation (Messages → "Create escrow deal")
+      // we have its id; otherwise the buyer will message the seller next and the
+      // deal address is passed along so the thread can link then.
+      const dealAddr = getCreatedDealAddress(factory.txReceipt.data);
+      const cid = searchParams.get('conversationId');
+      if (dealAddr && cid) {
+        fetch('/api/conversations/link', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            conversationId: cid,
+            buyerWallet: address,
+            sellerWallet: form.counterparty,
+            dealAddress: dealAddr,
+          }),
+        }).catch(() => {});
+      }
+    }
+  }, [txConfirmed, form.counterparty, form.type, form.budget, factory.txReceipt.data, address, searchParams]);
 
   const renderStep = () => {
     switch (step) {
@@ -574,6 +638,9 @@ function NewDealForm() {
                     onClick={() => {
                       const q = new URLSearchParams({ to: form.counterparty });
                       if (form.type) q.set('type', form.type);
+                      const nm = searchParams.get('name');
+                      if (nm) q.set('name', nm);
+                      if (createdDealAddress) q.set('deal', createdDealAddress);
                       router.push(`/messages?${q.toString()}`);
                     }}
                   >

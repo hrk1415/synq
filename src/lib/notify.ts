@@ -186,7 +186,7 @@ async function sendMail(to: string, subject: string, html: string, text: string)
 }
 
 export interface NotifyPayload {
-  event: 'deal_confirmed' | 'work_submitted' | 'deal_completed' | 'deal_completed_seller' | 'deal_cancelled' | 'payment_released' | 'order_inquiry' | 'chat_message';
+  event: 'deal_confirmed' | 'work_submitted' | 'deal_completed' | 'deal_completed_seller' | 'deal_cancelled' | 'payment_released' | 'order_inquiry' | 'chat_message' | 'order_confirmed';
   recipientEmail?: string;
   recipientName?: string;
   recipientWallet?: string;
@@ -386,6 +386,26 @@ export async function notifySellerOrderInquiry(p: NotifyPayload) {
  * A new chat reply. Fired server-side for every message that is not the initial
  * order (e.g. the buyer gets emailed when the seller replies).
  */
+/**
+ * Seller confirmed the order → email the buyer.
+ */
+export async function notifyBuyerOrderConfirmed(p: NotifyPayload) {
+  const email = p.recipientEmail || await resolveEmailFromDb(String(p.recipientWallet || ''), String(p.recipientName || ''));
+  const to = email || fallbackRecipient();
+  const title = 'Your order was confirmed';
+  const heading = `${p.fromName || 'The seller'} has confirmed your order.`;
+  const rows: [string, string][] = [
+    ['Service', p.dealTitle || '—'],
+    ['Budget', p.dealAmount || '—'],
+  ];
+  if (p.note) rows.push(['Payment split', p.note]);
+  rows.push(['Reference', p.dealId || '—']);
+  const link = p.link || '/messages';
+  const { html, text } = layout(title, heading, rows, `Open the conversation to discuss next steps and create an escrow deal: ${link}`);
+  const res = await sendMail(to, title, html, text);
+  return { ...res, event: p.event, recipientResolved: !!email };
+}
+
 export async function notifyNewChatMessage(p: NotifyPayload) {
   const email = p.recipientEmail || await resolveEmailFromDb(String(p.recipientWallet || ''), String(p.recipientName || ''));
   const to = email || fallbackRecipient();

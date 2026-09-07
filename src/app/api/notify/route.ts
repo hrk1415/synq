@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { notifyDealConfirmedToSeller, notifyBuyerWorkSubmitted, notifyBuyerDealCompleted, notifySellerDealCompleted, notifyDealCancelled, notifySellerPaymentReleased, notifySellerOrderInquiry, notifyNewChatMessage, getMailStatus, type NotifyPayload } from '@/lib/notify';
+import { notifyDealConfirmedToSeller, notifyBuyerWorkSubmitted, notifyBuyerDealCompleted, notifySellerDealCompleted, notifyDealCancelled, notifySellerPaymentReleased, notifySellerOrderInquiry, notifyNewChatMessage, notifyBuyerOrderConfirmed, getMailStatus, type NotifyPayload } from '@/lib/notify';
 
 /**
  * Delivery-config status. Lets the UI (and the operator) see whether email
@@ -25,10 +25,11 @@ export async function POST(req: NextRequest) {
       payment_released: notifySellerPaymentReleased,
       order_inquiry: notifySellerOrderInquiry,
       chat_message: notifyNewChatMessage,
+      order_confirmed: notifyBuyerOrderConfirmed,
     }[event];
 
     if (!fn) {
-      return Response.json({ error: 'Invalid event. Use deal_confirmed, work_submitted, deal_completed, deal_completed_seller, deal_cancelled, payment_released, order_inquiry or chat_message.' }, { status: 400 });
+      return Response.json({ error: 'Invalid event. Use deal_confirmed, work_submitted, deal_completed, deal_completed_seller, deal_cancelled, payment_released, order_inquiry, chat_message or order_confirmed.' }, { status: 400 });
     }
 
     const payload: NotifyPayload = {

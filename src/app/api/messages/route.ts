@@ -98,9 +98,13 @@ export async function POST(req: NextRequest) {
     const now = new Date().toISOString();
     const preview = previewOf(text);
 
+    const dealAddress = body.dealAddress && typeof body.dealAddress === 'string' ? body.dealAddress.trim() : '';
+
     if (!conversation) {
       // First message opens the thread. The initiator is the buyer, the
       // recipient the seller — matches the "buyer orders a freelancer" flow.
+      // If an on-chain deal already exists for this pair (the buyer created it
+      // before chatting), stamp its address so the thread can link to it.
       conversation = await create('conversations', {
         buyerWallet: lc(fromWallet),
         sellerWallet: lc(toWallet),
@@ -108,6 +112,7 @@ export async function POST(req: NextRequest) {
         sellerName: toName,
         subject: orderMeta?.type || body.subject || undefined,
         orderMeta: orderMeta || undefined,
+        dealAddress: dealAddress || undefined,
         lastMessageAt: now,
         lastMessagePreview: preview,
         lastMessageFrom: lc(fromWallet),
@@ -125,6 +130,8 @@ export async function POST(req: NextRequest) {
       if (!conversation.buyerName && lc(String(conversation.buyerWallet)) === lc(toWallet)) patch.buyerName = toName;
       if (!conversation.sellerName && lc(String(conversation.sellerWallet)) === lc(toWallet)) patch.sellerName = toName;
       if (orderMeta && !conversation.orderMeta) { patch.orderMeta = orderMeta; patch.subject = conversation.subject || orderMeta.type; }
+      // Link the on-chain deal if the client passes it and we don't have one yet.
+      if (dealAddress && !conversation.dealAddress) patch.dealAddress = dealAddress;
       conversation = (await update('conversations', conversation.id, patch)) || conversation;
     }
 

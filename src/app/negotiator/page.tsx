@@ -56,6 +56,7 @@ export default function NegotiatorPage() {
   const factory = useFactoryContract();
   const [messages, setMessages] = useState<Message[]>([INITIAL_AI]);
   const [input, setInput] = useState('');
+  const [controllerName, setControllerName] = useState('');
   const [isThinking, setIsThinking] = useState(false);
   const [selectedOffer, setSelectedOffer] = useState<number | null>(null);
   const [error, setError] = useState('');
@@ -95,7 +96,7 @@ export default function NegotiatorPage() {
       const res = await fetch('/api/ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'negotiate', prompt: userInput }),
+        body: JSON.stringify({ type: 'negotiate', prompt: userInput, controllerName }),
       });
       const data = await res.json();
 
@@ -262,7 +263,7 @@ export default function NegotiatorPage() {
                                   </div>
                                 </div>
                                 {s.bio && <p className="text-xs text-zinc-400 line-clamp-2 mb-2">{s.bio}</p>}
-                                <Button size="sm" className="gap-1" onClick={() => router.push(`/chatpay?seller=${s.wallet}&type=${encodeURIComponent(s.category)}`)}>
+                                <Button size="sm" className="gap-1" onClick={() => router.push(`/deal/new?seller=${s.wallet}&type=${encodeURIComponent(s.category)}&budget=${Number(s.rate) / 1e18 || 0}&name=${encodeURIComponent(s.name)}`)}>
                                   <ArrowRight size={14} /> Order {s.name}
                                 </Button>
                               </motion.div>
@@ -360,6 +361,14 @@ export default function NegotiatorPage() {
 
               <div className="p-4 border-t border-zinc-800/50">
                 {error && <p className="text-xs text-red-400 mb-2">{error}</p>}
+                <div className="flex items-center gap-2 bg-zinc-800/50 border border-zinc-700/50 rounded-xl px-4 py-2 focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/20 transition-all mb-2">
+                  <input
+                    value={controllerName}
+                    onChange={(e) => setControllerName(e.target.value)}
+                    placeholder="Agent Controller name (optional)"
+                    className="flex-1 bg-transparent text-sm text-white placeholder:text-zinc-500 outline-none"
+                  />
+                </div>
                 <div className="flex items-center gap-2 bg-zinc-800/50 border border-zinc-700/50 rounded-xl px-4 py-2 focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/20 transition-all">
                   <input
                     value={input}
@@ -446,14 +455,4 @@ export default function NegotiatorPage() {
             </CardHeader>
             <CardContent>
               {address ? (
-                <div className="text-sm text-zinc-300 font-mono truncate">{address}</div>
-              ) : (
-                <p className="text-sm text-zinc-500">Connect your wallet to create deals</p>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    </div>
-  );
-}
+                <div className="text-sm text-zinc-300 font-mono tr
