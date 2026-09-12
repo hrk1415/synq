@@ -40,6 +40,7 @@ interface HeaderProps {
 const defaultNavItems: NavItem[] = [
   { label: 'Overview', href: '/dashboard', icon: LayoutDashboard },
   { label: 'AI Negotiator', href: '/negotiator', icon: Brain, badge: 'AI' },
+  { label: 'Agent Controller', href: '/agent-controller', icon: Zap, badge: 'AI' },
   { label: 'Deal Port', href: '/marketplace', icon: Store },
   { label: 'My Deals', href: '/deals', icon: FileCheck },
   { label: 'Escrow', href: '/escrow', icon: ShieldCheck },

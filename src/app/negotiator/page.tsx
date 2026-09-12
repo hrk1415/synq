@@ -56,7 +56,6 @@ export default function NegotiatorPage() {
   const factory = useFactoryContract();
   const [messages, setMessages] = useState<Message[]>([INITIAL_AI]);
   const [input, setInput] = useState('');
-  const [controllerName, setControllerName] = useState('');
   const [isThinking, setIsThinking] = useState(false);
   const [selectedOffer, setSelectedOffer] = useState<number | null>(null);
   const [error, setError] = useState('');
@@ -96,7 +95,7 @@ export default function NegotiatorPage() {
       const res = await fetch('/api/ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'negotiate', prompt: userInput, controllerName }),
+        body: JSON.stringify({ type: 'negotiate', prompt: userInput }),
       });
       const data = await res.json();
 
@@ -361,14 +360,6 @@ export default function NegotiatorPage() {
 
               <div className="p-4 border-t border-zinc-800/50">
                 {error && <p className="text-xs text-red-400 mb-2">{error}</p>}
-                <div className="flex items-center gap-2 bg-zinc-800/50 border border-zinc-700/50 rounded-xl px-4 py-2 focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/20 transition-all mb-2">
-                  <input
-                    value={controllerName}
-                    onChange={(e) => setControllerName(e.target.value)}
-                    placeholder="Agent Controller name (optional)"
-                    className="flex-1 bg-transparent text-sm text-white placeholder:text-zinc-500 outline-none"
-                  />
-                </div>
                 <div className="flex items-center gap-2 bg-zinc-800/50 border border-zinc-700/50 rounded-xl px-4 py-2 focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/20 transition-all">
                   <input
                     value={input}

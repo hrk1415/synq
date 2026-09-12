@@ -28,6 +28,7 @@ import { useSidebar } from '@/context/SidebarContext';
 const navItems = [
   { icon: LayoutDashboard, label: 'Overview', href: '/dashboard' },
   { icon: Brain, label: 'AI Negotiator', href: '/negotiator' },
+  { icon: Zap, label: 'Agent Controller', href: '/agent-controller' },
   { icon: Store, label: 'Deal Port', href: '/marketplace' },
   { icon: FileCheck, label: 'My Deals', href: '/deals' },
   { icon: ShieldCheck, label: 'Escrow', href: '/escrow' },
