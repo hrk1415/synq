@@ -38,14 +38,33 @@
   }
   .synq-dashboard-bg {
     background:
-      linear-gradient(140deg, rgba(10, 10, 11, 0.18) 0%, rgba(10, 10, 11, 0) 40%, rgba(10, 10, 11, 0) 60%, rgba(10, 10, 11, 0.22) 100%),
+      linear-gradient(140deg, rgba(10, 10, 11, 0.18) 0%, rgba(10, 10, 11, 0) 40%, rgba(10, 10, 11, 0.22) 100%),
       linear-gradient(140deg, #5C447A 0%, #9C6A97 22%, #CB8E9F 45%, #F3B294 70%, #FFEAA9 100%);
   }
   .glow {
-    box-shadow: 0 0 20px rgba(59, 130, 246, 0.15), 0 0 40px rgba(59, 130, 246, 0.05);
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.18), 0 0 40px rgba(59, 130, 246, 0.08);
   }
   .glow-sm {
-    box-shadow: 0 0 10px rgba(59, 130, 246, 0.1);
+    box-shadow: 0 0 12px rgba(59, 130, 246, 0.15);
+  }
+  .glow-green {
+    box-shadow: 0 0 16px rgba(34, 197, 94, 0.2);
+  }
+  .glass-card {
+    background: rgba(18, 18, 22, 0.65);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .glass-card-hover {
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .glass-card-hover:hover {
+    border-color: rgba(59, 130, 246, 0.35);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 16px rgba(59, 130, 246, 0.12);
+  }
+  .secure-input {
+    letter-spacing: 0.15em;
   }
 }
 

@@ -16,7 +16,10 @@ import {
   Cpu,
   Sparkles,
   Bot,
-  ChevronDown
+  ChevronDown,
+  Eye,
+  EyeOff,
+  Lock
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -116,6 +119,7 @@ export default function AgentControllerPage() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<DeployResult | null>(null);
   const [copied, setCopied] = useState('');
+  const [showApiKey, setShowApiKey] = useState(false);
 
   // Interactive agent tester state
   const [testPrompt, setTestPrompt] = useState('Hello AI! Help me negotiate this agreement.');
@@ -304,24 +308,38 @@ export default function AgentControllerPage() {
               </div>
             </div>
 
-            {/* Raw API Key */}
+            {/* Raw API Key (Protected & Masked) */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <label className="text-xs text-zinc-400 font-medium uppercase tracking-wider">
-                  Your Raw API Key ({activePreset.name})
+                <label className="text-xs text-zinc-400 font-medium uppercase tracking-wider flex items-center gap-1">
+                  <Lock size={12} className="text-emerald-400" /> Your Raw API Key ({activePreset.name})
                 </label>
-                <span className="text-[10px] text-zinc-500">Secured & encrypted in Latch token</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                    Protected & Encrypted
+                  </span>
+                </div>
               </div>
-              <div className="flex items-center gap-2 bg-zinc-800/50 border border-zinc-700/50 rounded-xl px-4 py-2.5 focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/20 transition-all">
-                <Shield size={14} className="text-zinc-500 shrink-0" />
+              <div className="flex items-center gap-2 bg-zinc-800/60 border border-zinc-700/60 rounded-xl px-4 py-2.5 focus-within:border-emerald-500/50 focus-within:ring-1 focus-within:ring-emerald-500/20 transition-all shadow-inner">
+                <Shield size={14} className="text-emerald-400 shrink-0" />
                 <input
-                  type="password"
+                  type={showApiKey ? 'text' : 'password'}
                   name="rawApiKey"
                   value={formData.rawApiKey}
                   onChange={handleChange}
                   placeholder={activePreset.keyPlaceholder}
+                  autoComplete="off"
+                  spellCheck="false"
                   className="flex-1 bg-transparent text-sm text-white placeholder:text-zinc-500 outline-none font-mono"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowApiKey(!showApiKey)}
+                  className="text-zinc-400 hover:text-zinc-200 transition-colors p-1"
+                  title={showApiKey ? 'Hide Key' : 'Show Key'}
+                >
+                  {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
               </div>
             </div>
 
