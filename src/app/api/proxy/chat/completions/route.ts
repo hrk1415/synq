@@ -13,15 +13,24 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json().catch(() => ({}));
-    const model = body.model || 'gpt-4';
+    const model = body.model || 'gpt-4o';
+    const provider = body.provider || 'openai';
+    const targetApiUrl = body.targetApiUrl || 'https://api.openai.com/v1';
     const userMessage = body.messages?.[body.messages.length - 1]?.content || 'Hello!';
 
-    // Simulated secure proxy AI response through Latch proxy
+    const providerDisplay =
+      provider === 'gemini' ? 'Google Gemini' :
+      provider === 'groq' ? 'Groq Ultra-Fast' :
+      provider === 'anthropic' ? 'Anthropic Claude' : 'OpenAI';
+
+    // Simulated verified Latch proxy response across any provider
     return NextResponse.json({
       id: `chatcmpl-${Math.random().toString(36).substring(2, 11)}`,
       object: 'chat.completion',
       created: Math.floor(Date.now() / 1000),
       model,
+      provider: providerDisplay,
+      upstream_url: targetApiUrl,
       proxy_authenticated: true,
       safe_token_verified: token.startsWith('lat_'),
       choices: [
@@ -29,15 +38,15 @@ export async function POST(req: Request) {
           index: 0,
           message: {
             role: 'assistant',
-            content: `[Latch Proxy Verified] Agent successfully received prompt: "${userMessage}". Your raw API key remained completely hidden.`,
+            content: `[${providerDisplay} via Latch Proxy] Successfully verified model "${model}". Prompt received: "${userMessage}". Your raw API key was never exposed to the agent.`,
           },
           finish_reason: 'stop',
         },
       ],
       usage: {
         prompt_tokens: 18,
-        completion_tokens: 24,
-        total_tokens: 42,
+        completion_tokens: 28,
+        total_tokens: 46,
       },
     });
   } catch (error: any) {

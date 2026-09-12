@@ -2,12 +2,14 @@ import { NextResponse } from 'next/server';
 
 export async function POST(req: Request) {
   try {
-    const { targetApiUrl, rawApiKey, rateLimit, spendLimit } = await req.json();
+    const { targetApiUrl, rawApiKey, rateLimit, spendLimit, provider } = await req.json();
 
     const LATCH_API_KEY = process.env.LATCH_API_KEY;
 
     let safeToken = '';
     let proxyUrl = '';
+
+    const upstreamUrl = targetApiUrl || 'https://api.openai.com/v1';
 
     if (LATCH_API_KEY) {
       try {
