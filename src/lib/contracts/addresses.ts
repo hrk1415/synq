@@ -33,11 +33,13 @@ export const CHAINS: Record<string, { id: number; name: string }> = {
   sepolia: { id: 11155111, name: 'Ethereum Sepolia' },
 };
 
-/** Chains Synq contracts are actually deployed on. Anything else has no addresses. */
-export const SUPPORTED_CHAIN_IDS: readonly number[] = [11155111, 31337];
+/** The sole application chain. Local deployment metadata is retained above for tooling only. */
+export const SEPOLIA_CHAIN_ID = 11155111 as const;
+export const SEPOLIA_CHAIN_ID_HEX = '0xaa36a7' as const;
+export const SUPPORTED_CHAIN_IDS: readonly number[] = [SEPOLIA_CHAIN_ID];
 
 /** The chain we read from when the user is disconnected or on an unsupported network. */
-export const DEFAULT_CHAIN_ID = 11155111;
+export const DEFAULT_CHAIN_ID = SEPOLIA_CHAIN_ID;
 
 export function isSupportedChain(chainId: number | undefined): boolean {
   return typeof chainId === 'number' && SUPPORTED_CHAIN_IDS.includes(chainId);
@@ -55,19 +57,22 @@ export function chainLabel(chainId: number | undefined): string {
   }
 }
 
-export function getTokenInfo(chainKey: string, assetAddress: string) {
+export type ApplicationChainKey = 'sepolia';
+export type TokenInfo = { symbol: string; decimals: number };
+
+export function getTokenInfo(chainKey: string | undefined, assetAddress: string): TokenInfo | undefined {
+  if (!chainKey) return undefined;
   const key = (assetAddress || '0x0000000000000000000000000000000000000000').toLowerCase();
-  const map = TOKENS[chainKey] || TOKENS.hardhat;
+  const map = TOKENS[chainKey] || TOKENS.sepolia;
+  if (!map) return undefined;
   // TOKENS keys are mixed-case checksummed addresses, so the lookup must be
   // case-insensitive — otherwise every non-native token silently falls back
   // to the native-ETH entry (wrong logo, wrong decimals).
-  const entry = Object.entries(map).find(([addr]) => addr.toLowerCase() === key)?.[1]
+  return Object.entries(map).find(([addr]) => addr.toLowerCase() === key)?.[1]
     || map['0x0000000000000000000000000000000000000000'];
-  if (!entry) return { symbol: 'ETH', decimals: 18 };
-  return entry;
 }
 
-export function chainKeyForId(chainId: number): string {
+export function chainKeyForId(chainId: number | undefined): string {
   switch (chainId) {
     case 11155111: return 'sepolia';
     default: return 'hardhat';
@@ -75,3 +80,28 @@ export function chainKeyForId(chainId: number): string {
 }
 
 export type SupportedChain = keyof typeof CONTRACT_ADDRESSES;
+
+import sepoliaV2Deployment from '../../../deployments/sepolia-v2-standard.json';
+
+/**
+ * Canonical Synq Standard V2 Protocol Deployment Configuration (Ethereum Sepolia).
+ * Sourced directly from deployments/sepolia-v2-standard.json.
+ */
+export const SYNQ_V2_SEPOLIA_CONFIG = {
+  chainId: sepoliaV2Deployment.chainId as 11155111,
+  factory: sepoliaV2Deployment.contracts.factory as `0x${string}`,
+  dealImplementation: sepoliaV2Deployment.contracts.dealImplementation as `0x${string}`,
+  primaryResolver: sepoliaV2Deployment.contracts.primaryResolver as `0x${string}`,
+  emergencyResolver: sepoliaV2Deployment.contracts.emergencyResolver as `0x${string}`,
+  canonicalUsdc: sepoliaV2Deployment.assets.canonicalUsdc as `0x${string}`,
+  usdcDecimals: sepoliaV2Deployment.assets.usdcDecimals as 6,
+  isProtected: sepoliaV2Deployment.protection.enabled as false,
+  protectionModule: '0x0000000000000000000000000000000000000000' as `0x${string}`,
+  policyId: '0x0000000000000000000000000000000000000000000000000000000000000000' as `0x${string}`,
+  eip712DomainName: sepoliaV2Deployment.consent.eip712DomainName,
+  eip712DomainVersion: sepoliaV2Deployment.consent.eip712DomainVersion,
+} as const;
+
+export const SUPERSEDED_DEAL_IMPLEMENTATION = (sepoliaV2Deployment.contracts as any).supersededDealImplementation as `0x${string}`;
+
+export type SynqV2SepoliaConfig = typeof SYNQ_V2_SEPOLIA_CONFIG;

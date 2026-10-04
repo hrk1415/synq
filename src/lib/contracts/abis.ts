@@ -3,12 +3,22 @@ import NexotiqFactory from './artifacts/contracts/NexotiqFactory.sol/NexotiqFact
 import NexotiqReputation from './artifacts/contracts/NexotiqReputation.sol/NexotiqReputation.json';
 import NexotiqProtection from './artifacts/contracts/NexotiqProtection.sol/NexotiqProtection.json';
 import NexotiqDirectory from './artifacts/contracts/NexotiqDirectory.sol/NexotiqDirectory.json';
+import NexotiqRegistry from './artifacts/contracts/NexotiqRegistry.sol/NexotiqRegistry.json';
+import SynqFactoryV2 from './artifacts/contracts/v1/SynqFactoryV2.sol/SynqFactoryV2.json';
+import SynqDealV1 from './artifacts/contracts/v1/SynqDealV1.sol/SynqDealV1.json';
+import SynqResolutionCommittee from './artifacts/contracts/v1/SynqResolutionCommittee.sol/SynqResolutionCommittee.json';
 
 export const nexotiqDealABI = NexotiqDeal.abi;
 export const nexotiqFactoryABI = NexotiqFactory.abi;
 export const nexotiqReputationABI = NexotiqReputation.abi;
 export const nexotiqProtectionABI = NexotiqProtection.abi;
 export const nexotiqDirectoryABI = NexotiqDirectory.abi;
+export const nexotiqRegistryABI = NexotiqRegistry.abi;
+
+export const synqFactoryV2ABI = SynqFactoryV2.abi;
+export const synqDealV1ABI = SynqDealV1.abi;
+export const synqResolutionCommitteeABI = SynqResolutionCommittee.abi;
+
 
 export const erc20ABI = [
   { inputs: [{ name: 'account', type: 'address' }], name: 'balanceOf', outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view', type: 'function' },
