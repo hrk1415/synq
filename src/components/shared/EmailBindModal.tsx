@@ -6,6 +6,7 @@ import { motion } from 'framer-motion';
 import { X, Mail, Loader2, CheckCircle, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { useAuthSession } from '@/hooks/useAuthSession';
 
 /**
  * Asks the connected wallet to bind an email so deal notifications
@@ -15,6 +16,7 @@ import { Input } from '@/components/ui/input';
  */
 export default function EmailBindModal() {
   const { address, isConnected } = useAccount();
+  const { ensureAuthenticated } = useAuthSession();
   const [open, setOpen] = useState(false);
   const [checking, setChecking] = useState(false);
   const [step, setStep] = useState<'email' | 'code' | 'done'>('email');
@@ -25,19 +27,33 @@ export default function EmailBindModal() {
   const [error, setError] = useState('');
 
   useEffect(() => {
+    setOpen(false);
+    setChecking(false);
+    setStep('email');
+    setEmail('');
+    setCode('');
+    setInfo('');
+    setError('');
     if (!isConnected || !address) {
-      setOpen(false);
       return;
     }
     if (typeof window !== 'undefined' && sessionStorage.getItem('emailBindDismissed') === address.toLowerCase()) return;
     let cancelled = false;
-    fetch(`/api/auth?address=${address}&mode=email_status`)
+    setChecking(true);
+    void ensureAuthenticated()
+      .then((token) => fetch(`/api/auth?address=${address}&mode=email_status`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }))
       .then((r) => r.json())
-      .then((d) => { if (!cancelled && d && d.bound === false) setOpen(true); })
-      .catch(() => {})
+      .then((d) => {
+        if (!cancelled) setOpen(d?.bound === false);
+      })
+      .catch(() => {
+        if (!cancelled) setOpen(false);
+      })
       .finally(() => { if (!cancelled) setChecking(false); });
     return () => { cancelled = true; };
-  }, [address, isConnected]);
+  }, [address, ensureAuthenticated, isConnected]);
 
   const dismiss = () => {
     if (address) sessionStorage.setItem('emailBindDismissed', address.toLowerCase());
@@ -53,9 +69,13 @@ export default function EmailBindModal() {
     }
     setBusy(true);
     try {
+      const token = await ensureAuthenticated();
       const res = await fetch('/api/auth', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({ type: 'bind_email', walletAddress: address, email: email.trim() }),
       });
       const d = await res.json();
@@ -75,9 +95,13 @@ export default function EmailBindModal() {
     setError('');
     setBusy(true);
     try {
+      const token = await ensureAuthenticated();
       const res = await fetch('/api/auth', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({ type: 'bind_email_verify', walletAddress: address, email: email.trim(), code: code.trim() }),
       });
       const d = await res.json();

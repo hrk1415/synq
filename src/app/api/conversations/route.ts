@@ -1,29 +1,32 @@
 import { NextRequest } from 'next/server';
 import { getAll, query } from '@/lib/db';
+import { getAuthenticatedWallet, unauthorized } from '@/lib/auth';
+import { formatUnits } from 'viem';
+import { validatePaymentReceiptPayload } from '@/lib/synq-message';
 
 /**
- * Conversation list for the Messages page (/messages). Unauthenticated, wallet in
- * the query (same model as /api/notify and /api/profile).
+ * Conversation list for the Messages page (/messages). The verified bearer
+ * wallet is the sole authorization identity.
  *
- * Returns every thread the wallet is part of (as buyer or seller), newest
+ * Returns every canonical thread the wallet participates in, newest
  * first, each annotated with `unread` = messages addressed to this wallet that
  * have not been read yet.
  */
 
-const isWallet = (w: unknown): w is string => typeof w === 'string' && /^0x[0-9a-fA-F]{40}$/.test(w);
-
 export async function GET(req: NextRequest) {
-  const wallet = new URL(req.url).searchParams.get('wallet');
-  if (!isWallet(wallet)) {
-    return Response.json({ error: 'Valid wallet address required' }, { status: 400 });
+  const authenticatedWallet = getAuthenticatedWallet(req);
+  if (!authenticatedWallet) return unauthorized();
+  const requestedWallet = new URL(req.url).searchParams.get('wallet');
+  if (requestedWallet && requestedWallet.toLowerCase() !== authenticatedWallet) {
+    return Response.json({ error: 'Requested wallet does not match authenticated wallet' }, { status: 403 });
   }
-  const lower = wallet.toLowerCase();
+  const lower = authenticatedWallet;
 
   const threads = await query(
     'conversations',
     (c: any) =>
-      String(c.buyerWallet || '').toLowerCase() === lower ||
-      String(c.sellerWallet || '').toLowerCase() === lower,
+      String(c.participantA || '').toLowerCase() === lower ||
+      String(c.participantB || '').toLowerCase() === lower,
   );
 
   const allMessages = await getAll('messages');
@@ -35,7 +38,22 @@ export async function GET(req: NextRequest) {
   }
 
   const conversations = threads
-    .map((c: any) => ({ ...c, unread: unreadByConversation.get(c.id) || 0 }))
+    .map((c: any) => {
+      let lastMessagePreview = c.lastMessagePreview;
+      const latest = allMessages
+        .filter((message: any) => message.conversationId === c.id)
+        .sort((a: any, b: any) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))[0];
+      if (latest?.kind === 'payment_receipt') {
+        try {
+          const payload = validatePaymentReceiptPayload(latest.payload);
+          const amount = formatUnits(BigInt(payload.amount), payload.decimals);
+          lastMessagePreview = `${String(latest.fromWallet || '').toLowerCase() === lower ? 'You sent' : 'You received'} ${amount} ${payload.symbol}`;
+        } catch {
+          lastMessagePreview = 'Payment recorded';
+        }
+      }
+      return { ...c, lastMessagePreview, unread: unreadByConversation.get(c.id) || 0 };
+    })
     .sort((a: any, b: any) =>
       String(b.lastMessageAt || b.createdAt || '').localeCompare(String(a.lastMessageAt || a.createdAt || '')),
     );

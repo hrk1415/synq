@@ -1,17 +1,19 @@
 import { NextRequest } from 'next/server';
-import { notifyDealConfirmedToSeller, notifyBuyerWorkSubmitted, notifyBuyerDealCompleted, notifySellerDealCompleted, notifyDealCancelled, notifySellerPaymentReleased, notifySellerOrderInquiry, notifyNewChatMessage, notifyBuyerOrderConfirmed, getMailStatus, type NotifyPayload } from '@/lib/notify';
+import { notifyDealConfirmedToSeller, notifyBuyerWorkSubmitted, notifyBuyerDealCompleted, notifySellerDealCompleted, notifyDealCancelled, notifySellerPaymentReleased, notifySellerOrderInquiry, notifyNewChatMessage, notifyBuyerOrderConfirmed, type NotifyPayload } from '@/lib/notify';
+import { getAuthenticatedWallet, unauthorized } from '@/lib/auth';
 
-/**
- * Delivery-config status. Lets the UI (and the operator) see whether email
- * actually leaves the machine, instead of discovering months later that every
- * notification went to data/emails.log. Returns no secret values — the login is
- * masked and the password is never read here.
- */
+/** Retained as an explicit tombstone; mail configuration is server-only. */
 export async function GET() {
-  return Response.json(getMailStatus());
+  return Response.json(
+    { error: 'Notification configuration is not publicly available' },
+    { status: 410 },
+  );
 }
 
 export async function POST(req: NextRequest) {
+  const authenticatedWallet = getAuthenticatedWallet(req);
+  if (!authenticatedWallet) return unauthorized();
+
   try {
     const body = await req.json();
     const event = body.event as NotifyPayload['event'];
@@ -34,7 +36,6 @@ export async function POST(req: NextRequest) {
 
     const payload: NotifyPayload = {
       event,
-      recipientEmail: body.recipientEmail,
       recipientName: body.recipientName,
       recipientWallet: body.recipientWallet,
       dealTitle: body.dealTitle,
@@ -49,7 +50,7 @@ export async function POST(req: NextRequest) {
 
     const result = await fn(payload);
     return Response.json(result);
-  } catch (e: any) {
-    return Response.json({ error: e.message }, { status: 500 });
+  } catch {
+    return Response.json({ error: 'Notification delivery failed' }, { status: 500 });
   }
 }

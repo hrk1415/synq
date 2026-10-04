@@ -1,5 +1,3 @@
-import fs from 'fs';
-import path from 'path';
 import nodemailer from 'nodemailer';
 import { getAll } from './db';
 
@@ -9,26 +7,6 @@ const esc = (s: unknown) =>
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
-
-function fallbackLog(to: string, subject: string, body: string) {
-  const line = [
-    `[${new Date().toISOString()}]`,
-    `TO: ${to}`,
-    `SUBJECT: ${subject}`,
-    '---',
-    body.replace(/\n/g, ' | '),
-    '',
-  ].join('\n');
-  try {
-    const dir = path.join(process.cwd(), 'data');
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.appendFileSync(path.join(dir, 'emails.log'), line + '\n');
-  } catch (e: any) {
-    // A serverless host's filesystem is read-only, so this log is best-effort.
-    // Never let a failed log write turn into a 500 on the calling request.
-    console.error(`[notify] could not write data/emails.log (${e?.code || e?.message || e}). Message follows:\n${line}`);
-  }
-}
 
 /**
  * SMTP hosts we can infer, so a user only has to supply SMTP_USER + SMTP_PASS.
@@ -55,7 +33,7 @@ const SMTP_HOST_BY_USER: Record<string, { host: string; port: number; secure: bo
 export interface MailStatus {
   /** true when a real SMTP delivery will be attempted. */
   live: boolean;
-  /** 'smtp' = delivers to a real inbox, 'log' = appended to data/emails.log only. */
+  /** 'smtp' = delivers to a real inbox, 'log' = delivery unavailable. */
   mode: 'smtp' | 'log';
   host?: string;
   port?: number;
@@ -68,7 +46,6 @@ export interface MailStatus {
   /** Env vars that still need to be filled in for live delivery. */
   missing: string[];
   fallbackRecipient: string;
-  logFile: string;
   hint: string;
 }
 
@@ -115,10 +92,9 @@ export function getMailStatus(): MailStatus {
     hostSource,
     missing,
     fallbackRecipient: fallbackRecipient(),
-    logFile: 'data/emails.log',
     hint: live
       ? `Live delivery via ${host}:${port}.`
-      : `Notifications are written to data/emails.log only — nobody receives them. Set ${missing.join(' and ')} in .env.local to deliver real email.`,
+      : `Email delivery is unavailable. Set ${missing.join(' and ')} in the server environment to deliver email.`,
   };
 }
 
@@ -134,9 +110,8 @@ function warnLogOnlyOnce(status: MailStatus) {
       '  │  EMAIL IS NOT BEING DELIVERED                                 │',
       '  ├───────────────────────────────────────────────────────────────┤',
       `  │  Missing: ${status.missing.join(', ').padEnd(51)}│`,
-      '  │  Every notification is appended to data/emails.log and        │',
-      '  │  NO human receives it. Add the vars above to .env.local        │',
-      '  │  and restart the dev server to send real email.                │',
+      '  │  Message contents are intentionally not written to logs.       │',
+      '  │  Configure SMTP before relying on email delivery.              │',
       '  └───────────────────────────────────────────────────────────────┘',
       '',
     ].join('\n'),
@@ -147,7 +122,7 @@ export interface MailResult {
   mode: 'smtp' | 'log';
   to: string;
   subject: string;
-  /** Set when SMTP was configured but the send failed and we logged instead. */
+  /** Set when SMTP was configured but delivery failed. */
   error?: string;
 }
 
@@ -156,7 +131,6 @@ async function sendMail(to: string, subject: string, html: string, text: string)
 
   if (!status.live) {
     warnLogOnlyOnce(status);
-    fallbackLog(to, subject, text);
     return { mode: 'log', to, subject };
   }
 
@@ -175,13 +149,11 @@ async function sendMail(to: string, subject: string, html: string, text: string)
       text,
     });
     return { mode: 'smtp', to, subject };
-  } catch (e: any) {
-    // SMTP was configured but rejected us. Log the message so it isn't lost and
-    // report the failure — do NOT pretend it was delivered.
-    const reason = String(e?.response || e?.message || e).slice(0, 300);
-    console.error(`[notify] SMTP send failed via ${status.host}:${status.port} — ${reason}`);
-    fallbackLog(to, `[SMTP FAILED] ${subject}`, `${text}\n\nSMTP error: ${reason}`);
-    return { mode: 'log', to, subject, error: reason };
+  } catch {
+    // Never place the recipient, subject, verification code, or message body in
+    // ordinary server logs. Provider details can also contain recipient data.
+    console.error('[notify] SMTP delivery failed', { timestamp: new Date().toISOString() });
+    return { mode: 'log', to, subject, error: 'Email delivery failed' };
   }
 }
 

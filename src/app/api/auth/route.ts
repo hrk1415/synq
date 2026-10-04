@@ -1,9 +1,9 @@
 import { NextRequest } from 'next/server';
 import crypto from 'crypto';
 import { verifyMessage } from 'viem';
-import { signToken, verifyToken } from '@/lib/auth';
+import { signToken, verifyToken, getUserFromRequest } from '@/lib/auth';
 import { getAll, create, update, remove, query } from '@/lib/db';
-import { sendEmailVerificationCode, getMailStatus } from '@/lib/notify';
+import { sendEmailVerificationCode } from '@/lib/notify';
 
 const SIG_MAX_AGE_MS = 5 * 60 * 1000;
 const CODE_TTL_MIN = 10;
@@ -20,8 +20,18 @@ const newUserFields = () => ({
   createdAt: new Date().toISOString(),
 });
 
-/**
- * The message the wallet must sign. Contains the address (so a signature for
+function checkWalletAuth(req: NextRequest, targetWallet?: string) {
+  const authUser = getUserFromRequest(req);
+  if (!authUser) {
+    return { error: 'Authentication required', status: 401 };
+  }
+  if (targetWallet && (!authUser.walletAddress || authUser.walletAddress.toLowerCase() !== String(targetWallet).toLowerCase())) {
+    return { error: 'Unauthorized: Bearer token wallet does not match requested wallet', status: 403 };
+  }
+  return { user: authUser };
+}
+
+/** The message the wallet must sign. Contains the address (so a signature for
  * one wallet can't be presented as another) and an ISO timestamp (so an old
  * signature stops working after SIG_MAX_AGE_MS).
  */
@@ -45,13 +55,14 @@ export async function GET(req: NextRequest) {
       return Response.json({ error: 'Invalid wallet address' }, { status: 400 });
     }
     if (url.searchParams.get('mode') === 'email_status') {
+      const auth = checkWalletAuth(req, wallet);
+      if ('error' in auth) {
+        return Response.json({ error: auth.error }, { status: auth.status });
+      }
+      const walletLower = wallet.toLowerCase();
       const users = await getAll('users');
-      const user = users.find((u: any) => u.walletAddress?.toLowerCase() === wallet.toLowerCase());
-      const email = user?.email ? String(user.email) : null;
-      return Response.json({
-        bound: !!email,
-        email: email ? email.replace(/^(.{2}).*(@.+)$/, '$1***$2') : null,
-      });
+      const user = users.find((u: any) => u.walletAddress?.toLowerCase() === walletLower);
+      return Response.json({ bound: Boolean(user?.email) });
     }
     const issuedAt = new Date().toISOString();
     return Response.json({ message: buildSignInMessage(wallet, issuedAt), issuedAt, expiresInSeconds: SIG_MAX_AGE_MS / 1000 });
@@ -83,8 +94,6 @@ export async function POST(req: NextRequest) {
       if (!walletAddress || !/^0x[0-9a-fA-F]{40}$/.test(walletAddress)) {
         return Response.json({ error: 'Valid wallet address required' }, { status: 400 });
       }
-      // A wallet address is public information. Without a signature anyone could
-      // mint a token for any address, so proof of control is mandatory.
       if (!signature || !issuedAt) {
         return Response.json(
           { error: 'Signature required. GET /api/auth?address=0x... to obtain the message to sign, then POST { type: "wallet", walletAddress, issuedAt, signature }.' },
@@ -133,8 +142,6 @@ export async function POST(req: NextRequest) {
     }
 
     // ----------------------------------------------------------------- email
-    // Step 1: request a code. No token is issued here — proving you can read
-    // the inbox is the whole point of email sign-in.
     if (type === 'email') {
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email))) {
         return Response.json({ error: 'Valid email required' }, { status: 400 });
@@ -143,14 +150,12 @@ export async function POST(req: NextRequest) {
       const plainCode = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
       const expiresAt = new Date(Date.now() + CODE_TTL_MIN * 60_000).toISOString();
 
-      // Invalidate any outstanding codes for this address.
       for (const v of await query('verifications', (v: any) => String(v.email).toLowerCase() === normalized)) {
         await remove('verifications', v.id);
       }
       await create('verifications', {
         email: normalized,
         name: name || undefined,
-        // Hashed, so reading data/db.json does not hand over a live sign-in code.
         codeHash: crypto.createHash('sha256').update(plainCode).digest('hex'),
         attempts: 0,
         expiresAt,
@@ -158,20 +163,18 @@ export async function POST(req: NextRequest) {
       });
 
       const mail = await sendEmailVerificationCode(normalized, plainCode, CODE_TTL_MIN);
-      const status = getMailStatus();
       return Response.json({
         requiresVerification: true,
         email: normalized,
         expiresAt,
         delivery: mail.mode,
-        message: status.live
+        message: mail.mode === 'smtp'
           ? `A 6-digit code was sent to ${normalized}. POST { type: "email_verify", email, code } to sign in.`
-          : `SMTP is not configured, so the code was written to ${status.logFile} instead of being emailed. POST { type: "email_verify", email, code } to sign in.`,
+          : 'Email delivery is unavailable. Configure SMTP and request a new code.',
         ...(mail.error ? { deliveryError: mail.error } : {}),
       });
     }
 
-    // Step 2: redeem the code.
     if (type === 'email_verify') {
       if (!email || !code) {
         return Response.json({ error: 'email and code are required' }, { status: 400 });
@@ -216,11 +219,13 @@ export async function POST(req: NextRequest) {
     }
 
     // ------------------------------------------------- bind email to a wallet
-    // Wallet sign-in creates the account, but notifications need an inbox.
-    // Step 1: request a code for the email being bound.
     if (type === 'bind_email') {
       if (!walletAddress || !/^0x[0-9a-fA-F]{40}$/.test(String(walletAddress))) {
         return Response.json({ error: 'Valid wallet address required' }, { status: 400 });
+      }
+      const auth = checkWalletAuth(req, walletAddress);
+      if ('error' in auth) {
+        return Response.json({ error: auth.error }, { status: auth.status });
       }
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email))) {
         return Response.json({ error: 'Valid email required' }, { status: 400 });
@@ -253,16 +258,19 @@ export async function POST(req: NextRequest) {
         email: normalized,
         delivery: mail.mode,
         message: mail.mode === 'log'
-          ? 'SMTP is not configured, so the code was written to data/emails.log instead of being emailed.'
+          ? 'Email delivery is unavailable. Configure SMTP and request a new code.'
           : `A 6-digit code was sent to ${normalized}.`,
         ...(mail.error ? { deliveryError: mail.error } : {}),
       });
     }
 
-    // Step 2: redeem the code and store the email on the wallet's account.
     if (type === 'bind_email_verify') {
       if (!walletAddress || !email || !code) {
         return Response.json({ error: 'walletAddress, email and code are required' }, { status: 400 });
+      }
+      const auth = checkWalletAuth(req, walletAddress);
+      if ('error' in auth) {
+        return Response.json({ error: auth.error }, { status: auth.status });
       }
       const normalized = String(email).toLowerCase().trim();
       const walletLower = String(walletAddress).toLowerCase();
@@ -304,7 +312,29 @@ export async function POST(req: NextRequest) {
       return Response.json({ ok: true, bound: true, email: normalized, user });
     }
 
-    return Response.json({ error: 'Invalid auth type. Use wallet, email, email_verify, bind_email or bind_email_verify.' }, { status: 400 });
+    // ------------------------------------------------ unbind email from a wallet
+    if (type === 'unbind_email') {
+      if (!walletAddress || !/^0x[0-9a-fA-F]{40}$/.test(String(walletAddress))) {
+        return Response.json({ error: 'Valid wallet address required' }, { status: 400 });
+      }
+      const auth = checkWalletAuth(req, walletAddress);
+      if ('error' in auth) {
+        return Response.json({ error: auth.error }, { status: auth.status });
+      }
+      const walletLower = String(walletAddress).toLowerCase();
+      const users = await getAll('users');
+      const user = users.find((u: any) => u.walletAddress?.toLowerCase() === walletLower);
+      if (!user || !user.email) {
+        return Response.json({ ok: true, unbound: true, message: 'No email was linked' });
+      }
+      await update('users', user.id, { email: null });
+      return Response.json({ ok: true, unbound: true });
+    }
+
+    return Response.json(
+      { error: 'Invalid auth type. Use wallet, email, email_verify, bind_email, bind_email_verify, or unbind_email.' },
+      { status: 400 },
+    );
   } catch (e: any) {
     return Response.json({ error: e.message || 'Auth failed' }, { status: 500 });
   }

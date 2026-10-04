@@ -1,13 +1,8 @@
 import { NextRequest } from 'next/server';
 import { getAll, create, update } from '@/lib/db';
+import { getUserFromRequest } from '@/lib/auth';
 
-/**
- * Wallet-keyed profile (display name + base64 avatar), stored on the `users`
- * record. Unauthenticated by design — identity in this app is the connected
- * wallet and there is no client session, so the wallet is passed in the
- * query/body, exactly like /api/notify. See the plan's "Notes / limitations"
- * for the follow-up signature-gating.
- */
+/** Wallet-keyed private profile access for the authenticated wallet owner. */
 
 const isWallet = (w: unknown): w is string => typeof w === 'string' && /^0x[0-9a-fA-F]{40}$/.test(w);
 
@@ -32,21 +27,43 @@ export async function GET(req: NextRequest) {
   if (!isWallet(wallet)) {
     return Response.json({ error: 'Valid wallet address required' }, { status: 400 });
   }
-  const user = await findByWallet(wallet);
-  return Response.json({
-    name: user?.name || null,
-    avatar: user?.avatar || null,
-    email: user?.email || null,
-  });
+  const authUser = getUserFromRequest(req);
+  if (!authUser?.walletAddress) {
+    return Response.json({ error: 'Authentication required' }, { status: 401 });
+  }
+  if (!isWallet(authUser.walletAddress) || authUser.walletAddress.toLowerCase() !== wallet.toLowerCase()) {
+    return Response.json({ error: 'Not authorized' }, { status: 403 });
+  }
+
+  try {
+    const user = await findByWallet(wallet);
+    return Response.json({
+      name: user?.name || null,
+      avatar: user?.avatar || null,
+      email: user?.email || null,
+    });
+  } catch {
+    return Response.json({ error: 'Failed to load profile' }, { status: 500 });
+  }
 }
 
 export async function POST(req: NextRequest) {
   try {
+    const authUser = getUserFromRequest(req);
+    if (!authUser) {
+      return Response.json({ error: 'Authentication required to update profile' }, { status: 401 });
+    }
+
     const body = await req.json();
     const { walletAddress, name, avatar } = body;
     if (!isWallet(walletAddress)) {
       return Response.json({ error: 'Valid wallet address required' }, { status: 400 });
     }
+
+    if (!authUser.walletAddress || authUser.walletAddress.toLowerCase() !== walletAddress.toLowerCase()) {
+      return Response.json({ error: 'Unauthorized: Bearer token wallet does not match request wallet' }, { status: 403 });
+    }
+
     if (typeof name === 'string' && name.length > 60) {
       return Response.json({ error: 'Name is too long (max 60 characters)' }, { status: 400 });
     }
