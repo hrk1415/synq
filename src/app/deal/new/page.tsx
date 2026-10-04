@@ -1,50 +1,135 @@
 'use client';
 
-import { useState, useRef, useEffect, Suspense } from 'react';
+import { useState, useRef, useEffect, Suspense, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, ArrowRight, Check, Sparkles, Bot, Loader2, MessageSquare } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
+import {
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  Sparkles,
+  Loader2,
+  MessageSquare,
+  ChevronDown,
+  ChevronUp,
+  Search,
+  X,
+  Calendar,
+  Clock,
+  ShieldCheck,
+  Plus,
+  Trash2,
+  FileSignature,
+  Info,
+  AlertTriangle,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Separator } from '@/components/ui/separator';
-import { useAccount, useChainId } from 'wagmi';
-import { parseUnits, decodeEventLog } from 'viem';
-import { useFactoryContract } from '@/hooks/useFactoryContract';
-import { formatCurrency, shortenAddress } from '@/lib/utils';
-import { nexotiqFactoryABI } from '@/lib/contracts/abis';
-import { getTokenInfo, chainKeyForId, isSupportedChain, DEFAULT_CHAIN_ID } from '@/lib/contracts/addresses';
+import { Press_Start_2P } from 'next/font/google';
+import { useAccount, useSignTypedData } from 'wagmi';
+import { getAddress, isAddress } from 'viem';
+
+import { shortenAddress, cn, normalizeWallet } from '@/lib/utils';
+import {
+  SYNQ_V2_SEPOLIA_CONFIG,
+  SEPOLIA_CHAIN_ID,
+} from '@/lib/contracts/addresses';
+import {
+  ZERO_ADDRESS,
+  ZERO_BYTES32,
+  MIN_REVIEW_WINDOW_SECONDS,
+  MAX_REVIEW_WINDOW_SECONDS,
+  getStandardV2Eip712Domain,
+  DEAL_PROPOSAL_EIP712_TYPES,
+  parseUsdcAmount,
+  formatUsdcAmount,
+  hashMilestoneSpec,
+  hashStandardV2Milestones,
+  hashDealProposalV2,
+  verifyDealProposalSignature,
+  validateStandardV2ProtocolRules,
+  validateStandardV2UxRules,
+} from '@/lib/deals/v2';
+import { fetchNextClientProposalNonce } from '@/lib/deals/v2-actions';
+import { sepoliaPublicClient } from '@/lib/chain';
 import { ChainGuard } from '@/components/shared/ChainGuard';
 import { useDirectoryContract } from '@/hooks/useDirectoryContract';
+import { useSepoliaNetwork } from '@/hooks/useSepoliaNetwork';
+import { useSidebar } from '@/context/SidebarContext';
+import { useBatchFreelancerCompletedDeals } from '@/hooks/useFreelancerStats';
+import { useSynqIdentity, useSynqIdentities } from '@/hooks/useSynqIdentity';
+import { useAuthSession } from '@/hooks/useAuthSession';
+import { DealReceipt } from '@/components/deals/DealReceipt';
+import type { DealProposalV2, StandardV2MilestoneInit } from '@/types/deal-v2';
 
-const ZERO = '0x0000000000000000000000000000000000000000';
+const pressStart2P = Press_Start_2P({
+  subsets: ['latin'],
+  weight: '400',
+  display: 'swap',
+});
 
 const tokenize = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
 
-// Assets available per chain (address(0) = native ETH)
-const SUPPORTED_ASSETS: Record<number, { address: string; symbol: string }[]> = {
-  31337: [{ address: ZERO, symbol: 'ETH' }],
-  11155111: [
-    { address: ZERO, symbol: 'ETH' },
-    { address: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238', symbol: 'USDC' },
-  ],
-};
+const SUGGESTED_JOB_TITLES = [
+  'Web Development',
+  'Frontend Development',
+  'Backend Development',
+  'Full Stack Development',
+  'Web3 Development',
+  'React Development',
+  'Next.js Development',
+  'Mobile App Development',
+  'API Development',
+  'Smart Contract Development',
+  'Web Design',
+  'UI Design',
+  'UX Design',
+  'UI/UX Design',
+  'Landing Page Design',
+  'Graphic Design',
+  'Logo Design',
+  'Product Design',
+  'Smart Contract Audit',
+  'Blockchain Development',
+  'Solidity Development',
+  'Web3 Integration',
+  'Security Audit',
+  'Content Writing',
+  'Technical Writing',
+  'Copywriting',
+  'Documentation',
+];
+
+interface FormMilestone {
+  title: string;
+  description: string;
+  amountUsdc: string;
+  deadlineDate: string;
+  deadlineTime: string;
+  reviewWindowSeconds: number;
+  gracePeriodSeconds: number;
+}
 
 const steps = [
   { title: 'Type', description: 'What are you buying or selling?' },
   { title: 'Counterparty', description: 'Who is the counterparty?' },
-  { title: 'Budget', description: 'What is the budget (in wei)?' },
-  { title: 'Deliverables', description: 'What are the deliverables?' },
-  { title: 'Deadline', description: 'Pick the deadline date and time' },
-  { title: 'Payment', description: 'How should payment be released?' },
-  { title: 'Protection', description: 'Do you want Adaptive Protection?' },
-  { title: 'Review', description: 'Review your deal terms' },
+  { title: 'Deliverables', description: 'What is the overall scope?' },
+  { title: 'Payment', description: 'How should payment be structured?' },
+  { title: 'Milestones', description: 'Define deliverables & deadlines' },
+  { title: 'Protection', description: 'Adaptive Protection level' },
+  { title: 'Review', description: 'Review & sign proposal' },
 ];
 
 export default function NewDealPage() {
   return (
-    <Suspense fallback={<div className="flex items-center justify-center py-20"><Loader2 size={24} className="animate-spin text-blue-400" /></div>}>
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center py-20">
+          <Loader2 size={24} className="animate-spin text-blue-400" />
+        </div>
+      }
+    >
       <NewDealForm />
     </Suspense>
   );
@@ -53,638 +138,1311 @@ export default function NewDealPage() {
 function NewDealForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { address } = useAccount();
-  const chainId = useChainId();
-  const factory = useFactoryContract();
+  const { address, isConnected } = useAccount();
+  const { collapsed } = useSidebar();
+  const { ensureSepolia, networkReady } = useSepoliaNetwork();
+  const { ensureAuthenticated } = useAuthSession();
+  const { signTypedDataAsync } = useSignTypedData();
+
   const directory = useDirectoryContract(address);
-  const [step, setStep] = useState(searchParams.get('seller') ? 1 : 0);
+  const initialSeller = searchParams.get('seller') || '';
+  const entryMode = useRef<'open' | 'freelancer-prefilled'>(
+    initialSeller ? 'freelancer-prefilled' : 'open'
+  ).current;
+
+  const [step, setStep] = useState(initialSeller ? 1 : 0);
   const [matches, setMatches] = useState<any[]>([]);
   const [matchState, setMatchState] = useState<'idle' | 'matching' | 'done'>('idle');
   const [matchError, setMatchError] = useState('');
+
   const prefilledDeadline = searchParams.get('deadline') || '';
+  const rawUrlPayment = searchParams.get('payment');
+  const initialPaymentStructure =
+    rawUrlPayment === '50/50' || rawUrlPayment === '50-50' || rawUrlPayment === 'half'
+      ? '50-50'
+      : rawUrlPayment === 'single'
+      ? 'single'
+      : 'custom';
+
   const [form, setForm] = useState({
     type: searchParams.get('type') || '',
-    counterparty: searchParams.get('seller') || '',
-    budget: searchParams.get('budget') || '',
+    counterparty: initialSeller,
+    budget: searchParams.get('budget') || '1.00',
     deliverables: '',
-    deadline: prefilledDeadline ? String(Math.floor(new Date(`${prefilledDeadline}T23:59`).getTime() / 1000)) : '',
-    paymentStructure: searchParams.get('payment') === '50/50' ? 'half' : 'full',
-    protection: true,
-    protectionLevel: 'enhanced',
-    aiEnhanced: false,
-    asset: ZERO,
+    paymentStructure: initialPaymentStructure as 'single' | '50-50' | 'custom',
+    protection: false,
+    expiryDays: 7,
   });
-  const [deadlineDate, setDeadlineDate] = useState(prefilledDeadline);
-  const [deadlineTime, setDeadlineTime] = useState('23:59');
-  const [creating, setCreating] = useState(false);
+
+  const getDefaultDeadlineDate = (daysFromNow: number) => {
+    const d = new Date(Date.now() + daysFromNow * 86400 * 1000);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const [milestones, setMilestones] = useState<FormMilestone[]>([
+    {
+      title: 'Milestone 1 — Initial Deliverable',
+      description: 'Initial project milestone deliverable and acceptance criteria.',
+      amountUsdc: '0.50',
+      deadlineDate: prefilledDeadline || getDefaultDeadlineDate(7),
+      deadlineTime: '23:59',
+      reviewWindowSeconds: 86400,
+      gracePeriodSeconds: 0,
+    },
+    {
+      title: 'Milestone 2 — Final Delivery',
+      description: 'Final project milestone deliverable, testing, and acceptance.',
+      amountUsdc: '0.50',
+      deadlineDate: prefilledDeadline || getDefaultDeadlineDate(14),
+      deadlineTime: '23:59',
+      reviewWindowSeconds: 86400,
+      gracePeriodSeconds: 0,
+    },
+  ]);
+
+  const [signing, setSigning] = useState(false);
   const [error, setError] = useState('');
+  const [submittedProposal, setSubmittedProposal] = useState<any | null>(null);
+  const [nonceConflict, setNonceConflict] = useState(false);
+  const [refreshingNonce, setRefreshingNonce] = useState(false);
 
-  // On an unsupported chain we show the default chain's asset list so the form
-  // still renders — ChainGuard tells the user to switch, and handleCreate refuses
-  // to submit. Never fall back to hardhat: its addresses don't exist elsewhere.
-  const assets = SUPPORTED_ASSETS[chainId] || SUPPORTED_ASSETS[DEFAULT_CHAIN_ID];
-  const activeAsset = assets.find((a) => a.address === form.asset) || assets[0];
-  const tokenChainKey = chainKeyForId(isSupportedChain(chainId) ? chainId : DEFAULT_CHAIN_ID);
-  const assetInfo = getTokenInfo(tokenChainKey, form.asset);
-  const assetDecimals = activeAsset.symbol === 'ETH' ? 18 : assetInfo.decimals;
-
-  /**
-   * The protection pool is ETH-denominated: it holds ETH, quotes premiums in wei
-   * and pays claims in ETH. Pricing coverage off an ERC20 `coverageAmount` mixed
-   * base units with wei, so a 100 USDC deal was quoted a premium of a few hundred
-   * thousand wei — coverage that was effectively free and could never pay out.
-   * Coverage is therefore ETH-only, enforced in the contracts; the form must not
-   * offer a checkbox that the factory will reject.
-   */
-  const isEthDeal = String(form.asset) === ZERO;
-  const protectionEnabled = form.protection && isEthDeal;
-
-  const update = (key: string, value: string | boolean) => {
-    setForm(prev => ({ ...prev, [key]: value }));
-  };
-
-  const canProceed = () => {
-    switch (step) {
-      case 0: return form.type.length > 0;
-      case 1: return form.counterparty.startsWith('0x') && form.counterparty.length === 42;
-      case 2: return form.budget.length > 0 && !isNaN(Number(form.budget));
-      case 3: return form.deliverables.length > 0;
-      case 4: return !!deadlineDate && !isNaN(Number(form.deadline));
-      default: return true;
-    }
-  };
-
-  const scoreSeller = (p: any) => {
-    let score = 0;
-    const typeLower = form.type.toLowerCase();
-    const cat = String(p.category || '').toLowerCase();
-    if (typeLower && typeLower !== 'other') {
-      if (cat === typeLower) score += 30;
-      else if (cat.includes(typeLower) || typeLower.includes(cat)) score += 18;
-    }
-    const skills = (p.skills || []).map((s: string) => String(s).toLowerCase());
-    const bio = String(p.bio || '').toLowerCase();
-    const name = String(p.name || '').toLowerCase();
-    const terms = [...tokenize(form.type), ...tokenize(form.deliverables), typeLower.replace(/\s/g, '')];
-    const haystack = [name, bio, ...skills].join(' ');
-    for (const t of terms) {
-      if (!t || t.length < 3) continue;
-      if (skills.includes(t)) score += 10;
-      else if (haystack.includes(t)) score += 6;
-    }
-    if (p.available) score += 5;
-    score += Math.min(Number(p.completedDeals || 0) * 2, 8);
-    return score;
-  };
-
-  const runMatch = (autoPick = false) => {
-    setMatchState('matching');
-    setMatchError('');
-    if (directory.isLoading) {
-      setMatches([]);
-      setMatchState('done');
-      setMatchError('Loading registered sellers... try again in a moment.');
-      return;
-    }
-    const sellers = (directory.profiles || []).filter(
-      (p: any) => p && p.wallet && p.wallet !== address && String(p.wallet) !== ZERO && (p.available || true)
-    );
-    if (sellers.length === 0) {
-      setMatches([]);
-      setMatchState('done');
-      setMatchError('No sellers are registered in the Deal Port yet. Register a seller profile on the Deal Port page first.');
-      return;
-    }
-    const scored = sellers
-      .map((p: any) => ({ p, score: scoreSeller(p) }))
-      .sort((a: any, b: any) => b.score - a.score)
-      .slice(0, 3);
-    setMatches(scored);
-    setMatchState('done');
-    if (autoPick && scored.length > 0) {
-      setForm((prev) => ({ ...prev, counterparty: scored[0].p.wallet as string }));
-    }
-  };
-
-  const handleCreate = async () => {
-    if (!address) { setError('Connect your wallet first'); return; }
-    if (!factory.onSupportedChain) { setError('Switch your wallet to Ethereum Sepolia — Synq contracts are not deployed on this network.'); return; }
-    if (!form.counterparty.startsWith('0x')) { setError('Enter a valid counterparty address'); return; }
-    setCreating(true);
-    setError('');
+  const handleRefreshNonce = async () => {
     try {
-      // parseUnits, not `Number(budget) * 10 ** decimals` — the multiply loses
-      // precision above 2^53 (any ETH amount that isn't a round power of ten)
-      // and silently truncates extra decimal places on 6-decimal assets.
-      const rawBudget = parseUnits(String(form.budget).trim(), assetDecimals);
-      if (rawBudget <= 0n) { setError('Budget must be greater than zero'); setCreating(false); return; }
-      factory.createDeal(
-        form.counterparty as `0x${string}`,
-        form.type,
-        form.deliverables,
-        rawBudget,
-        BigInt(form.deadline),
-        protectionEnabled,
-        form.asset as `0x${string}`,
-      );
-    } catch (e: any) {
-      setError(e?.message?.includes('decimal') || e?.name === 'InvalidDecimalNumberError'
-        ? `Enter a valid ${activeAsset.symbol} amount with at most ${assetDecimals} decimal places.`
-        : e?.message || 'Transaction failed');
-      setCreating(false);
-    }
-  };
-
-  const txConfirmed = factory.txReceipt.isSuccess;
-  const notifiedRef = useRef(false);
-
-  // The factory emits `DealCreated(dealAddr, buyer, seller, totalValue, dealId)`,
-  // but writeContract only returns the tx hash. Recover the new deal address from
-  // the receipt logs so we can link it to the chat conversation.
-  const getCreatedDealAddress = (receipt: any): string | null => {
-    const logs = receipt?.logs || [];
-    for (const log of logs) {
-      try {
-        const decoded = decodeEventLog({
-          abi: nexotiqFactoryABI,
-          data: (log.data || '0x') as any,
-          topics: (log.topics || []) as any,
-        });
-        if (decoded.eventName === 'DealCreated') {
-          const args = decoded.args as any;
-          if (args && args.dealAddr) return String(args.dealAddr);
-        }
-      } catch {
-        /* not this event */
+      setRefreshingNonce(true);
+      setError('');
+      if (!address) {
+        setError('Please connect your wallet first.');
+        return;
       }
+      await fetchNextClientProposalNonce(address, sepoliaPublicClient);
+      setNonceConflict(false);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to refresh proposal nonce');
+    } finally {
+      setRefreshingNonce(false);
     }
-    return null;
   };
 
-  const createdDealAddress = txConfirmed ? getCreatedDealAddress(factory.txReceipt.data) : null;
+  // Negotiator Handoff
+  const negotiatorConvId = searchParams.get('negotiatorConversationId');
+  const negotiatorMode = searchParams.get('negotiatorMode');
+  const [handoffLoading, setHandoffLoading] = useState<boolean>(!!negotiatorConvId);
+  const [handoffError, setHandoffError] = useState<string | null>(null);
+  const handoffLoadedRef = useRef<boolean>(false);
 
   useEffect(() => {
-    if (txConfirmed && !notifiedRef.current) {
-      notifiedRef.current = true;
-      fetch('/api/notify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          event: 'deal_confirmed',
-          recipientWallet: form.counterparty,
-          recipientName: 'seller',
-          dealTitle: form.type || 'Deal',
-          dealAmount: form.budget,
-        }),
-      }).catch(() => {});
+    if (!negotiatorConvId || handoffLoadedRef.current) return;
 
-      // Link the on-chain deal to the chat thread. When the buyer opened the
-      // wizard from an existing conversation (Messages → "Create escrow deal")
-      // we have its id; otherwise the buyer will message the seller next and the
-      // deal address is passed along so the thread can link then.
-      const dealAddr = getCreatedDealAddress(factory.txReceipt.data);
-      const cid = searchParams.get('conversationId');
-      if (dealAddr && cid) {
-        fetch('/api/conversations/link', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            conversationId: cid,
-            buyerWallet: address,
-            sellerWallet: form.counterparty,
-            dealAddress: dealAddr,
-          }),
-        }).catch(() => {});
+    let cancelled = false;
+    setHandoffLoading(true);
+    setHandoffError(null);
+
+    (async () => {
+      try {
+        const token = await ensureAuthenticated();
+        if (cancelled) return;
+
+        const isEditMode = negotiatorMode === 'edit';
+        const url = `/api/negotiator/conversations/${encodeURIComponent(negotiatorConvId)}/deal-handoff${isEditMode ? '?mode=edit' : ''}`;
+
+        const res = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (cancelled) return;
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          setHandoffError(errData.error || 'Failed to load negotiated deal draft.');
+          setHandoffLoading(false);
+          return;
+        }
+
+        const data = await res.json();
+        if (cancelled || !data?.handoff) return;
+
+        const h = data.handoff;
+        handoffLoadedRef.current = true;
+
+        const targetStructure = h.paymentStructure && ['single', '50-50', 'custom'].includes(h.paymentStructure)
+          ? h.paymentStructure
+          : 'custom';
+
+        const amountStr = h.amount ? String(h.amount) : '1.00';
+        const deadlineDateStr = h.deadline || getDefaultDeadlineDate(14);
+
+        setForm((prev) => ({
+          ...prev,
+          type: h.title ?? prev.type ?? '',
+          counterparty: h.seller ?? prev.counterparty ?? '',
+          budget: amountStr,
+          deliverables: h.scope ?? prev.deliverables ?? '',
+          paymentStructure: targetStructure,
+        }));
+
+        // Adjust milestones based on negotiated handoff
+        if (targetStructure === 'single') {
+          setMilestones([
+            {
+              title: h.title ? `${h.title} — Final Delivery` : 'Final Deliverable',
+              description: h.scope || 'Complete deliverable as agreed.',
+              amountUsdc: amountStr,
+              deadlineDate: deadlineDateStr,
+              deadlineTime: '23:59',
+              reviewWindowSeconds: 86400,
+              gracePeriodSeconds: 0,
+            },
+          ]);
+        } else if (targetStructure === '50-50') {
+          let halfAmount = '0.50';
+          try {
+            const totalUnits = parseUsdcAmount(amountStr);
+            halfAmount = formatUsdcAmount(totalUnits / 2n);
+          } catch {}
+          setMilestones([
+            {
+              title: 'Milestone 1 — Initial Progress',
+              description: 'Initial deliverable components.',
+              amountUsdc: halfAmount,
+              deadlineDate: getDefaultDeadlineDate(7),
+              deadlineTime: '23:59',
+              reviewWindowSeconds: 86400,
+              gracePeriodSeconds: 0,
+            },
+            {
+              title: 'Milestone 2 — Final Delivery',
+              description: h.scope || 'Final deliverable and review.',
+              amountUsdc: halfAmount,
+              deadlineDate: deadlineDateStr,
+              deadlineTime: '23:59',
+              reviewWindowSeconds: 86400,
+              gracePeriodSeconds: 0,
+            },
+          ]);
+        }
+
+        const targetStep = typeof h.targetStep === 'number' ? Math.min(h.targetStep, 6) : 6;
+        setStep(targetStep);
+        setHandoffLoading(false);
+      } catch (err: any) {
+        if (!cancelled) {
+          setHandoffError(err?.message || 'Failed to load negotiated deal draft.');
+          setHandoffLoading(false);
+        }
       }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [negotiatorConvId, negotiatorMode, ensureAuthenticated]);
+
+  // Adjust milestone amounts when payment structure or budget changes
+  const applyPaymentStructure = (struct: 'single' | '50-50' | 'custom', budgetStr: string) => {
+    let cleanBudget = budgetStr.trim() || '1.00';
+    if (struct === 'single') {
+      setMilestones([
+        {
+          title: form.type ? `${form.type} — Final Delivery` : 'Final Deliverable',
+          description: form.deliverables || 'Complete deliverable according to agreed scope.',
+          amountUsdc: cleanBudget,
+          deadlineDate: milestones[0]?.deadlineDate || getDefaultDeadlineDate(14),
+          deadlineTime: '23:59',
+          reviewWindowSeconds: 86400,
+          gracePeriodSeconds: 0,
+        },
+      ]);
+    } else if (struct === '50-50') {
+      let half = '0.50';
+      try {
+        const total = parseUsdcAmount(cleanBudget);
+        half = formatUsdcAmount(total / 2n);
+      } catch {}
+      setMilestones([
+        {
+          title: 'Milestone 1 — Initial Deliverable',
+          description: 'Initial deliverables and progress demo.',
+          amountUsdc: half,
+          deadlineDate: milestones[0]?.deadlineDate || getDefaultDeadlineDate(7),
+          deadlineTime: '23:59',
+          reviewWindowSeconds: 86400,
+          gracePeriodSeconds: 0,
+        },
+        {
+          title: 'Milestone 2 — Final Deliverable',
+          description: 'Final delivery and documentation.',
+          amountUsdc: half,
+          deadlineDate: milestones[1]?.deadlineDate || getDefaultDeadlineDate(14),
+          deadlineTime: '23:59',
+          reviewWindowSeconds: 86400,
+          gracePeriodSeconds: 0,
+        },
+      ]);
     }
-  }, [txConfirmed, form.counterparty, form.type, form.budget, factory.txReceipt.data, address, searchParams]);
+  };
+
+  // Live search and freelancer directory state
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [showAllMatches, setShowAllMatches] = useState(false);
+  const [isAiExpanded, setIsAiExpanded] = useState(false);
+  const [avatarsMap, setAvatarsMap] = useState<Record<string, string>>({});
+  const [namesMap, setNamesMap] = useState<Record<string, string>>({});
+  const [reviewCountsMap, setReviewCountsMap] = useState<Record<string, number>>({});
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(-1);
+  const searchRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!searchFocused) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setSearchFocused(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [searchFocused]);
+
+  const freelancerIdentity = useSynqIdentity(form.counterparty);
+  const clientIdentity = useSynqIdentity(address);
+
+  const formatIdentityDisplay = (idObj: { wallet: string; displayHandle: string | null; shortWallet: string }) => {
+    if (!idObj.wallet) return '';
+    if (idObj.displayHandle) {
+      return `${idObj.displayHandle} (${idObj.shortWallet})`;
+    }
+    return idObj.shortWallet;
+  };
+
+  const freelancerIdentityText = formatIdentityDisplay(freelancerIdentity);
+  const clientIdentityText = formatIdentityDisplay(clientIdentity);
+
+  const filteredSuggestions = useMemo(() => {
+    const rawInput = form.type.trim();
+    if (!rawInput) return [];
+
+    const lowerInput = rawInput.toLowerCase();
+    const inputTokens = tokenize(lowerInput);
+
+    return SUGGESTED_JOB_TITLES.filter((title) => {
+      const lowerTitle = title.toLowerCase();
+      if (lowerTitle === lowerInput) return false;
+      if (lowerTitle.includes(lowerInput)) return true;
+      if (inputTokens.length > 1) {
+        return inputTokens.every((token) => lowerTitle.includes(token));
+      }
+      return false;
+    }).slice(0, 6);
+  }, [form.type]);
+
+  const selectFreelancer = (wallet: string) => {
+    const normalized = (wallet || '').trim();
+    setForm((prev) => ({ ...prev, counterparty: normalized }));
+    setError('');
+  };
+
+  const clearSelectedFreelancer = () => {
+    setForm((prev) => ({ ...prev, counterparty: '' }));
+    setMatches([]);
+    setMatchState('idle');
+    setMatchError('');
+  };
+
+  const sellerWallets = useMemo(
+    () => (directory.profiles || []).filter((p: any) => p && p.wallet).map((p: any) => String(p.wallet).trim()),
+    [directory.profiles]
+  );
+  const uniqueWalletsKey = useMemo(() => {
+    const list = [...sellerWallets];
+    if (address) list.push(address.trim());
+    return Array.from(new Set(list.filter(Boolean).map((w) => w.toLowerCase()))).sort().join(',');
+  }, [sellerWallets, address]);
+
+  const { completedCountsMap } = useBatchFreelancerCompletedDeals(sellerWallets);
+  const { identitiesMap: sellerIdentities } = useSynqIdentities(sellerWallets);
+
+  useEffect(() => {
+    if (!uniqueWalletsKey) return;
+    const uniqueWallets = uniqueWalletsKey.split(',');
+    let isMounted = true;
+    fetch('/api/profile/public', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wallets: uniqueWallets }),
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!isMounted || !Array.isArray(data?.profiles)) return;
+        const avatarMap: Record<string, string> = {};
+        const nameMap: Record<string, string> = {};
+        for (const p of data.profiles) {
+          if (p?.wallet) {
+            const key = String(p.wallet).toLowerCase();
+            if (p.avatar) avatarMap[key] = p.avatar;
+            if (p.name) nameMap[key] = p.name;
+          }
+        }
+        setAvatarsMap(avatarMap);
+        setNamesMap(nameMap);
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, [uniqueWalletsKey]);
+
+  const update = (key: string, value: any) => {
+    setForm((prev) => ({ ...prev, [key]: value }));
+    setError('');
+    setNonceConflict(false);
+  };
+
+  const updateMilestone = (index: number, field: keyof FormMilestone, value: any) => {
+    setMilestones((prev) => {
+      const copy = [...prev];
+      copy[index] = { ...copy[index], [field]: value };
+      return copy;
+    });
+    setError('');
+    setNonceConflict(false);
+  };
+
+  const addMilestone = () => {
+    if (milestones.length >= 10) return;
+    setMilestones((prev) => [
+      ...prev,
+      {
+        title: `Milestone ${prev.length + 1}`,
+        description: 'Deliverable specification.',
+        amountUsdc: '0.50',
+        deadlineDate: getDefaultDeadlineDate(7 * (prev.length + 1)),
+        deadlineTime: '23:59',
+        reviewWindowSeconds: 86400,
+        gracePeriodSeconds: 0,
+      },
+    ]);
+  };
+
+  const removeMilestone = (index: number) => {
+    if (milestones.length <= 1) return;
+    setMilestones((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // Total escrow calculation
+  const totalEscrowBaseUnits = useMemo(() => {
+    let sum = 0n;
+    for (const m of milestones) {
+      try {
+        sum += parseUsdcAmount(m.amountUsdc || '0');
+      } catch {}
+    }
+    return sum;
+  }, [milestones]);
+
+  const formattedTotalEscrow = useMemo(() => {
+    return formatUsdcAmount(totalEscrowBaseUnits);
+  }, [totalEscrowBaseUnits]);
+
+  // Validation
+  const canProceed = () => {
+    switch (step) {
+      case 0:
+        return form.type.trim().length > 0;
+      case 1:
+        return (
+          isAddress(form.counterparty) &&
+          form.counterparty.toLowerCase() !== ZERO_ADDRESS.toLowerCase() &&
+          (!address || form.counterparty.toLowerCase() !== address.toLowerCase())
+        );
+      case 2:
+        return form.deliverables.trim().length > 0;
+      case 3:
+        return totalEscrowBaseUnits > 0n;
+      case 4:
+        if (milestones.length === 0 || milestones.length > 10) return false;
+        const now = Math.floor(Date.now() / 1000);
+        for (const m of milestones) {
+          if (!m.title.trim()) return false;
+          if (!m.amountUsdc || isNaN(Number(m.amountUsdc)) || Number(m.amountUsdc) <= 0) return false;
+          if (!m.deadlineDate) return false;
+          const ts = Math.floor(new Date(`${m.deadlineDate}T${m.deadlineTime || '23:59'}`).getTime() / 1000);
+          if (isNaN(ts) || ts <= now) return false;
+          if (m.reviewWindowSeconds < Number(MIN_REVIEW_WINDOW_SECONDS) || m.reviewWindowSeconds > Number(MAX_REVIEW_WINDOW_SECONDS)) {
+            return false;
+          }
+        }
+        return true;
+      default:
+        return true;
+    }
+  };
+
+  const handlePrevious = () => {
+    setError('');
+    setNonceConflict(false);
+    if (step > 0) setStep(step - 1);
+  };
+
+  // Sign & Send Proposal Action
+  const handleSignAndSendProposal = async () => {
+    if (!address) {
+      setError('Please connect your wallet first.');
+      return;
+    }
+
+    if (!isAddress(form.counterparty) || form.counterparty.toLowerCase() === ZERO_ADDRESS.toLowerCase()) {
+      setError('Please select a valid freelancer wallet address.');
+      return;
+    }
+
+    if (address.toLowerCase() === form.counterparty.toLowerCase()) {
+      setError('Client and freelancer cannot be the same wallet address (self-deal forbidden).');
+      return;
+    }
+
+    try {
+      setSigning(true);
+      setError('');
+      setNonceConflict(false);
+      await ensureSepolia();
+
+      // 1. Validate milestones and build MilestoneInits
+      const nowSec = Math.floor(Date.now() / 1000);
+      const normalizedMilestoneInits: StandardV2MilestoneInit[] = [];
+
+      for (let i = 0; i < milestones.length; i++) {
+        const m = milestones[i];
+        const rawAmount = parseUsdcAmount(m.amountUsdc);
+        if (rawAmount <= 0n) {
+          throw new Error(`Milestone [${i + 1}] amount must be greater than zero.`);
+        }
+
+        const deadlineTs = Math.floor(new Date(`${m.deadlineDate}T${m.deadlineTime || '23:59'}`).getTime() / 1000);
+        if (isNaN(deadlineTs) || deadlineTs <= nowSec) {
+          throw new Error(`Milestone [${i + 1}] deadline must be a future date and time.`);
+        }
+
+        const reviewSec = BigInt(m.reviewWindowSeconds);
+        if (reviewSec < MIN_REVIEW_WINDOW_SECONDS || reviewSec > MAX_REVIEW_WINDOW_SECONDS) {
+          throw new Error(`Milestone [${i + 1}] review window must be between 1 hour and 30 days.`);
+        }
+
+        const graceSec = BigInt(m.gracePeriodSeconds);
+
+        const specText = m.description.trim() || m.title.trim();
+        const specHash = hashMilestoneSpec(specText);
+
+        normalizedMilestoneInits.push({
+          amount: rawAmount,
+          workDeadline: BigInt(deadlineTs),
+          reviewWindow: reviewSec,
+          gracePeriod: graceSec,
+          specHash,
+        });
+      }
+
+      // 2. Fetch fresh unused client proposal nonce
+      const proposalNonce = await fetchNextClientProposalNonce(address, sepoliaPublicClient);
+
+      // 3. Compute milestonesHash
+      const milestonesHash = hashStandardV2Milestones(normalizedMilestoneInits);
+
+      // 4. Construct DealProposalV2 struct
+      const expiry = BigInt(nowSec + form.expiryDays * 86400);
+      const proposalStruct: DealProposalV2 = {
+        client: getAddress(address),
+        freelancer: getAddress(form.counterparty),
+        canonicalUsdc: SYNQ_V2_SEPOLIA_CONFIG.canonicalUsdc,
+        dealImplementation: SYNQ_V2_SEPOLIA_CONFIG.dealImplementation,
+        primaryResolver: SYNQ_V2_SEPOLIA_CONFIG.primaryResolver,
+        emergencyResolver: SYNQ_V2_SEPOLIA_CONFIG.emergencyResolver,
+        milestonesHash,
+        isProtected: false,
+        protectionModule: ZERO_ADDRESS,
+        policyId: ZERO_BYTES32,
+        proposalNonce,
+        expiry,
+      };
+
+      // 5. Pre-validate protocol rules
+      const protocolVal = validateStandardV2ProtocolRules(proposalStruct, normalizedMilestoneInits);
+      if (!protocolVal.valid) {
+        throw new Error(`Proposal validation failed: ${protocolVal.errors.join('; ')}`);
+      }
+
+      // 6. Sign EIP-712 DealProposal with client wallet
+      const domain = getStandardV2Eip712Domain();
+      const clientSignature = await signTypedDataAsync({
+        domain,
+        types: DEAL_PROPOSAL_EIP712_TYPES,
+        primaryType: 'DealProposal',
+        message: proposalStruct,
+      });
+
+      // 7. Locally verify recovered signer
+      const isSigValid = await verifyDealProposalSignature(proposalStruct, clientSignature, domain);
+      if (!isSigValid) {
+        throw new Error('Local signature verification failed. Please try again.');
+      }
+
+      // 8. Ensure Synq authentication session
+      const token = await ensureAuthenticated();
+
+      // 9. Persist proposal via API
+      const requestPayload = {
+        proposal: {
+          client: proposalStruct.client,
+          freelancer: proposalStruct.freelancer,
+          canonicalUsdc: proposalStruct.canonicalUsdc,
+          dealImplementation: proposalStruct.dealImplementation,
+          primaryResolver: proposalStruct.primaryResolver,
+          emergencyResolver: proposalStruct.emergencyResolver,
+          milestonesHash: proposalStruct.milestonesHash,
+          isProtected: false,
+          protectionModule: ZERO_ADDRESS,
+          policyId: ZERO_BYTES32,
+          proposalNonce: proposalStruct.proposalNonce.toString(),
+          expiry: proposalStruct.expiry.toString(),
+        },
+        milestones: normalizedMilestoneInits.map((m, idx) => ({
+          amount: m.amount.toString(),
+          workDeadline: m.workDeadline.toString(),
+          reviewWindow: m.reviewWindow.toString(),
+          gracePeriod: m.gracePeriod.toString(),
+          specHash: m.specHash,
+          title: milestones[idx].title.trim(),
+          description: milestones[idx].description.trim(),
+        })),
+        clientSignature,
+        metadata: {
+          title: form.type.trim(),
+          scope: form.deliverables.trim() || 'Standard Synq Deal',
+        },
+      };
+
+      const res = await fetch('/api/deals/proposals', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(requestPayload),
+      });
+
+      const resData = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (
+          res.status === 409 &&
+          (resData.code === 'CONFLICT_NONCE' ||
+            (typeof resData.error === 'string' && resData.error.toLowerCase().includes('nonce conflict')))
+        ) {
+          setNonceConflict(true);
+          setError('');
+          return;
+        }
+        throw new Error(resData.error || 'Failed to submit deal proposal');
+      }
+
+      setSubmittedProposal(resData.proposal);
+      // Route to proposal view
+      router.push(`/deals/proposals/${resData.proposal.proposalId}`);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to create deal proposal');
+    } finally {
+      setSigning(false);
+    }
+  };
 
   const renderStep = () => {
     switch (step) {
       case 0:
         return (
           <div className="space-y-3">
-            <p className="text-sm text-zinc-400 mb-4">Describe what you're buying or selling in natural language, or select a category.</p>
-            <div className="grid grid-cols-2 gap-3">
-              {['Development', 'Design', 'Marketing', 'Content', 'Consulting', 'Smart Contract', 'Audit', 'Other'].map((cat) => (
-                <button
-                  key={cat}
-                  onClick={() => update('type', cat)}
-                  className={`p-3 rounded-xl border text-sm font-medium text-left transition-all ${
-                    form.type === cat ? 'border-blue-500/50 bg-blue-600/10 text-blue-400' : 'border-zinc-700/50 bg-zinc-800/30 text-zinc-300 hover:border-zinc-600'
-                  }`}
-                >
-                  {cat}
-                </button>
-              ))}
-            </div>
-            <div className="relative mt-2">
+            <label htmlFor="job-title-input" className="block text-sm font-medium text-zinc-300">
+              What do you need done?
+            </label>
+            <div className="relative">
               <Input
-                value={form.type === 'Other' || (form.type && !['Development', 'Design', 'Marketing', 'Content', 'Consulting', 'Smart Contract', 'Audit'].includes(form.type)) ? form.type : ''}
-                onChange={(e) => update('type', e.target.value)}
-                placeholder="Or type custom description..."
+                id="job-title-input"
+                value={form.type}
+                onChange={(e) => {
+                  update('type', e.target.value);
+                  setShowSuggestions(true);
+                }}
+                onFocus={() => setShowSuggestions(true)}
+                onBlur={() => {
+                  setTimeout(() => setShowSuggestions(false), 150);
+                }}
+                placeholder="Type a job title..."
+                className="w-full text-sm bg-zinc-900/60 border-zinc-700 text-white placeholder:text-zinc-500 focus:border-blue-500/60"
+                autoComplete="off"
               />
+              {showSuggestions && filteredSuggestions.length > 0 && (
+                <div className="absolute left-0 right-0 top-full mt-1.5 z-20 overflow-hidden rounded-xl border border-zinc-700/70 bg-zinc-900/95 p-1.5 shadow-xl backdrop-blur-md">
+                  <div className="space-y-0.5">
+                    {filteredSuggestions.map((suggestion) => (
+                      <button
+                        key={suggestion}
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          update('type', suggestion);
+                          setShowSuggestions(false);
+                        }}
+                        className={cn(
+                          'w-full text-left px-3 py-2 rounded-lg text-sm transition-colors text-zinc-200 hover:bg-blue-600/15 hover:text-blue-300',
+                          form.type === suggestion && 'bg-blue-600/20 text-blue-400 font-medium'
+                        )}
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
+            <p className="text-xs text-zinc-500">
+              Type any title or pick a suggestion. Custom titles are fully supported.
+            </p>
           </div>
         );
+
       case 1:
         return (
-          <div className="space-y-3">
-            <p className="text-sm text-zinc-400 mb-4">The AI agent will find the best seller for your deal. No address needed.</p>
-            {searchParams.get('seller') && form.counterparty === searchParams.get('seller') && (
-              <div className="p-2 rounded-lg bg-emerald-600/10 border border-emerald-500/20 text-xs text-emerald-400">
-                Seller selected from the Deal Port — this is the freelancer's wallet address.
+          <div className="space-y-4">
+            <p className="text-sm text-zinc-400 mb-2">
+              Choose the freelancer you want to propose this deal to.
+            </p>
+
+            {/* FREELANCER LIVE SEARCH */}
+            <div ref={searchRef} className="relative space-y-1">
+              <label htmlFor="freelancer-search-input" className="text-xs text-zinc-400 font-medium block">
+                Search Freelancers
+              </label>
+              <div className="relative">
+                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
+                <Input
+                  id="freelancer-search-input"
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setSearchFocused(true);
+                  }}
+                  onFocus={() => setSearchFocused(true)}
+                  placeholder="Search freelancers by handle, name, skill, or wallet..."
+                  className="w-full pl-9 pr-8 text-sm bg-zinc-900/60 border-zinc-700/60 text-white placeholder:text-zinc-500 focus:border-blue-500/60 rounded-xl"
+                  autoComplete="off"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-0.5"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
               </div>
-            )}
-            {form.counterparty.length === 42 && !matches.some((m: any) => String(m.p.wallet) === form.counterparty) && (
-              <div className="p-2 rounded-lg bg-zinc-800/30 text-xs text-zinc-400">
-                Counterparty: {shortenAddress(form.counterparty)}
-              </div>
-            )}
-            {address && (
-              <div className="p-2 rounded-lg bg-zinc-800/30 text-xs text-zinc-400">
-                You (buyer): {shortenAddress(address)}
-              </div>
-            )}
-            <div className="pt-2 border-t border-zinc-800/60">
-              {matches.length === 0 ? (
-                <button
-                  onClick={() => runMatch(false)}
-                  disabled={matchState === 'matching'}
-                  className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-blue-500/40 bg-blue-600/10 text-sm font-medium text-blue-400 hover:bg-blue-600/20 transition-all disabled:opacity-50"
-                >
-                  {matchState === 'matching' ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-                  {matchState === 'matching' ? 'Searching sellers...' : 'Find My Seller'}
-                </button>
-              ) : (
-                <button
-                  onClick={() => runMatch(false)}
-                  disabled={matchState === 'matching'}
-                  className="flex items-center gap-2 text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50 transition-colors"
-                >
-                  {matchState === 'matching' ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                  Re-run AI search
-                </button>
-              )}
-              {matchError && (
-                <div className="mt-2 p-2 rounded-lg bg-amber-600/10 border border-amber-500/20 text-xs text-amber-400">
-                  {matchError}
-                </div>
-              )}
-              {matches.length > 0 && (
-                <div className="mt-2 space-y-2">
-                  <p className="text-[10px] text-zinc-500 uppercase tracking-wide">Best matches</p>
-                  {matches.map(({ p, score }, i) => (
-                    <button
-                      key={String(p.wallet)}
-                      onClick={() => {
-                        update('counterparty', String(p.wallet));
-                        setStep(2);
-                      }}
-                      className={`w-full text-left p-2.5 rounded-lg border transition-all ${
-                        form.counterparty === p.wallet
-                          ? 'border-emerald-500/50 bg-emerald-600/10'
-                          : 'border-zinc-700/50 bg-zinc-800/30 hover:border-blue-500/40'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <div className="text-sm font-medium text-white truncate">
-                            {i === 0 && <span className="text-amber-400 mr-1">★</span>}
-                            {String(p.name || 'Anonymous')}
-                            {!p.available && <span className="ml-1 text-[10px] text-zinc-500">(busy)</span>}
+
+              {/* SEARCH DROPDOWN */}
+              {searchFocused && searchQuery.trim().length > 0 && (
+                <div className="absolute left-0 right-0 top-full mt-1.5 z-30 overflow-hidden rounded-xl border border-zinc-700/70 bg-zinc-900/95 p-1.5 shadow-2xl backdrop-blur-md">
+                  <div className="space-y-1 max-h-72 overflow-y-auto">
+                    {(directory.profiles || [])
+                      .filter((p: any) => p && p.wallet && p.wallet !== address)
+                      .slice(0, 5)
+                      .map((p: any) => (
+                        <button
+                          key={p.wallet}
+                          type="button"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            selectFreelancer(p.wallet);
+                            setSearchQuery('');
+                            setSearchFocused(false);
+                          }}
+                          className="w-full text-left p-2.5 rounded-lg hover:bg-zinc-800/60 flex items-center justify-between gap-3"
+                        >
+                          <div className="min-w-0">
+                            <div className="text-sm font-semibold text-white truncate">
+                              {p.name || shortenAddress(p.wallet)}
+                            </div>
+                            <div className="text-xs font-mono text-zinc-400 truncate">
+                              {shortenAddress(p.wallet)}
+                            </div>
                           </div>
-                          <div className="text-xs text-zinc-400 truncate">
-                            {String(p.category || '-')} · {(p.skills || []).slice(0, 3).join(', ')}
-                          </div>
-                          <div className="font-mono text-[10px] text-zinc-500">{shortenAddress(String(p.wallet))}</div>
-                        </div>
-                        <div className="text-right shrink-0">
-                          <div className="text-sm font-bold text-emerald-400">{Math.min(Math.round(score / 0.6), 99)}% match</div>
-                          <div className="text-[10px] text-zinc-500">{Number(p.rate) / 1e18 || 0} ETH</div>
-                        </div>
-                      </div>
-                    </button>
-                  ))}
-                  <p className="text-[10px] text-zinc-600">Click a seller to select, or enter an address manually above.</p>
+                        </button>
+                      ))}
+                  </div>
                 </div>
               )}
             </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-xs text-zinc-400 font-medium block">Freelancer Wallet</label>
+                <div className="w-full px-3 py-2 rounded-lg border border-zinc-700/60 bg-zinc-900/60 font-mono text-sm text-zinc-200 h-10 flex items-center select-none truncate">
+                  {freelancerIdentityText || form.counterparty || (
+                    <span className="text-zinc-500 font-sans italic text-xs">No freelancer selected</span>
+                  )}
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-zinc-400 font-medium block">Client Wallet</label>
+                <div className="w-full px-3 py-2 rounded-lg border border-zinc-700/60 bg-zinc-900/60 font-mono text-sm text-zinc-200 h-10 flex items-center select-none truncate">
+                  {clientIdentityText || shortenAddress(address || '')}
+                </div>
+              </div>
+            </div>
           </div>
         );
+
       case 2:
         return (
           <div className="space-y-3">
-            <p className="text-sm text-zinc-400 mb-4">Choose the payment asset and enter the deal value in units (e.g. 0.5 ETH, 100 USDC).</p>
-            <div className="flex items-center gap-2">
-              {assets.map((a) => (
-                <button
-                  key={a.address}
-                  onClick={() => update('asset', a.address)}
-                  className={`flex-1 p-3 rounded-xl border text-sm font-medium text-left transition-all ${
-                    form.asset === a.address ? 'border-blue-500/50 bg-blue-600/10 text-blue-400' : 'border-zinc-700/50 bg-zinc-800/30 text-zinc-300 hover:border-zinc-600'
-                  }`}
-                >
-                  {a.symbol}
-                  {a.symbol !== 'ETH' && <span className="block text-[10px] text-zinc-500 font-normal">ERC-20</span>}
-                </button>
-              ))}
-            </div>
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 text-sm">{activeAsset.symbol}</span>
-              <Input
-                value={form.budget}
-                onChange={(e) => update('budget', e.target.value)}
-                placeholder={activeAsset.symbol === 'ETH' ? '0.5' : '100'}
-                className="pl-10 font-mono text-sm"
-                type="number"
-                min="0"
-                step="any"
+            <p className="text-sm text-zinc-400 mb-2">
+              Describe the overall deliverables and scope of the engagement.
+            </p>
+            <div className="relative space-y-1">
+              <textarea
+                value={form.deliverables}
+                onChange={(e) => update('deliverables', e.target.value)}
+                placeholder="Describe project scope, technical requirements, and acceptance standards..."
+                className="w-full h-36 rounded-xl border border-zinc-700/60 bg-zinc-900/60 p-4 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-blue-500/60 resize-none font-sans"
               />
-            </div>
-            {form.budget && !isNaN(Number(form.budget)) && (
-              <div className="p-3 rounded-lg bg-zinc-800/30 text-sm">
-                <span className="text-zinc-400">Value: </span>
-                <span className="text-white font-semibold">{Number(form.budget)} {activeAsset.symbol}</span>
-                <span className="text-zinc-500 text-xs ml-2">= {BigInt(Math.round(Number(form.budget) * 10 ** assetDecimals)).toString()} raw</span>
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-[11px] text-zinc-500 font-mono">
+                  {form.deliverables.length} characters
+                </span>
               </div>
-            )}
+            </div>
           </div>
         );
+
       case 3:
         return (
-          <div className="space-y-3">
-            <p className="text-sm text-zinc-400 mb-4">Describe the deliverables in detail.</p>
-            <textarea
-              value={form.deliverables}
-              onChange={(e) => update('deliverables', e.target.value)}
-              placeholder="Describe what the seller will deliver..."
-              className="w-full h-32 rounded-lg border border-zinc-700 bg-zinc-800/50 px-4 py-3 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 resize-none"
-            />
-            <button
-              onClick={() => update('deliverables', 'Comprehensive DeFi dashboard with real-time analytics, portfolio tracking, and transaction monitoring.')}
-              className="flex items-center gap-2 text-xs text-blue-400 hover:text-blue-300"
-            >
-              <Sparkles size={12} /> Use AI to generate description
-            </button>
-            {form.deliverables.length > 5 && (
-              <button
-                onClick={() => runMatch(true)}
-                disabled={matchState === 'matching'}
-                className="flex items-center gap-2 text-xs text-emerald-400 hover:text-emerald-300 disabled:opacity-50 transition-colors"
-              >
-                {matchState === 'matching' ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                Auto-select best seller from this description
-              </button>
-            )}
-            {matchState === 'done' && matches.length > 0 && form.counterparty && (
-              <div className="flex items-center justify-between p-2.5 rounded-lg border border-emerald-500/30 bg-emerald-600/10">
-                <div className="min-w-0">
-                  <div className="text-xs text-emerald-400 font-medium">Seller auto-selected</div>
-                  <div className="text-sm text-white truncate">
-                    {String(matches[0].p.name || 'Anonymous')} · {shortenAddress(String(matches[0].p.wallet))}
-                  </div>
-                  <div className="text-[10px] text-zinc-500">
-                    {(matches[0].p.skills || []).slice(0, 4).join(', ')}
-                  </div>
-                </div>
-                <div className="text-right shrink-0 text-[10px] text-zinc-500">
-                  <div className="text-emerald-400 font-bold text-sm">{Math.min(Math.round(matches[0].score / 0.6), 99)}% match</div>
-                  <button onClick={() => { setStep(1); setForm(f => ({ ...f, counterparty: '' })); }} className="text-zinc-400 hover:text-white">Change</button>
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      case 4:
-        const today = new Date().toISOString().slice(0, 10);
-        const onPickDeadline = (date: string, time: string) => {
-          setDeadlineDate(date);
-          setDeadlineTime(time);
-          if (date) {
-            const ts = Math.floor(new Date(`${date}T${time || '23:59'}`).getTime() / 1000);
-            update('deadline', String(ts));
-          } else {
-            update('deadline', '');
-          }
-        };
-        return (
-          <div className="space-y-3">
-            <p className="text-sm text-zinc-400 mb-4">Pick the date and time the seller must deliver by.</p>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-zinc-500 mb-1 block">Date</label>
-                <Input
-                  type="date"
-                  min={today}
-                  value={deadlineDate}
-                  onChange={(e) => onPickDeadline(e.target.value, deadlineTime)}
-                  className="font-mono"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-zinc-500 mb-1 block">Time</label>
-                <Input
-                  type="time"
-                  value={deadlineTime}
-                  onChange={(e) => onPickDeadline(deadlineDate, e.target.value)}
-                  className="font-mono"
-                />
-              </div>
+          <div className="space-y-5">
+            <div>
+              <h3 className="text-base font-semibold text-white mb-1">Payment Structure & Total Budget</h3>
+              <p className="text-xs text-zinc-400">Standard V2 uses canonical Sepolia USDC (6 decimals) escrow.</p>
             </div>
-            {form.deadline && !isNaN(Number(form.deadline)) && (
-              <div className="p-3 rounded-lg bg-zinc-800/30 text-sm text-zinc-400">
-                Deadline: <span className="text-white font-medium">{new Date(Number(form.deadline) * 1000).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</span> at <span className="text-white font-medium">{new Date(Number(form.deadline) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-              </div>
-            )}
-          </div>
-        );
-      case 5:
-        return (
-          <div className="space-y-3">
-            <p className="text-sm text-zinc-400 mb-4">How should payment be released?</p>
-            <div className="space-y-2">
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {[
-                { value: 'full', label: 'Full Payment', desc: 'Pay 100% upon completion' },
-                { value: 'half', label: '50/50 Split', desc: '50% upfront, 50% on completion' },
+                { value: 'single', label: 'Single Release', desc: '100% on final deliverable' },
+                { value: '50-50', label: '50/50 Milestones', desc: 'Two equal milestone releases' },
+                { value: 'custom', label: 'Custom Stages', desc: 'Tailored milestone breakdown' },
               ].map((opt) => (
                 <button
                   key={opt.value}
-                  onClick={() => update('paymentStructure', opt.value)}
-                  className={`w-full p-3 rounded-xl border text-left transition-all ${
-                    form.paymentStructure === opt.value ? 'border-blue-500/50 bg-blue-600/10' : 'border-zinc-700/50 bg-zinc-800/30 hover:border-zinc-600'
-                  }`}
+                  type="button"
+                  onClick={() => {
+                    update('paymentStructure', opt.value);
+                    applyPaymentStructure(opt.value as any, form.budget);
+                  }}
+                  className={cn(
+                    'p-3.5 rounded-xl border text-left transition-all',
+                    form.paymentStructure === opt.value
+                      ? 'border-blue-500/50 bg-blue-600/10 shadow-sm'
+                      : 'border-zinc-700/50 bg-zinc-800/30 hover:border-zinc-600'
+                  )}
                 >
-                  <div className="text-sm font-medium text-white">{opt.label}</div>
-                  <div className="text-xs text-zinc-500">{opt.desc}</div>
+                  <div className="text-sm font-semibold text-white">{opt.label}</div>
+                  <div className="text-xs text-zinc-400 mt-0.5">{opt.desc}</div>
                 </button>
               ))}
             </div>
+
+            <div className="space-y-1.5">
+              <label htmlFor="deal-budget-input" className="text-xs text-zinc-400 font-medium block">
+                TOTAL DEAL BUDGET (USDC)
+              </label>
+              <div className="relative">
+                <Input
+                  id="deal-budget-input"
+                  value={form.budget}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    update('budget', val);
+                    if (form.paymentStructure !== 'custom') {
+                      applyPaymentStructure(form.paymentStructure, val);
+                    }
+                  }}
+                  placeholder="1.00"
+                  className="w-full pl-3.5 pr-16 font-mono text-sm bg-zinc-900/60 border-zinc-700/60 text-white placeholder:text-zinc-500 focus:border-blue-500/60 rounded-xl h-10"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                />
+                <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-zinc-400 text-xs font-semibold uppercase pointer-events-none">
+                  USDC
+                </span>
+              </div>
+            </div>
           </div>
         );
-      case 6:
+
+      case 4:
         return (
-          <div className="space-y-3">
-            <p className="text-sm text-zinc-400 mb-4">Adaptive Protection monitors your deal and provides coverage against risk.</p>
-            {!isEthDeal && (
-              <div className="p-3 rounded-xl bg-amber-600/10 border border-amber-500/25">
-                <p className="text-xs text-amber-300">
-                  Coverage is not available for {activeAsset.symbol} deals. The protection pool holds and pays out ETH,
-                  so it cannot price or settle a claim denominated in {activeAsset.symbol}. Pick ETH in the asset step
-                  if you want coverage — this deal will be created without it.
+          <div className="space-y-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-semibold text-white mb-0.5">Milestone Schedule</h3>
+                <p className="text-xs text-zinc-400">
+                  Total Escrow: <span className="font-semibold text-blue-400">{formattedTotalEscrow} USDC</span> across {milestones.length} milestone{milestones.length === 1 ? '' : 's'}.
                 </p>
               </div>
-            )}
-            <div className="space-y-2">
-              {[
-                { value: true, label: 'Enable Adaptive Protection', desc: 'AI-powered risk monitoring and deal protection' },
-                { value: false, label: 'No Protection', desc: 'Proceed without protection coverage' },
-              ].map((opt) => (
-                <button
-                  key={String(opt.value)}
-                  onClick={() => isEthDeal && update('protection', opt.value)}
-                  disabled={!isEthDeal}
-                  className={`w-full p-3 rounded-xl border text-left transition-all ${
-                    !isEthDeal
-                      ? opt.value === false
-                        ? 'border-zinc-700/50 bg-zinc-800/30 opacity-70'
-                        : 'border-zinc-800/50 bg-zinc-900/30 opacity-40 cursor-not-allowed'
-                      : form.protection === opt.value ? 'border-blue-500/50 bg-blue-600/10' : 'border-zinc-700/50 bg-zinc-800/30 hover:border-zinc-600'
-                  }`}
+              {form.paymentStructure === 'custom' && milestones.length < 10 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addMilestone}
+                  className="text-xs gap-1.5 border-zinc-700 bg-zinc-800/40 text-zinc-300"
                 >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-sm font-medium text-white">{opt.label}</div>
-                      <div className="text-xs text-zinc-500">{opt.desc}</div>
+                  <Plus size={14} /> Add Milestone
+                </Button>
+              )}
+            </div>
+
+            <div className="space-y-4 max-h-[460px] overflow-y-auto pr-1">
+              {milestones.map((m, idx) => (
+                <div
+                  key={idx}
+                  className="p-4 rounded-xl border border-zinc-800 bg-zinc-900/50 space-y-3 relative"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold uppercase tracking-wider text-blue-400">
+                      Milestone {idx + 1}
+                    </span>
+                    {form.paymentStructure === 'custom' && milestones.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeMilestone(idx)}
+                        className="text-zinc-500 hover:text-red-400 transition-colors p-1"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
+                        Title
+                      </label>
+                      <Input
+                        value={m.title}
+                        onChange={(e) => updateMilestone(idx, 'title', e.target.value)}
+                        placeholder={`Milestone ${idx + 1} Title`}
+                        className="text-xs bg-zinc-950/40 border-zinc-800 text-white h-9"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
+                        Amount (USDC)
+                      </label>
+                      <Input
+                        value={m.amountUsdc}
+                        onChange={(e) => updateMilestone(idx, 'amountUsdc', e.target.value)}
+                        placeholder="0.50"
+                        className="text-xs font-mono bg-zinc-950/40 border-zinc-800 text-white h-9"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                      />
                     </div>
                   </div>
-                </button>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
+                      Acceptance Specification
+                    </label>
+                    <textarea
+                      value={m.description}
+                      onChange={(e) => updateMilestone(idx, 'description', e.target.value)}
+                      placeholder="Specify the work deliverable and acceptance criteria (hashed into specHash)..."
+                      className="w-full h-18 rounded-lg border border-zinc-800 bg-zinc-950/40 p-2.5 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-blue-500/50 resize-none"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
+                        Work Deadline
+                      </label>
+                      <Input
+                        type="date"
+                        value={m.deadlineDate}
+                        onChange={(e) => updateMilestone(idx, 'deadlineDate', e.target.value)}
+                        className="text-xs font-mono bg-zinc-950/40 border-zinc-800 text-white h-9"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
+                        Review Window
+                      </label>
+                      <select
+                        value={m.reviewWindowSeconds}
+                        onChange={(e) => updateMilestone(idx, 'reviewWindowSeconds', Number(e.target.value))}
+                        className="w-full rounded-md border border-zinc-800 bg-zinc-950/40 px-3 text-xs text-white h-9"
+                      >
+                        <option value={86400}>24 Hours</option>
+                        <option value={259200}>3 Days</option>
+                        <option value={604800}>7 Days</option>
+                        <option value={1209600}>14 Days</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
+                        Grace Period
+                      </label>
+                      <select
+                        value={m.gracePeriodSeconds}
+                        onChange={(e) => updateMilestone(idx, 'gracePeriodSeconds', Number(e.target.value))}
+                        className="w-full rounded-md border border-zinc-800 bg-zinc-950/40 px-3 text-xs text-white h-9"
+                      >
+                        <option value={0}>0 Days</option>
+                        <option value={86400}>1 Day</option>
+                        <option value={259200}>3 Days</option>
+                        <option value={604800}>7 Days</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
               ))}
             </div>
           </div>
         );
-      case 7:
-        const selectedMatchInfo = matches.find((m: any) => String(m.p.wallet).toLowerCase() === String(form.counterparty).toLowerCase());
-        const sellerName = selectedMatchInfo ? String(selectedMatchInfo.p.name || 'Seller') : 'Seller';
+
+      case 5:
         return (
           <div className="space-y-4">
-            <p className="text-sm text-zinc-400 mb-2">Review your deal before creating it.</p>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between p-2"><span className="text-zinc-400">Type</span><span className="text-white">{form.type}</span></div>
-              <div className="flex justify-between p-2"><span className="text-zinc-400">Buyer</span><span className="text-white">You</span></div>
-              <div className="flex justify-between p-2"><span className="text-zinc-400">Seller</span><span className="text-white">{sellerName}</span></div>
-              <div className="flex justify-between p-2"><span className="text-zinc-400">Value</span><span className="text-white font-semibold">{Number(form.budget) || 0} {activeAsset.symbol}</span></div>
-              <div className="flex justify-between p-2"><span className="text-zinc-400">Asset</span><span className="text-white">{activeAsset.symbol}{activeAsset.symbol !== 'ETH' ? ' (ERC-20)' : ' (native)'}</span></div>
-              <div className="flex justify-between p-2"><span className="text-zinc-400">Deadline</span><span className="text-white text-right">{new Date(Number(form.deadline) * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} · {new Date(Number(form.deadline) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>
-              <div className="flex justify-between p-2"><span className="text-zinc-400">Protection</span><span className="text-white">{protectionEnabled ? 'Enabled' : isEthDeal ? 'Disabled' : `Not available for ${activeAsset.symbol}`}</span></div>
-            </div>
-            <Separator />
-            <div className="p-3 rounded-lg bg-blue-600/10 border border-blue-500/20 text-sm text-zinc-300">
-              <div className="flex items-center gap-2 text-blue-400 mb-1"><Bot size={14} /> AI Note</div>
-              Your deal will be created on-chain via Synq's factory contract. You will need to sign a transaction with your wallet.
+            <p className="text-sm text-zinc-400">Choose the protection level for this deal.</p>
+            <div className="space-y-2.5">
+              <button
+                type="button"
+                className="w-full p-3.5 rounded-xl border border-blue-500/50 bg-blue-600/10 text-left shadow-sm"
+              >
+                <div className="text-sm font-medium text-white">No Protection</div>
+                <div className="text-xs text-zinc-400 mt-0.5">Proceed with standard smart contract escrow</div>
+              </button>
+
+              <button
+                type="button"
+                disabled
+                aria-disabled="true"
+                tabIndex={-1}
+                className="w-full p-3.5 rounded-xl border border-zinc-800/60 bg-zinc-900/30 opacity-60 cursor-not-allowed text-left select-none"
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-medium text-zinc-300">Adaptive Protection</div>
+                    <div className="text-xs text-zinc-500 mt-0.5">Coming soon...</div>
+                  </div>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-zinc-800 text-zinc-400 border border-zinc-700/50 uppercase tracking-wider">
+                    Coming Soon
+                  </span>
+                </div>
+              </button>
             </div>
           </div>
         );
+
+      case 6:
+        return (
+          <div className="space-y-5">
+            <div className="rounded-xl border border-blue-500/30 bg-blue-950/20 p-4 space-y-2">
+              <div className="flex items-center gap-2 text-blue-400 text-sm font-semibold">
+                <Info size={16} /> Important Protocol Notice
+              </div>
+              <p className="text-xs text-blue-200/90 leading-relaxed">
+                NO FUNDS MOVE WHEN YOU SIGN THIS PROPOSAL. The designated freelancer must review and accept the proposal on-chain before a Deal contract is deployed. You will fund escrow only after acceptance.
+              </p>
+            </div>
+
+            {/* Proposal Summary Details */}
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 space-y-4 text-xs">
+              <div className="grid grid-cols-2 gap-3 border-b border-zinc-800/80 pb-3">
+                <div>
+                  <span className="text-zinc-500 block uppercase tracking-wider text-[10px]">Client</span>
+                  <span className="font-mono text-zinc-200">{shortenAddress(address || '')}</span>
+                </div>
+                <div>
+                  <span className="text-zinc-500 block uppercase tracking-wider text-[10px]">Freelancer</span>
+                  <span className="font-mono text-zinc-200">{shortenAddress(form.counterparty || '')}</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 border-b border-zinc-800/80 pb-3">
+                <div>
+                  <span className="text-zinc-500 block uppercase tracking-wider text-[10px]">Total Escrow</span>
+                  <span className="font-bold text-white text-sm">{formattedTotalEscrow} USDC</span>
+                </div>
+                <div>
+                  <span className="text-zinc-500 block uppercase tracking-wider text-[10px]">Milestones</span>
+                  <span className="font-bold text-white text-sm">{milestones.length}</span>
+                </div>
+                <div>
+                  <span className="text-zinc-500 block uppercase tracking-wider text-[10px]">Protection</span>
+                  <span className="text-zinc-300">Disabled (Standard)</span>
+                </div>
+                <div>
+                  <span className="text-zinc-500 block uppercase tracking-wider text-[10px]">Proposal Expiry</span>
+                  <span className="text-zinc-300">{form.expiryDays} days</span>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <span className="text-zinc-400 font-semibold block text-[11px] uppercase tracking-wider">
+                  Milestones Breakdown
+                </span>
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {milestones.map((m, idx) => (
+                    <div key={idx} className="p-2.5 rounded-lg border border-zinc-800/60 bg-zinc-950/40 space-y-1">
+                      <div className="flex items-center justify-between text-zinc-200 font-medium">
+                        <span>{m.title || `Milestone ${idx + 1}`}</span>
+                        <span className="font-mono text-blue-400">{m.amountUsdc} USDC</span>
+                      </div>
+                      <div className="text-[11px] text-zinc-400 truncate">
+                        {m.description || 'No description provided'}
+                      </div>
+                      <div className="flex items-center gap-3 text-[10px] text-zinc-500 pt-0.5">
+                        <span>Deadline: {m.deadlineDate}</span>
+                        <span>Review: {m.reviewWindowSeconds / 86400}d</span>
+                        <span>Grace: {m.gracePeriodSeconds / 86400}d</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Nonce Conflict Banner */}
+            {nonceConflict && (
+              <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 space-y-3">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="h-5 w-5 text-amber-400 mt-0.5 shrink-0" />
+                  <div className="space-y-1">
+                    <h4 className="font-semibold text-amber-200 text-sm">Proposal Nonce Conflict</h4>
+                    <p className="text-xs text-zinc-300 leading-relaxed">
+                      Another proposal from this wallet used this proposal nonce. Your deal terms have not been lost and no funds moved.
+                    </p>
+                    <p className="text-xs text-zinc-400">
+                      Refresh the proposal nonce and sign again to submit.
+                    </p>
+                  </div>
+                </div>
+                <div className="pt-1 flex items-center gap-3">
+                  <Button
+                    type="button"
+                    onClick={handleRefreshNonce}
+                    disabled={refreshingNonce}
+                    className="bg-amber-600 hover:bg-amber-500 text-white font-medium px-4 py-1.5 text-xs rounded-lg flex items-center gap-2"
+                  >
+                    {refreshingNonce ? (
+                      <>
+                        <Loader2 size={14} className="animate-spin" />
+                        Refreshing Nonce...
+                      </>
+                    ) : (
+                      <>Refresh Nonce & Review</>
+                    )}
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Error Message */}
+            {error && !nonceConflict && (
+              <div className="p-3 rounded-lg bg-red-600/10 border border-red-500/20 text-xs text-red-400">
+                {error}
+              </div>
+            )}
+
+            {/* Sign & Send Action */}
+            <div className="flex items-center justify-between pt-2">
+              <Button
+                variant="outline"
+                onClick={handlePrevious}
+                disabled={signing}
+                className="gap-2 border-zinc-700 bg-zinc-800/40 text-zinc-300"
+              >
+                <ArrowLeft size={16} /> Previous
+              </Button>
+
+              <Button
+                onClick={handleSignAndSendProposal}
+                disabled={signing || !canProceed()}
+                className="gap-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold shadow-lg shadow-blue-900/30"
+              >
+                {signing ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" /> Signing & Sending...
+                  </>
+                ) : (
+                  <>
+                    <FileSignature size={16} /> Sign & Send Proposal
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        );
+
+      default:
+        return null;
     }
   };
 
-  const showSuccess = txConfirmed;
-
   return (
-    <div className="max-w-2xl mx-auto">
-      <button onClick={() => step > 0 ? setStep(step - 1) : router.back()} className="flex items-center gap-2 text-sm text-zinc-400 hover:text-white mb-6 transition-colors">
-        <ArrowLeft size={16} /> Back
-      </button>
-
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-white">Create a Deal</h1>
-        <p className="text-zinc-400 text-sm mt-1">Step {step + 1} of {steps.length} · {steps[step].description}</p>
+    <div className="space-y-6 pt-0 pb-36">
+      {/* PAGE HEADER */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <h1 className={`${pressStart2P.className} text-xl md:text-2xl font-normal text-white tracking-tight`}>
+          Create a Deal Proposal
+        </h1>
       </div>
 
-      <div className="mb-6">
-        <ChainGuard what="the deal factory is" />
-      </div>
+      <ChainGuard what="Standard V2 proposals are" />
 
-      <div className="flex items-center gap-2 mb-8">
-        {steps.map((_, i) => (
-          <div key={i} className="flex items-center gap-2 flex-1">
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium transition-all ${
-              i < step ? 'bg-green-600 text-white' : i === step ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-500'
-            }`}>
-              {i < step ? <Check size={14} /> : i + 1}
-            </div>
-            {i < steps.length - 1 && <div className={`h-px flex-1 ${i < step ? 'bg-green-600' : 'bg-zinc-800'}`} />}
-          </div>
-        ))}
-      </div>
-
-      <Card>
-        <CardContent className="p-6">
-          {showSuccess ? (
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="text-center py-8">
-              <div className="w-16 h-16 rounded-full bg-green-600/20 flex items-center justify-center mx-auto mb-4">
-                <Check size={32} className="text-green-400" />
-              </div>
-              <h2 className="text-xl font-bold text-white mb-2">Deal Created!</h2>
-              <p className="text-zinc-400 text-sm mb-4">
-                Your deal has been created on-chain. Transaction: {shortenAddress(factory.txReceipt.data?.transactionHash || '')}
-              </p>
-              <div className="flex items-center justify-center gap-3">
-                <Button onClick={() => router.push('/deals')}>View My Deals</Button>
-                {form.counterparty && (
+      {/* MAIN CONTAINER */}
+      <div className="max-w-5xl mx-auto space-y-8">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          {/* WIZARD COLUMN */}
+          <div className={cn(step < 6 ? 'lg:col-span-8 space-y-6' : 'lg:col-span-8 lg:col-start-3 space-y-6')}>
+            <div className="p-6 rounded-2xl bg-zinc-900/70 border border-zinc-800/80 shadow-2xl space-y-6">
+              {handoffLoading ? (
+                <div className="flex flex-col items-center justify-center py-16 text-center space-y-3">
+                  <Loader2 size={24} className="animate-spin text-blue-400" />
+                  <p className="text-sm font-medium text-zinc-300">Fetching negotiated deal terms...</p>
+                  <p className="text-xs text-zinc-500">Loading your draft from AI Negotiator</p>
+                </div>
+              ) : handoffError ? (
+                <div className="py-8 text-center space-y-4">
+                  <div className="p-4 rounded-xl bg-red-600/10 border border-red-500/20 text-sm text-red-400 font-medium">
+                    {handoffError}
+                  </div>
                   <Button
                     variant="outline"
-                    className="gap-1.5"
-                    onClick={() => {
-                      const q = new URLSearchParams({ to: form.counterparty });
-                      if (form.type) q.set('type', form.type);
-                      const nm = searchParams.get('name');
-                      if (nm) q.set('name', nm);
-                      if (createdDealAddress) q.set('deal', createdDealAddress);
-                      router.push(`/messages?${q.toString()}`);
-                    }}
+                    onClick={() => router.push('/negotiator')}
+                    className="gap-2 border-zinc-700/60 bg-zinc-900/40 text-zinc-300"
                   >
-                    <MessageSquare size={16} /> Message Seller
+                    <ArrowLeft size={16} /> Back to AI Negotiator
                   </Button>
-                )}
-              </div>
-            </motion.div>
-          ) : (
-            <AnimatePresence mode="wait">
-              <motion.div key={step} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
-                {renderStep()}
-
-                {error && (
-                  <div className="mt-4 p-3 rounded-lg bg-red-600/10 border border-red-500/20 text-sm text-red-400">
-                    {error}
-                  </div>
-                )}
-
-                <div className="flex items-center justify-between mt-8">
-                  <Button variant="ghost" onClick={() => step > 0 ? setStep(step - 1) : null} disabled={step === 0}>
-                    Previous
-                  </Button>
-                  {step < steps.length - 1 ? (
-                    <Button onClick={() => setStep(step + 1)} disabled={!canProceed()} className="gap-2">
-                      Next <ArrowRight size={16} />
-                    </Button>
-                  ) : (
-                    <Button onClick={handleCreate} disabled={creating || factory.isPending} className="gap-2">
-                      {creating || factory.isPending ? (
-                        <><Loader2 size={16} className="animate-spin" /> {factory.isPending ? 'Confirming...' : 'Creating...'}</>
-                      ) : 'Create Deal & Sign'}
-                    </Button>
-                  )}
                 </div>
+              ) : (
+                <AnimatePresence mode="wait">
+                  <motion.div key={step} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
+                    {renderStep()}
 
-                {!address && step === 7 && (
-                  <p className="text-xs text-zinc-500 mt-2 text-center">Connect your wallet to create a deal</p>
-                )}
-              </motion.div>
-            </AnimatePresence>
+                    {error && step < 6 && (
+                      <div className="mt-4 p-3 rounded-lg bg-red-600/10 border border-red-500/20 text-sm text-red-400">
+                        {error}
+                      </div>
+                    )}
+
+                    {step < 6 && (
+                      <div className="flex items-center justify-between mt-8 pt-4 border-t border-zinc-800/60">
+                        <Button
+                          variant="outline"
+                          onClick={handlePrevious}
+                          disabled={step === 0}
+                          className="gap-2 border-zinc-700/60 bg-zinc-900/40 text-zinc-300 hover:bg-zinc-800/60 hover:text-white"
+                        >
+                          <ArrowLeft size={16} /> Previous
+                        </Button>
+                        <Button onClick={() => setStep(step + 1)} disabled={!canProceed()} className="gap-2 bg-blue-600 hover:bg-blue-500 text-white">
+                          Next <ArrowRight size={16} />
+                        </Button>
+                      </div>
+                    )}
+                  </motion.div>
+                </AnimatePresence>
+              )}
+            </div>
+          </div>
+
+          {/* SIDEBAR PREVIEW (Steps 0-5 only) */}
+          {step < 6 && (
+            <div className="lg:col-span-4 relative z-10">
+              <DealReceipt
+                variant="compact"
+                title={form.type || 'Standard V2 Deal Proposal'}
+                client={{
+                  wallet: address,
+                  name: address ? namesMap[address.toLowerCase()] || undefined : undefined,
+                  handle: clientIdentity.handle,
+                  displayHandle: clientIdentity.displayHandle,
+                  avatar: address ? avatarsMap[address.toLowerCase()] || null : null,
+                }}
+                freelancer={
+                  form.counterparty
+                    ? {
+                        wallet: form.counterparty,
+                        name: undefined,
+                        handle: freelancerIdentity.handle,
+                        displayHandle: freelancerIdentity.displayHandle,
+                        avatar: avatarsMap[form.counterparty.toLowerCase()] || null,
+                      }
+                    : undefined
+                }
+                budget={formattedTotalEscrow}
+                asset={{ symbol: 'USDC', isErc20: true }}
+                scope={form.deliverables}
+                deadline={milestones[milestones.length - 1]?.deadlineDate}
+                paymentStructure={form.paymentStructure}
+                protectionEnabled={false}
+              />
+            </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
+
+      {/* PROGRESS TRACKER */}
+      <div
+        className={cn(
+          'fixed bottom-14 right-0 flex justify-center pointer-events-none z-30 px-4 transition-all duration-300 ease-in-out',
+          collapsed ? 'left-0 lg:left-[68px]' : 'left-0 lg:left-[240px]'
+        )}
+      >
+        <div className="pointer-events-auto p-4 rounded-xl bg-zinc-900/90 backdrop-blur-md border border-zinc-800/90 shadow-2xl max-w-2xl w-full">
+          <div className="relative flex items-center justify-between">
+            <div className="absolute top-1/2 left-4 right-4 h-0.5 -translate-y-1/2 bg-zinc-800/80 z-0" />
+            <div
+              className="absolute top-1/2 left-4 h-0.5 -translate-y-1/2 bg-blue-500 transition-all duration-300 z-0"
+              style={{ width: `calc(${(step / (steps.length - 1)) * 100}% - 1rem)` }}
+            />
+            {steps.map((_, i) => {
+              const isCompleted = i < step;
+              const isActive = i === step;
+
+              return (
+                <div key={i} className="relative z-10 flex items-center justify-center shrink-0 rounded-full bg-zinc-900">
+                  <div
+                    className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold transition-all duration-200 ${
+                      isActive
+                        ? 'bg-blue-600 text-white ring-4 ring-blue-500/20 border border-blue-400'
+                        : isCompleted
+                        ? 'bg-blue-500/20 text-blue-400 border border-blue-500/50'
+                        : 'bg-zinc-900 text-zinc-500 border border-zinc-700/60'
+                    }`}
+                  >
+                    {isCompleted ? <Check size={13} /> : i + 1}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
