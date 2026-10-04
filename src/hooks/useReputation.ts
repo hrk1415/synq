@@ -1,19 +1,15 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useAccount, useChainId, useReadContract } from 'wagmi';
+import { useAccount, useReadContract } from 'wagmi';
 import { nexotiqDealABI, nexotiqFactoryABI, nexotiqReputationABI } from '@/lib/contracts/abis';
-import { CONTRACT_ADDRESSES, chainKeyForId, getTokenInfo, isSupportedChain } from '@/lib/contracts/addresses';
-import { getPublicClient } from '@/lib/chain';
-import { getFactoryAddress } from '@/hooks/useFactoryContract';
-
-const REPUTATION_BY_CHAIN: Record<number, string> = {
-  31337: CONTRACT_ADDRESSES.hardhat.NexotiqReputation,
-  11155111: CONTRACT_ADDRESSES.sepolia.NexotiqReputation,
-};
+import { CONTRACT_ADDRESSES, getTokenInfo, SEPOLIA_CHAIN_ID } from '@/lib/contracts/addresses';
+import { sepoliaPublicClient } from '@/lib/chain';
 
 export function getReputationAddress(chainId: number): `0x${string}` | undefined {
-  return REPUTATION_BY_CHAIN[chainId] as `0x${string}` | undefined;
+  return chainId === SEPOLIA_CHAIN_ID
+    ? CONTRACT_ADDRESSES.sepolia.NexotiqReputation as `0x${string}`
+    : undefined;
 }
 
 /** NexotiqDeal.status enum */
@@ -78,16 +74,16 @@ function computeScore(completed: number, settled: number, volumeEth: number, dis
 export function useReputation(userAddress?: `0x${string}`) {
   const { address: connected } = useAccount();
   const address = userAddress ?? connected;
-  const chainId = useChainId();
-  const factoryAddress = getFactoryAddress(chainId);
-  const reputationAddress = getReputationAddress(chainId);
-  const onSupportedChain = isSupportedChain(chainId) && !!factoryAddress;
+  const factoryAddress = CONTRACT_ADDRESSES.sepolia.NexotiqFactory as `0x${string}`;
+  const reputationAddress = CONTRACT_ADDRESSES.sepolia.NexotiqReputation as `0x${string}`;
+  const onSupportedChain = true;
 
   const { data: rawDeals } = useReadContract({
     address: factoryAddress,
     abi: nexotiqFactoryABI,
     functionName: 'getUserDeals',
     args: address ? [address] : undefined,
+    chainId: SEPOLIA_CHAIN_ID,
     query: { enabled: !!address && onSupportedChain },
   });
 
@@ -96,6 +92,7 @@ export function useReputation(userAddress?: `0x${string}`) {
     abi: nexotiqReputationABI,
     functionName: 'getReputation',
     args: address ? [address] : undefined,
+    chainId: SEPOLIA_CHAIN_ID,
     query: { enabled: !!address && !!reputationAddress && onSupportedChain },
   });
 
@@ -119,8 +116,7 @@ export function useReputation(userAddress?: `0x${string}`) {
   /** Reads each deal's status. Returns the map instead of setting state so the
    *  effect below never writes state synchronously during its own run. */
   const load = useCallback(async (): Promise<Record<string, number>> => {
-    const client = getPublicClient(chainId);
-    if (!client) return {};
+    const client = sepoliaPublicClient;
     const entries: Record<string, number> = {};
     await Promise.all(deals.map(async (d) => {
       try {
@@ -134,7 +130,7 @@ export function useReputation(userAddress?: `0x${string}`) {
     }));
     return entries;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dealKey, chainId]);
+  }, [dealKey]);
 
   useEffect(() => {
     if (!needsStatuses) return;
@@ -187,7 +183,8 @@ export function useReputation(userAddress?: `0x${string}`) {
       else if (st === STATUS.DISPUTED) disputed++;
       else if (st === STATUS.CANCELLED) cancelled++;
 
-      const token = getTokenInfo(chainKeyForId(chainId), String(d.asset || ''));
+      const token = getTokenInfo('sepolia', String(d.asset || ''));
+      if (!token) continue;
       symbols.add(token.symbol);
       if (st === STATUS.COMPLETED) {
         volumeSymbol = token.symbol;
@@ -211,5 +208,5 @@ export function useReputation(userAddress?: `0x${string}`) {
       provisional: settled === 0,
       loading: false,
     };
-  }, [address, onSupportedChain, statusMap, onChainRep, deals, chainId]);
+  }, [address, onSupportedChain, statusMap, onChainRep, deals]);
 }

@@ -1,51 +1,47 @@
 import { NextRequest } from 'next/server';
-import { getAISuggestions, analyzeRisk, parsePayment, findSellers } from '@/lib/ai';
-
-const LOOKS_LIKE_SELLER_SEARCH = /find|suggest|recommend|marketplace|freelancer|freelance|seller|hire|someone|khoj|khuje|darkar|dorkar|lagbe|chai|looking for|developer|designer|expert|koto\s+(pai|chete|chai)/i;
+import { analyzeRisk, parsePayment } from '@/lib/ai';
+import { getAuthenticatedWallet } from '@/lib/ai-negotiator-db';
+import { unauthorized } from '@/lib/auth';
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    let { type, prompt, dealData, chainId } = body;
-    prompt = String(prompt || '');
-    if (type !== 'chatpay' && (type === 'find' || LOOKS_LIKE_SELLER_SEARCH.test(prompt))) {
-      type = 'find';
+    const wallet = getAuthenticatedWallet(req);
+    if (!wallet) {
+      return unauthorized();
+    }
+
+    const body = await req.json().catch(() => null);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return Response.json({ error: 'Invalid request body. Expected JSON object.' }, { status: 400 });
+    }
+
+    const { type, prompt, dealData } = body;
+    if (!type || typeof type !== 'string') {
+      return Response.json({ error: 'Field "type" is required' }, { status: 400 });
     }
 
     if (type === 'chatpay') {
-      const parsed = await parsePayment(prompt || '');
-      return Response.json({ result: parsed });
-    }
-
-    if (type === 'find') {
-      const found = await findSellers(prompt || '', Number(chainId) || 11155111);
-      return Response.json({ result: found });
-    }
-
-    if (type === 'negotiate') {
-      const raw = await getAISuggestions(prompt || '');
-      let parsed: any = raw;
-      if (typeof raw === 'string') {
-        try { parsed = JSON.parse(raw); } catch {
-          const start = raw.indexOf('{');
-          const end = raw.lastIndexOf('}');
-          if (start !== -1 && end > start) {
-            try { parsed = JSON.parse(raw.slice(start, end + 1)); } catch { parsed = { type: 'deal_suggestions', suggestions: [], recommended: 0, message: raw }; }
-          } else {
-            parsed = { type: 'deal_suggestions', suggestions: [], recommended: 0, message: raw };
-          }
-        }
+      const cleanPrompt = typeof prompt === 'string' ? prompt.trim() : '';
+      if (!cleanPrompt) {
+        return Response.json({ error: 'Field "prompt" is required for chatpay' }, { status: 400 });
       }
+      if (cleanPrompt.length > 10_000) {
+        return Response.json({ error: 'Prompt exceeds maximum length' }, { status: 400 });
+      }
+      const parsed = await parsePayment(cleanPrompt);
       return Response.json({ result: parsed });
     }
 
     if (type === 'risk') {
+      if (!dealData || typeof dealData !== 'object' || Array.isArray(dealData)) {
+        return Response.json({ error: 'Field "dealData" must be an object for risk analysis' }, { status: 400 });
+      }
       const risk = await analyzeRisk(dealData);
       return Response.json({ risk });
     }
 
     return Response.json({ error: 'Invalid AI type' }, { status: 400 });
   } catch (e: any) {
-    return Response.json({ error: e.message }, { status: 500 });
+    return Response.json({ error: 'Failed to process AI request' }, { status: 500 });
   }
 }

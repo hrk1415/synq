@@ -4,10 +4,10 @@ import { motion } from 'framer-motion';
 import { Activity, CheckCircle, AlertTriangle, Bot, Shield, Wallet, FileCheck, TrendingUp, Loader2, XCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { useAccount, useChainId } from 'wagmi';
+import { useAccount } from 'wagmi';
 import { useActivity, ActivityItem } from '@/hooks/useActivity';
 import { formatTimeAgo, cn } from '@/lib/utils';
-import { getExplorerUrl } from '@/lib/chain';
+import { getSepoliaExplorerUrl } from '@/lib/chain';
 
 const activityIcons: Record<string, { icon: any; color: string }> = {
   deal_created: { icon: FileCheck, color: 'text-blue-400 bg-blue-400/10' },
@@ -26,7 +26,6 @@ const activityIcons: Record<string, { icon: any; color: string }> = {
 
 export default function ActivityPage() {
   const { address } = useAccount();
-  const chainId = useChainId();
   const { items, loading } = useActivity(30);
 
   return (
@@ -60,7 +59,7 @@ export default function ActivityPage() {
               {items.map((act: ActivityItem, i: number) => {
                 const meta = activityIcons[act.type] || { icon: Activity, color: 'text-zinc-400 bg-zinc-400/10' };
                 const Icon = meta.icon;
-                const explorerUrl = act.txHash ? getExplorerUrl(chainId, 'tx', act.txHash) : null;
+                const explorerUrl = act.txHash ? getSepoliaExplorerUrl('tx', act.txHash) : null;
                 return (
                   <motion.div
                     key={act.id}

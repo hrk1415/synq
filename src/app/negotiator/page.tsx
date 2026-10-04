@@ -1,19 +1,34 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useRouter } from 'next/navigation';
-import { Bot, User, Sparkles, Check, X, ArrowRight, Loader2, AlertTriangle, ThumbsUp, Zap, Send, Plus } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Press_Start_2P } from 'next/font/google';
+import { Check, X, Loader2, Send, Plus, MessageSquare, Trash2, Search, Shield, TrendingUp, History, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Separator } from '@/components/ui/separator';
-import { Input } from '@/components/ui/input';
 import { useAccount } from 'wagmi';
-import { parseUnits, formatUnits } from 'viem';
 import { useFactoryContract } from '@/hooks/useFactoryContract';
 import { ChainGuard } from '@/components/shared/ChainGuard';
-import { formatCurrency, cn } from '@/lib/utils';
+import { cn } from '@/lib/utils';
+import { useAuthSession } from '@/hooks/useAuthSession';
+import { useSynqIdentity, useSynqIdentities } from '@/hooks/useSynqIdentity';
+import { useBatchFreelancerCompletedDeals } from '@/hooks/useFreelancerStats';
+import { reconstructAuthoritativeNegotiationState } from '@/lib/ai-negotiator-engine';
+import { DraftPanel } from '@/components/negotiator/DraftPanel';
+import { FreelancerSearchMessage } from '@/components/negotiator/FreelancerSearchMessage';
+import * as Popover from '@radix-ui/react-popover';
+import type {
+  AiNegotiatorAttachment,
+  NegotiationStateData,
+  PendingClarificationPayload,
+  ResolvedActionPayload,
+} from '@/db/schema';
+
+const pressStart2P = Press_Start_2P({
+  subsets: ['latin'],
+  weight: '400',
+  display: 'swap',
+});
 
 interface Message {
   id: string;
@@ -22,6 +37,10 @@ interface Message {
   timestamp: string;
   suggestions?: Suggestion[];
   sellers?: SellerResult[];
+  attachment?: AiNegotiatorAttachment;
+  negotiationState?: NegotiationStateData;
+  pendingClarification?: PendingClarificationPayload | null;
+  resolvedActions?: ResolvedActionPayload[];
 }
 
 interface Suggestion {
@@ -43,6 +62,44 @@ interface SellerResult {
   match: number;
 }
 
+interface DbConversationMeta {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const STARTER_PROMPTS = [
+  {
+    title: 'Find a Freelancer',
+    description: 'Help me find the right freelancer for my project',
+    prompt: "I'm looking for a freelancer for my project",
+    icon: Search,
+  },
+  {
+    title: 'Understand Escrow',
+    description: 'Learn how Synq escrow protects a deal',
+    prompt: 'How does Synq escrow work?',
+    icon: Shield,
+  },
+  {
+    title: 'Check Market Rates',
+    description: 'Get guidance on reasonable freelancer rates',
+    prompt: "What's a reasonable rate for a developer?",
+    icon: TrendingUp,
+  },
+];
+
+const SynqAvatar = ({ className = "w-8 h-8 p-1.5" }: { className?: string }) => (
+  <div className={cn("rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center shrink-0 shadow-sm mt-0.5", className)}>
+    <img
+      src="/synq-logo.png"
+      alt="Synq logo"
+      className="w-full h-full object-contain mix-blend-lighten"
+    />
+  </div>
+);
+
 const INITIAL_AI: Message = {
   id: 'init',
   role: 'ai',
@@ -50,410 +107,1379 @@ const INITIAL_AI: Message = {
   timestamp: new Date().toISOString(),
 };
 
-export default function NegotiatorPage() {
+const freshInitialMessage = (): Message => ({ ...INITIAL_AI, timestamp: new Date().toISOString() });
+
+const formatChatDate = (timestamp: number) => {
+  const date = new Date(timestamp);
+  const today = new Date();
+  if (date.toDateString() === today.toDateString()) {
+    return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  }
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+};
+
+const ACTIVE_CONV_KEY_PREFIX = 'synq:negotiator:active:';
+const NEW_CHAT_SENTINEL = '__new__';
+
+const getStoredActiveConvId = (wallet: string | null): string | null => {
+  if (!wallet || typeof window === 'undefined') return null;
+  try {
+    return localStorage.getItem(`${ACTIVE_CONV_KEY_PREFIX}${wallet.toLowerCase()}`) || null;
+  } catch {
+    return null;
+  }
+};
+
+const setStoredActiveConvId = (wallet: string | null, convId: string | null): void => {
+  if (!wallet || typeof window === 'undefined') return;
+  try {
+    const key = `${ACTIVE_CONV_KEY_PREFIX}${wallet.toLowerCase()}`;
+    if (convId) {
+      localStorage.setItem(key, convId);
+    } else {
+      localStorage.removeItem(key);
+    }
+  } catch {}
+};
+
+function NegotiatorContent() {
   const router = useRouter();
-  const { address } = useAccount();
+  const searchParams = useSearchParams();
+  const [mounted, setMounted] = useState(false);
+  const { address, isConnected, status } = useAccount();
   const factory = useFactoryContract();
+  const { ensureAuthenticated } = useAuthSession();
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const isAccountRestoring = status === 'connecting' || status === 'reconnecting';
+  const effectiveAddress = (mounted && isConnected && !!address && !isAccountRestoring) ? address : undefined;
+
   const [messages, setMessages] = useState<Message[]>([INITIAL_AI]);
+  const [conversations, setConversations] = useState<DbConversationMeta[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [chatCount, setChatCount] = useState(0);
+  const [chatLimit, setChatLimit] = useState(10);
+  const [limitReached, setLimitReached] = useState(false);
+
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false);
+  const [mobileDraftOpen, setMobileDraftOpen] = useState(false);
   const [input, setInput] = useState('');
   const [isThinking, setIsThinking] = useState(false);
-  const [selectedOffer, setSelectedOffer] = useState<number | null>(null);
   const [error, setError] = useState('');
+  const [retryableConvId, setRetryableConvId] = useState<string | null>(null);
+
+  const [draftState, setDraftState] = useState<NegotiationStateData | null>(null);
+  const [draftPanelOpen, setDraftPanelOpen] = useState(false);
+  const [draftPanelPinned, setDraftPanelPinned] = useState(false);
+  const draftHoverTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const draftContainerRef = useRef<HTMLDivElement | null>(null);
+
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const [avatarsMap, setAvatarsMap] = useState<Record<string, string>>({});
+  const [namesMap, setNamesMap] = useState<Record<string, string>>({});
+  const [reviewCountsMap, setReviewCountsMap] = useState<Record<string, number>>({});
+
+  const clientIdentity = useSynqIdentity(effectiveAddress);
+  const greetingIdentity = effectiveAddress
+    ? namesMap[effectiveAddress.toLowerCase()] || clientIdentity.displayHandle || clientIdentity.shortWallet
+    : '';
+  const isEmptyChat =
+    !messagesLoading &&
+    !isThinking &&
+    !activeConversationId &&
+    messages.length === 1 &&
+    messages[0]?.id === 'init';
+
+  // Extract seller wallets from messages and active draft for identity enrichment & stats
+  const sellerWallets = useMemo(() => {
+    const wallets = new Set<string>();
+    for (const msg of messages) {
+      if (msg.sellers) {
+        for (const s of msg.sellers) {
+          if (s.wallet) wallets.add(String(s.wallet).toLowerCase());
+        }
+      }
+      if (msg.attachment?.dealDraft?.seller?.value) {
+        wallets.add(String(msg.attachment.dealDraft.seller.value).toLowerCase());
+      }
+    }
+    if (draftState?.seller?.value) {
+      wallets.add(String(draftState.seller.value).toLowerCase());
+    }
+    if (effectiveAddress) {
+      wallets.add(effectiveAddress.toLowerCase());
+    }
+    return Array.from(wallets);
+  }, [messages, effectiveAddress, draftState?.seller?.value]);
+
+  const { completedCountsMap } = useBatchFreelancerCompletedDeals(sellerWallets);
+  const { identitiesMap } = useSynqIdentities(sellerWallets);
+
+  const uniqueWalletsKey = useMemo(() => {
+    return [...sellerWallets].sort().join(',');
+  }, [sellerWallets]);
+
+  // Batch fetch public avatars and names
+  useEffect(() => {
+    if (!uniqueWalletsKey) return;
+    const uniqueWallets = uniqueWalletsKey.split(',');
+    let cancelled = false;
+
+    fetch('/api/profile/public', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wallets: uniqueWallets }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled || !Array.isArray(data?.profiles)) return;
+        const avatarMap: Record<string, string> = {};
+        const nameMap: Record<string, string> = {};
+        for (const item of data.profiles) {
+          if (item?.wallet) {
+            const key = String(item.wallet).toLowerCase();
+            if (item.avatar) avatarMap[key] = item.avatar;
+            if (item.name) nameMap[key] = item.name;
+          }
+        }
+        setAvatarsMap((prev) => ({ ...prev, ...avatarMap }));
+        setNamesMap((prev) => ({ ...prev, ...nameMap }));
+      })
+      .catch(() => {});
+
+    return () => { cancelled = true; };
+  }, [uniqueWalletsKey]);
+
+  // Batch fetch review counts
+  useEffect(() => {
+    if (!uniqueWalletsKey) return;
+    let cancelled = false;
+
+    fetch(`/api/reviews?sellers=${uniqueWalletsKey}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data?.counts) return;
+        setReviewCountsMap((prev) => ({ ...prev, ...data.counts }));
+      })
+      .catch(() => {});
+
+    return () => { cancelled = true; };
+  }, [uniqueWalletsKey]);
+
+  // Reactive state reconstruction for active conversation draft
+  useEffect(() => {
+    let active = true;
+    reconstructAuthoritativeNegotiationState(messages).then((st) => {
+      if (active) {
+        setDraftState(st);
+      }
+    });
+    return () => { active = false; };
+  }, [messages]);
+
+  const handleDraftMouseEnter = () => {
+    if (draftHoverTimerRef.current) {
+      clearTimeout(draftHoverTimerRef.current);
+      draftHoverTimerRef.current = null;
+    }
+    setDraftPanelOpen(true);
+  };
+
+  const handleDraftMouseLeave = () => {
+    if (draftPanelPinned) return;
+    draftHoverTimerRef.current = setTimeout(() => {
+      setDraftPanelOpen(false);
+    }, 200);
+  };
+
+  const handleDraftClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (draftPanelPinned) {
+      setDraftPanelPinned(false);
+      setDraftPanelOpen(false);
+    } else {
+      setDraftPanelPinned(true);
+      setDraftPanelOpen(true);
+    }
+  };
+
+  const handleDraftEdit = useCallback(() => {
+    if (!activeConversationId || draftState?.draftStatus !== 'ACTIVE') return;
+    const isComplete = draftState.isReadyToCreate === true;
+    if (isComplete) {
+      router.push(`/deal/new?negotiatorConversationId=${encodeURIComponent(activeConversationId)}`);
+    } else {
+      router.push(`/deal/new?negotiatorConversationId=${encodeURIComponent(activeConversationId)}&negotiatorMode=edit`);
+    }
+  }, [activeConversationId, draftState, router]);
+
+  const handleDraftProceed = useCallback(() => {
+    if (!activeConversationId || draftState?.draftStatus !== 'ACTIVE') return;
+    router.push(`/deal/new?negotiatorConversationId=${encodeURIComponent(activeConversationId)}`);
+  }, [activeConversationId, draftState, router]);
+
+  const clientIdentityObj = useMemo(() => {
+    if (!address) return undefined;
+    const key = address.toLowerCase();
+    const identity = identitiesMap[key];
+    return {
+      wallet: address,
+      name: namesMap[key],
+      handle: identity?.handle,
+      displayHandle: identity?.displayHandle,
+      avatar: avatarsMap[key],
+    };
+  }, [address, identitiesMap, namesMap, avatarsMap]);
+
+  const freelancerIdentityObj = useMemo(() => {
+    const sellerWallet = draftState?.seller?.value;
+    if (!sellerWallet) return undefined;
+    const key = sellerWallet.toLowerCase();
+    const identity = identitiesMap[key];
+    const profileName = namesMap[key];
+    const draftName = draftState?.sellerName && !draftState.sellerName.startsWith('@') ? draftState.sellerName : undefined;
+    return {
+      wallet: sellerWallet,
+      name: profileName || draftName,
+      handle: identity?.handle,
+      displayHandle: identity?.displayHandle,
+      avatar: avatarsMap[key],
+    };
+  }, [draftState, identitiesMap, namesMap, avatarsMap]);
+
   const [pendingSellerWallet, setPendingSellerWallet] = useState('');
   const [pendingDeal, setPendingDeal] = useState<{ title: string; amount: string }>({ title: 'Negotiated Deal', amount: '' });
+
+  // In-memory concurrency and wallet privacy refs
+  const currentWalletRef = useRef<string | null>(null);
+  const sessionGenerationRef = useRef<number>(0);
+  const activeConversationIdRef = useRef<string | null>(null);
+  const deletedConvIdsRef = useRef<Set<string>>(new Set());
+
   const notifiedRef = useRef(false);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const skipSmoothScrollRef = useRef(false);
 
   const accepted = factory.txReceipt.isSuccess;
+
+  const showToast = (msg: string) => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+    setToastMessage(msg);
+    toastTimerRef.current = setTimeout(() => {
+      setToastMessage(null);
+      toastTimerRef.current = null;
+    }, 3000);
+  };
+
+  useEffect(() => {
+    if (!textareaRef.current) return;
+    textareaRef.current.style.height = 'auto';
+    const scrollHeight = textareaRef.current.scrollHeight;
+    textareaRef.current.style.height = `${Math.min(scrollHeight, 140)}px`;
+  }, [input]);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
+  const loadConversationDetail = async (
+    convId: string,
+    token: string,
+    reqWallet: string,
+    reqGen: number
+  ) => {
+    skipSmoothScrollRef.current = true;
+    setMessagesLoading(true);
+    try {
+      const res = await fetch(`/api/negotiator/conversations/${convId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (
+        currentWalletRef.current !== reqWallet ||
+        sessionGenerationRef.current !== reqGen ||
+        activeConversationIdRef.current !== convId ||
+        deletedConvIdsRef.current.has(convId)
+      ) {
+        return;
+      }
+
+      if (!res.ok) {
+        setMessages([freshInitialMessage()]);
+        return;
+      }
+
+      const data = await res.json();
+      if (
+        currentWalletRef.current !== reqWallet ||
+        sessionGenerationRef.current !== reqGen ||
+        activeConversationIdRef.current !== convId ||
+        deletedConvIdsRef.current.has(convId)
+      ) {
+        return;
+      }
+
+      const msgs: Message[] = (data.messages || []).map((m: any) => ({
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        timestamp: typeof m.createdAt === 'string' ? m.createdAt : new Date(m.createdAt).toISOString(),
+        suggestions: m.suggestions,
+        sellers: m.sellers,
+        attachment: m.attachment,
+        negotiationState: m.negotiationState,
+        pendingClarification: m.pendingClarification !== undefined ? m.pendingClarification : (m.payload?.pendingClarification ?? null),
+        resolvedActions: m.resolvedActions || m.payload?.resolvedActions || undefined,
+      }));
+
+      setMessages(msgs.length > 0 ? msgs : [freshInitialMessage()]);
+    } catch {
+      if (
+        currentWalletRef.current === reqWallet &&
+        sessionGenerationRef.current === reqGen &&
+        activeConversationIdRef.current === convId &&
+        !deletedConvIdsRef.current.has(convId)
+      ) {
+        setMessages([freshInitialMessage()]);
+      }
+    } finally {
+      if (
+        currentWalletRef.current === reqWallet &&
+        sessionGenerationRef.current === reqGen &&
+        activeConversationIdRef.current === convId
+      ) {
+        setMessagesLoading(false);
+      }
+    }
+  };
+
+  const loadHistory = useCallback(
+    async (reqWallet: string, reqGen: number, isForcedNewChat?: boolean) => {
+      setHistoryLoading(true);
+      try {
+        const token = await ensureAuthenticated();
+        if (currentWalletRef.current !== reqWallet || sessionGenerationRef.current !== reqGen) return;
+
+        const res = await fetch('/api/negotiator/conversations', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (currentWalletRef.current !== reqWallet || sessionGenerationRef.current !== reqGen) return;
+
+        if (!res.ok) {
+          setHistoryLoading(false);
+          return;
+        }
+
+        const data = await res.json();
+        if (currentWalletRef.current !== reqWallet || sessionGenerationRef.current !== reqGen) return;
+
+        const list: DbConversationMeta[] = data.conversations || [];
+        setConversations(list);
+        const count = data.count ?? list.length;
+        const limit = data.limit ?? 10;
+        setChatCount(count);
+        setChatLimit(limit);
+        const isLimitReached = count >= limit;
+        setLimitReached(isLimitReached);
+
+        const storedPosition = getStoredActiveConvId(reqWallet);
+        const isStoredNewChat = storedPosition === NEW_CHAT_SENTINEL;
+        const hasStoredConv =
+          !!storedPosition &&
+          storedPosition !== NEW_CHAT_SENTINEL &&
+          list.some((c) => c.id === storedPosition);
+
+        if (isForcedNewChat || isStoredNewChat) {
+          activeConversationIdRef.current = null;
+          setActiveConversationId(null);
+          setMessages([freshInitialMessage()]);
+          setDraftState(null);
+          setStoredActiveConvId(reqWallet, NEW_CHAT_SENTINEL);
+        } else if (hasStoredConv && storedPosition) {
+          activeConversationIdRef.current = storedPosition;
+          setActiveConversationId(storedPosition);
+          await loadConversationDetail(storedPosition, token, reqWallet, reqGen);
+        } else if (list.length > 0) {
+          const newestId = list[0].id;
+          activeConversationIdRef.current = newestId;
+          setActiveConversationId(newestId);
+          setStoredActiveConvId(reqWallet, newestId);
+          await loadConversationDetail(newestId, token, reqWallet, reqGen);
+        } else {
+          activeConversationIdRef.current = null;
+          setActiveConversationId(null);
+          setMessages([freshInitialMessage()]);
+          setDraftState(null);
+          setStoredActiveConvId(reqWallet, NEW_CHAT_SENTINEL);
+        }
+      } catch (err: any) {
+        if (
+          err?.message?.includes('Wallet not connected') ||
+          err?.message?.includes('cancelled by user') ||
+          err?.message?.includes('User rejected')
+        ) {
+          return;
+        }
+        console.error('Failed to load chat history:', err);
+      } finally {
+        if (currentWalletRef.current === reqWallet && sessionGenerationRef.current === reqGen) {
+          setHistoryLoading(false);
+        }
+      }
+    },
+    [ensureAuthenticated]
+  );
+
+  useEffect(() => {
+    if (!mounted || isAccountRestoring) return;
+
+    sessionGenerationRef.current += 1;
+    const nextWallet = (isConnected && address) ? address.toLowerCase() : null;
+    currentWalletRef.current = nextWallet;
+    activeConversationIdRef.current = null;
+    deletedConvIdsRef.current.clear();
+
+    setConversations([]);
+    setActiveConversationId(null);
+    setMessages([freshInitialMessage()]);
+    setChatCount(0);
+    setLimitReached(false);
+    setError('');
+    setRetryableConvId(null);
+
+    const isForcedNew = searchParams?.get('new') === '1' || searchParams?.get('new') === 'true';
+    if (isForcedNew) {
+      if (nextWallet) {
+        setStoredActiveConvId(nextWallet, NEW_CHAT_SENTINEL);
+      }
+      if (typeof window !== 'undefined') {
+        window.history.replaceState(null, '', '/negotiator');
+      }
+    }
+
+    if (nextWallet) {
+      loadHistory(nextWallet, sessionGenerationRef.current, isForcedNew);
+    }
+  }, [mounted, isAccountRestoring, isConnected, address, searchParams, loadHistory]);
+
+  useEffect(() => {
+    if (!messagesEndRef.current) return;
+    if (skipSmoothScrollRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'auto', block: 'end' });
+      skipSmoothScrollRef.current = false;
+    } else {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+  }, [messages, isThinking]);
+
+  const startNewChat = () => {
+    if (isThinking) return;
+
+    if (!address) {
+      showToast('Connect your wallet to start negotiating.');
+      return;
+    }
+
+    setStoredActiveConvId(currentWalletRef.current, NEW_CHAT_SENTINEL);
+
+    skipSmoothScrollRef.current = true;
+    activeConversationIdRef.current = null;
+    setActiveConversationId(null);
+    setMessages([freshInitialMessage()]);
+    setDraftState(null);
+    setInput('');
+    setIsThinking(false);
+    setError('');
+    setRetryableConvId(null);
+    setMobileHistoryOpen(false);
+  };
+
+  const selectChat = async (conv: DbConversationMeta) => {
+    if (activeConversationIdRef.current === conv.id || isThinking) return;
+    const reqWallet = currentWalletRef.current;
+    const reqGen = sessionGenerationRef.current;
+    if (!reqWallet) return;
+
+    skipSmoothScrollRef.current = true;
+    activeConversationIdRef.current = conv.id;
+    setActiveConversationId(conv.id);
+    setStoredActiveConvId(reqWallet, conv.id);
+    setError('');
+    setRetryableConvId(null);
+    setMobileHistoryOpen(false);
+
+    try {
+      const token = await ensureAuthenticated();
+      if (currentWalletRef.current !== reqWallet || sessionGenerationRef.current !== reqGen) return;
+      await loadConversationDetail(conv.id, token, reqWallet, reqGen);
+    } catch (err: any) {
+      if (currentWalletRef.current === reqWallet && sessionGenerationRef.current === reqGen) {
+        setError(err?.message || 'Failed to load conversation');
+      }
+    }
+  };
+
+  const deleteChat = async (convId: string) => {
+    const reqWallet = currentWalletRef.current;
+    const reqGen = sessionGenerationRef.current;
+    if (!reqWallet) return;
+
+    deletedConvIdsRef.current.add(convId);
+
+    try {
+      const token = await ensureAuthenticated();
+      if (currentWalletRef.current !== reqWallet || sessionGenerationRef.current !== reqGen) return;
+
+      const res = await fetch(`/api/negotiator/conversations/${convId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (currentWalletRef.current !== reqWallet || sessionGenerationRef.current !== reqGen) return;
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || 'Failed to delete conversation');
+        return;
+      }
+
+      const remaining = conversations.filter((c) => c.id !== convId);
+      setConversations(remaining);
+      const newCount = Math.max(0, chatCount - 1);
+      setChatCount(newCount);
+      setLimitReached(newCount >= chatLimit);
+
+      if (activeConversationIdRef.current === convId) {
+        if (remaining.length > 0) {
+          const fallbackId = remaining[0].id;
+          activeConversationIdRef.current = fallbackId;
+          setActiveConversationId(fallbackId);
+          setStoredActiveConvId(reqWallet, fallbackId);
+          await loadConversationDetail(fallbackId, token, reqWallet, reqGen);
+        } else {
+          activeConversationIdRef.current = null;
+          setActiveConversationId(null);
+          setMessages([freshInitialMessage()]);
+          setDraftState(null);
+          setStoredActiveConvId(reqWallet, NEW_CHAT_SENTINEL);
+        }
+      }
+    } catch (err: any) {
+      if (currentWalletRef.current === reqWallet && sessionGenerationRef.current === reqGen) {
+        setError(err?.message || 'Failed to delete conversation');
+      }
+    }
+  };
 
   useEffect(() => {
     if (accepted && !notifiedRef.current) {
       notifiedRef.current = true;
-      fetch('/api/notify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          event: 'deal_confirmed',
-          recipientWallet: pendingSellerWallet,
-          recipientName: 'seller',
-          dealTitle: pendingDeal.title,
-          dealAmount: pendingDeal.amount,
-        }),
-      }).catch(() => {});
+      void ensureAuthenticated()
+        .then((token) => fetch('/api/notify', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            event: 'deal_confirmed',
+            recipientWallet: pendingSellerWallet,
+            recipientName: 'seller',
+            dealTitle: pendingDeal.title,
+            dealAmount: pendingDeal.amount,
+          }),
+        }))
+        .catch(() => {});
     }
-  }, [accepted, pendingSellerWallet, pendingDeal]);
+  }, [accepted, pendingSellerWallet, pendingDeal, ensureAuthenticated]);
 
-  const handleSend = async () => {
-    if (!input.trim() || isThinking) return;
-    const userMsg: Message = { id: Date.now().toString(), role: 'user', content: input, timestamp: new Date().toISOString() };
-    setMessages(prev => [...prev, userMsg]);
-    const userInput = input;
-    setInput('');
+  const requestAiResponse = async (
+    convId: string,
+    token: string,
+    reqWallet: string,
+    reqGen: number
+  ) => {
     setIsThinking(true);
     setError('');
 
     try {
-      const res = await fetch('/api/ai', {
+      const respondRes = await fetch(`/api/negotiator/conversations/${convId}/respond`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'negotiate', prompt: userInput }),
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       });
-      const data = await res.json();
 
-      let suggestions: Suggestion[] = [];
-      let sellers: SellerResult[] = [];
-      let message = "I've analyzed your request. Here are some options.";
+      if (
+        currentWalletRef.current !== reqWallet ||
+        sessionGenerationRef.current !== reqGen ||
+        activeConversationIdRef.current !== convId ||
+        deletedConvIdsRef.current.has(convId)
+      ) {
+        return;
+      }
 
-      if (data?.result?.sellers) {
-        sellers = data.result.sellers;
-        message = data.result.message || message;
-      } else if (data?.result?.suggestions) {
-        suggestions = data.result.suggestions;
-        message = data.result.message || message;
-      } else if (data?.result?.message) {
-        message = data.result.message;
+      const respondData = await respondRes.json();
+
+      if (
+        currentWalletRef.current !== reqWallet ||
+        sessionGenerationRef.current !== reqGen ||
+        activeConversationIdRef.current !== convId ||
+        deletedConvIdsRef.current.has(convId)
+      ) {
+        return;
+      }
+
+      if (!respondRes.ok && respondRes.status !== 200) {
+        if (respondData.code === 'CONVERSATION_TAIL_CHANGED') {
+          await loadConversationDetail(convId, token, reqWallet, reqGen);
+        } else {
+          setError('AI response generation failed.');
+          setRetryableConvId(convId);
+        }
+        setIsThinking(false);
+        return;
       }
 
       const aiMsg: Message = {
-        id: (Date.now() + 1).toString(),
-        role: 'ai',
-        content: message,
-        timestamp: new Date().toISOString(),
-        suggestions: suggestions.length > 0 ? suggestions : undefined,
-        sellers: sellers.length > 0 ? sellers : undefined,
+        id: respondData.id,
+        role: respondData.role,
+        content: respondData.content,
+        timestamp: respondData.createdAt,
+        suggestions: respondData.suggestions,
+        sellers: respondData.sellers,
+        attachment: respondData.attachment,
+        negotiationState: respondData.negotiationState,
+        pendingClarification: respondData.pendingClarification !== undefined ? respondData.pendingClarification : (respondData.payload?.pendingClarification ?? null),
+        resolvedActions: respondData.resolvedActions || respondData.payload?.resolvedActions || undefined,
       };
-      setMessages(prev => [...prev, aiMsg]);
-    } catch (e) {
-      setError('AI service unavailable. Please try again.');
-      setMessages(prev => [...prev, {
-        id: (Date.now() + 1).toString(),
-        role: 'system',
-        content: 'Sorry, I encountered an error. Please try again.',
-        timestamp: new Date().toISOString(),
-      }]);
-    }
-    setIsThinking(false);
-  };
 
-  const handleAcceptProposal = async () => {
-    if (selectedOffer === null || !address) return;
-    const lastMsg = [...messages].reverse().find(m => m.suggestions);
-    if (!lastMsg?.suggestions) return;
-    const offer = lastMsg.suggestions[selectedOffer];
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === aiMsg.id)) return prev;
+        return [...prev.filter((m) => m.id !== 'init'), aiMsg];
+      });
 
-    setError('');
-    if (!factory.onSupportedChain) {
-      setError('Switch your wallet to Ethereum Sepolia — Synq contracts are not deployed on this network.');
-      return;
-    }
-
-    // offer.amount comes from the AI, so it can be a fraction ("0.05"), a
-    // formatted string ("1,250 ETH") or a float. BigInt() throws on all three
-    // and `* BigInt(1e18)` would truncate anyway — normalise then parseUnits.
-    const cleaned = String(offer.amount ?? '').replace(/[^0-9.]/g, '');
-    let amountWei: bigint;
-    try {
-      amountWei = parseUnits(cleaned, 18);
-    } catch {
-      setError(`Could not read the proposed amount ("${offer.amount}"). Create the deal manually instead.`);
-      return;
-    }
-    if (amountWei <= 0n) {
-      setError('The proposed amount is zero. Pick a different offer or create the deal manually.');
-      return;
-    }
-
-    try {
-      const counterparty = prompt('Enter the seller wallet address:');
-      if (!counterparty || !counterparty.startsWith('0x') || counterparty.length !== 42) {
-        setError('Invalid address');
-        return;
-      }
-      setPendingSellerWallet(counterparty);
-      setPendingDeal({ title: offer.description || 'Negotiated Deal', amount: formatUnits(amountWei, 18) });
-      const deadline = Math.floor(Date.now() / 1000) + 30 * 86400;
-      factory.createDeal(
-        counterparty as `0x${string}`,
-        'Negotiated Deal',
-        offer.description,
-        amountWei,
-        BigInt(deadline),
-        true,
-        '0x0000000000000000000000000000000000000000' as `0x${string}`,
+      setConversations((prev) =>
+        prev
+          .map((c) => (c.id === convId ? { ...c, updatedAt: respondData.createdAt || new Date().toISOString() } : c))
+          .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
       );
-    } catch (e: any) {
-      setError(e?.message || 'Failed to create deal');
+    } catch {
+      if (
+        currentWalletRef.current === reqWallet &&
+        sessionGenerationRef.current === reqGen &&
+        activeConversationIdRef.current === convId &&
+        !deletedConvIdsRef.current.has(convId)
+      ) {
+        setError('AI service unavailable. Retry AI response.');
+        setRetryableConvId(convId);
+      }
+    } finally {
+      if (
+        currentWalletRef.current === reqWallet &&
+        sessionGenerationRef.current === reqGen &&
+        activeConversationIdRef.current === convId
+      ) {
+        setIsThinking(false);
+      }
     }
   };
+
+  const handleRetryAi = async () => {
+    if (!retryableConvId || isThinking || !address) return;
+    const reqWallet = currentWalletRef.current;
+    const reqGen = sessionGenerationRef.current;
+    if (!reqWallet) return;
+
+    try {
+      const token = await ensureAuthenticated();
+      if (!token || currentWalletRef.current !== reqWallet || sessionGenerationRef.current !== reqGen) return;
+
+      const convId = retryableConvId;
+      setRetryableConvId(null);
+      await requestAiResponse(convId, token, reqWallet, reqGen);
+    } catch (err: any) {
+      if (currentWalletRef.current === reqWallet && sessionGenerationRef.current === reqGen) {
+        setError(err?.message || 'Retry failed');
+      }
+    }
+  };
+
+  const handleSend = async (overrideText?: string) => {
+    const textToSubmit = typeof overrideText === 'string' ? overrideText : input;
+    if (!textToSubmit.trim() || isThinking) return;
+
+    if (!address) {
+      showToast('Connect your wallet to start negotiating.');
+      return;
+    }
+
+    const reqWallet = currentWalletRef.current;
+    const reqGen = sessionGenerationRef.current;
+    if (!reqWallet) return;
+
+    if (chatCount >= chatLimit && !activeConversationIdRef.current) {
+      showToast("You've reached your 10-chat history limit. Delete one conversation to start a new chat.");
+      return;
+    }
+
+    const userInput = textToSubmit.trim();
+    if (typeof overrideText !== 'string') {
+      setInput('');
+    }
+
+    const tempUserMsgId = `optimistic_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const optimisticUserMsg: Message = {
+      id: tempUserMsgId,
+      role: 'user',
+      content: userInput,
+      timestamp: new Date().toISOString(),
+    };
+
+    setMessages((prev) => [...prev.filter((m) => m.id !== 'init'), optimisticUserMsg]);
+    setIsThinking(true);
+    setError('');
+    setRetryableConvId(null);
+
+    try {
+      const token = await ensureAuthenticated();
+      if (!token || currentWalletRef.current !== reqWallet || sessionGenerationRef.current !== reqGen) return;
+
+      let targetConvId = activeConversationIdRef.current;
+
+      if (!targetConvId) {
+        const createRes = await fetch('/api/negotiator/conversations', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            message: { content: userInput },
+          }),
+        });
+
+        if (currentWalletRef.current !== reqWallet || sessionGenerationRef.current !== reqGen) return;
+
+        const createData = await createRes.json();
+        if (!createRes.ok) {
+          if (currentWalletRef.current === reqWallet && sessionGenerationRef.current === reqGen) {
+            setMessages((prev) => prev.filter((m) => m.id !== tempUserMsgId && !m.id.startsWith('optimistic_')));
+            setInput(userInput);
+            if (createData.code === 'NEGOTIATOR_CHAT_LIMIT_REACHED' || createRes.status === 409) {
+              setLimitReached(true);
+              showToast("You've reached your 10-chat history limit. Delete one conversation to start a new chat.");
+            } else {
+              setError(createData.error || 'Failed to start conversation');
+            }
+            setIsThinking(false);
+          }
+          return;
+        }
+
+        targetConvId = createData.id;
+        activeConversationIdRef.current = targetConvId;
+        setActiveConversationId(targetConvId);
+        setStoredActiveConvId(reqWallet, targetConvId);
+
+        const firstMsg: Message = {
+          id: createData.messages[0].id,
+          role: createData.messages[0].role,
+          content: createData.messages[0].content,
+          timestamp: createData.messages[0].createdAt,
+        };
+
+        setMessages((prev) => {
+          const hasReal = prev.some((m) => m.id === firstMsg.id);
+          if (hasReal) return prev;
+          return prev.map((m) => (m.id === tempUserMsgId || m.id.startsWith('optimistic_') ? firstMsg : m));
+        });
+
+        const newMeta: DbConversationMeta = {
+          id: createData.id,
+          title: createData.title,
+          createdAt: createData.createdAt,
+          updatedAt: createData.updatedAt,
+        };
+        setConversations((prev) => [newMeta, ...prev.filter((c) => c.id !== newMeta.id)]);
+        const newCount = chatCount + 1;
+        setChatCount(newCount);
+        setLimitReached(newCount >= chatLimit);
+      } else {
+        const userMsgRes = await fetch(`/api/negotiator/conversations/${targetConvId}/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            content: userInput,
+          }),
+        });
+
+        if (
+          currentWalletRef.current !== reqWallet ||
+          sessionGenerationRef.current !== reqGen ||
+          activeConversationIdRef.current !== targetConvId ||
+          deletedConvIdsRef.current.has(targetConvId)
+        ) {
+          return;
+        }
+
+        const userMsgData = await userMsgRes.json();
+        if (!userMsgRes.ok) {
+          if (
+            currentWalletRef.current === reqWallet &&
+            sessionGenerationRef.current === reqGen &&
+            activeConversationIdRef.current === targetConvId
+          ) {
+            setMessages((prev) => prev.filter((m) => m.id !== tempUserMsgId && !m.id.startsWith('optimistic_')));
+            setInput(userInput);
+            if (userMsgData.code === 'CONVERSATION_AWAITING_AI') {
+              setError('Conversation is awaiting AI response.');
+            } else {
+              setError(userMsgData.error || 'Failed to append message');
+            }
+            setIsThinking(false);
+          }
+          return;
+        }
+
+        const appendedUserMsg: Message = {
+          id: userMsgData.id,
+          role: userMsgData.role,
+          content: userMsgData.content,
+          timestamp: userMsgData.createdAt,
+        };
+
+        setMessages((prev) => {
+          const hasReal = prev.some((m) => m.id === appendedUserMsg.id);
+          if (hasReal) return prev;
+          return prev.map((m) => (m.id === tempUserMsgId || m.id.startsWith('optimistic_') ? appendedUserMsg : m));
+        });
+      }
+
+      if (!targetConvId) return;
+      await requestAiResponse(targetConvId, token, reqWallet, reqGen);
+    } catch (err: any) {
+      if (currentWalletRef.current === reqWallet && sessionGenerationRef.current === reqGen) {
+        setMessages((prev) => prev.filter((m) => m.id !== tempUserMsgId && !m.id.startsWith('optimistic_')));
+        setError(err?.message || 'Failed to process message');
+        setIsThinking(false);
+      }
+    }
+  };
+
+  const handleSelectSeller = useCallback(
+    (seller: SellerResult) => {
+      if (isThinking) return;
+      const key = (seller.wallet || '').toLowerCase();
+      const identity = identitiesMap[key];
+      const handle = identity?.handle || identity?.displayHandle;
+      let targetCmd = '';
+      if (handle) {
+        const cleanHandle = handle.replace(/^@/, '');
+        targetCmd = `use @${cleanHandle} as the freelancer`;
+      } else if (seller.wallet) {
+        targetCmd = `use ${seller.wallet} as the freelancer`;
+      } else if (seller.name) {
+        targetCmd = `use ${seller.name} as the freelancer`;
+      }
+
+      if (targetCmd) {
+        handleSend(targetCmd);
+      }
+    },
+    [identitiesMap, isThinking, handleSend]
+  );
+
+  const renderHistoryContent = () => (
+    !effectiveAddress ? (
+      <div className="flex h-full min-h-24 flex-col items-center justify-center px-3 text-center text-xs text-zinc-400 gap-1">
+        <span>Connect your wallet to view chat history.</span>
+      </div>
+    ) : historyLoading || isAccountRestoring ? (
+      <div className="flex h-full min-h-24 items-center justify-center px-3 text-center text-sm text-zinc-400">
+        Loading chat history...
+      </div>
+    ) : conversations.length === 0 ? (
+      <div className="flex h-full min-h-24 items-center justify-center px-3 text-center text-sm text-zinc-400">
+        No previous chats yet.
+      </div>
+    ) : (
+      <div className="space-y-1.5">
+        {conversations.map((chat) => (
+          <div
+            key={chat.id}
+            className={cn(
+              'flex w-full items-center rounded-lg border transition-colors',
+              activeConversationId === chat.id
+                ? 'border-blue-500/35 bg-blue-500/10'
+                : 'border-transparent hover:border-zinc-700/70 hover:bg-zinc-800/40'
+            )}
+          >
+            <button
+              onClick={() => selectChat(chat)}
+              disabled={isThinking}
+              className="flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2.5 text-left disabled:opacity-50"
+            >
+              <MessageSquare size={14} className={cn('shrink-0', activeConversationId === chat.id ? 'text-blue-400' : 'text-zinc-400')} />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-zinc-200">{chat.title}</p>
+                <p className="mt-0.5 text-xs text-zinc-400">{formatChatDate(new Date(chat.updatedAt).getTime())}</p>
+              </div>
+            </button>
+            <button
+              type="button"
+              aria-label={`Delete ${chat.title}`}
+              title="Delete chat"
+              disabled={isThinking}
+              onClick={(event) => {
+                event.stopPropagation();
+                deleteChat(chat.id);
+              }}
+              className="mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-zinc-700/70 bg-zinc-900/40 text-zinc-400 transition-colors hover:border-red-400/40 hover:bg-red-500/10 hover:text-red-400 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-400/50 disabled:opacity-50"
+            >
+              <Trash2 size={14} />
+            </button>
+          </div>
+        ))}
+      </div>
+    )
+  );
+
+  const renderComposer = (emptyState: boolean) => (
+    <div className={cn(!emptyState && 'shrink-0 p-3 sm:p-4')}>
+      {error && (
+        <div className="flex items-center justify-between text-xs text-red-400 mb-2 px-1 gap-2">
+          <span>{error}</span>
+          {retryableConvId && (
+            <button
+              type="button"
+              onClick={handleRetryAi}
+              disabled={isThinking}
+              className="underline font-semibold text-blue-400 hover:text-blue-300 disabled:opacity-50 disabled:no-underline"
+            >
+              Retry AI
+            </button>
+          )}
+        </div>
+      )}
+      <div
+        className={cn(
+          'flex items-center gap-2 bg-zinc-900/90 border border-zinc-700/60 rounded-2xl focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/20 transition-all shadow-xl',
+          emptyState ? 'p-3' : 'p-2'
+        )}
+      >
+        <textarea
+          ref={textareaRef}
+          rows={1}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Describe the deal you want..."
+          className={cn(
+            'flex-1 bg-transparent text-sm text-white placeholder:text-zinc-500 outline-none resize-none px-1 max-h-[140px] overflow-y-auto leading-relaxed',
+            emptyState ? 'py-2.5 min-h-[44px]' : 'py-1.5 min-h-[36px]'
+          )}
+        />
+        <button
+          type="button"
+          onClick={() => void handleSend()}
+          disabled={!input.trim() || isThinking}
+          className={cn(
+            'rounded-xl bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed transition-all shrink-0 shadow-sm',
+            emptyState ? 'p-3' : 'p-2.5'
+          )}
+          aria-label="Send message"
+        >
+          <Send size={15} />
+        </button>
+      </div>
+    </div>
+  );
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-white">AI Deal Negotiator</h1>
-        <p className="text-zinc-400 text-sm mt-1">Your intelligent negotiation workspace.</p>
+    <div className="flex h-[calc(100dvh-6rem)] min-h-0 flex-col gap-4 overflow-hidden lg:h-[calc(100dvh-4rem)]">
+      {/* COMPACT HEADER WITH PRESS START 2P FONT AND HELP TOOLTIP */}
+      <div className="flex items-center justify-between flex-wrap gap-3 shrink-0">
+        <div className="flex items-center gap-2.5">
+          <h1 className={`${pressStart2P.className} text-xl md:text-2xl font-normal text-white tracking-tight`}>
+            AI Deal Negotiator
+          </h1>
+          <div className="relative group inline-block">
+            <button
+              type="button"
+              tabIndex={0}
+              aria-label="About AI Deal Negotiator"
+              className="w-5 h-5 rounded-full bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/60 text-zinc-400 hover:text-white text-[11px] font-bold font-mono inline-flex items-center justify-center shrink-0 transition-colors focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+            >
+              ?
+            </button>
+            <div className="absolute left-0 top-full mt-2 w-72 sm:w-80 p-3 rounded-xl bg-zinc-900 border border-zinc-700/80 text-zinc-200 text-xs leading-relaxed shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto transition-all duration-150 z-30">
+              Describe the deal you need. Synq AI helps shape the terms, find matching providers, and turn the conversation into a deal proposal. Review deal terms carefully before signing.
+            </div>
+          </div>
+        </div>
+
+        <div className="flex lg:hidden items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setMobileDraftOpen(!mobileDraftOpen)}
+            className={cn(
+              'flex items-center gap-1.5 border-zinc-800 bg-zinc-900/80 text-zinc-300 hover:text-white hover:bg-zinc-800 text-xs',
+              mobileDraftOpen && 'border-blue-500/60 text-blue-400'
+            )}
+            title="Toggle Deal Draft"
+          >
+            <FileText size={14} />
+            <span className="text-xs">Draft</span>
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setMobileHistoryOpen(!mobileHistoryOpen)}
+            className="flex items-center gap-1.5 border-zinc-800 bg-zinc-900/80 text-zinc-300 hover:text-white hover:bg-zinc-800 text-xs"
+            title="Toggle Chat History"
+          >
+            <History size={14} />
+            <span className="text-xs">History</span>
+          </Button>
+        </div>
       </div>
 
       <ChainGuard what="the deal factory is" />
 
-      <div className="grid lg:grid-cols-3 gap-6">
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle>Conversation</CardTitle>
-                <CardDescription>Describe what you need AI suggests deal structures</CardDescription>
+      {/* MAIN CONTENT AREA WITH PERMANENT DESKTOP RIGHT PANEL */}
+      <div className="relative flex min-h-0 flex-1 gap-4 overflow-hidden">
+        {/* MAIN CHAT WORKSPACE */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div
+            className={cn(
+              'min-h-0 flex-1 space-y-6 p-4 sm:p-5',
+              isEmptyChat ? 'overflow-y-hidden' : 'overflow-y-auto'
+            )}
+          >
+            {messagesLoading ? (
+              <div className="flex h-full min-h-32 items-center justify-center text-sm text-zinc-400 gap-2">
+                <Loader2 size={16} className="animate-spin text-blue-400" />
+                Loading conversation...
               </div>
-              <Badge variant="info" className="gap-1"><Bot size={12} /> AI Agent</Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="h-[500px] flex flex-col">
-              <div className="flex-1 overflow-y-auto space-y-4 p-4">
-                {messages.map((msg, i) => (
-                  <motion.div
-                    key={msg.id}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className={cn('flex gap-3', msg.role === 'user' ? 'justify-end' : 'justify-start')}
-                  >
-                    {msg.role === 'ai' && (
-                      <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center shrink-0">
-                        <Bot size={16} className="text-white" />
-                      </div>
-                    )}
-                    <div className={cn(
-                      'max-w-[85%]',
-                      msg.role === 'user' ? 'bg-blue-600 text-white rounded-2xl rounded-tr-md px-4 py-3' :
-                      msg.role === 'ai' ? 'bg-zinc-800/50 border border-zinc-700/50 rounded-2xl rounded-tl-md px-4 py-3 text-zinc-200' :
-                      'bg-zinc-800/30 text-zinc-400 text-center rounded-lg px-4 py-2'
-                    )}>
-                      <p className="text-sm">{msg.content}</p>
+            ) : isEmptyChat ? (
+              <div className="flex min-h-full w-full items-center justify-center px-1 py-6 sm:px-4">
+                <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 sm:gap-7">
+                  <h3 className={`${pressStart2P.className} w-full text-center text-lg font-normal leading-relaxed tracking-[-0.05em] [word-spacing:-0.4em] text-white sm:text-xl lg:text-2xl`}>
+                    {greetingIdentity ? `Ready to make a deal, ${greetingIdentity}?` : 'Ready to make a deal?'}
+                  </h3>
 
-                      {msg.sellers && (
-                        <div className="mt-4 space-y-3">
-                          <Separator className="bg-zinc-700/50" />
-                          <p className="text-xs text-zinc-400">Deal Port matches:</p>
-                          <div className="grid gap-3">
-                            {msg.sellers.map((s, si) => (
-                              <motion.div
-                                key={s.wallet}
-                                initial={{ opacity: 0, x: -10 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                className="p-4 rounded-xl border border-zinc-700/50 bg-zinc-800/30 hover:border-blue-500/40 transition-all"
-                              >
-                                <div className="flex items-start justify-between gap-3 mb-2">
-                                  <div className="min-w-0">
-                                    <div className="flex items-center gap-2">
-                                      <span className="font-semibold text-white truncate">
-                                        {si === 0 && <span className="text-amber-400 mr-1">★</span>}
-                                        {s.name}
-                                      </span>
-                                      <Badge variant="info" className="text-[10px]">{s.match}% match</Badge>
-                                    </div>
-                                    <div className="text-xs text-zinc-400 mt-0.5">
-                                      {s.category} · {(s.skills || []).join(', ')}
-                                    </div>
-                                    <div className="font-mono text-[10px] text-zinc-500 mt-0.5">
-                                      {s.wallet.slice(0, 8)}...{s.wallet.slice(-6)}
-                                    </div>
-                                  </div>
-                                  <div className="text-right shrink-0">
-                                    <div className="text-sm font-bold text-white">{Number(s.rate) / 1e18 || 0} ETH</div>
-                                    <div className="text-[10px] text-zinc-500">rate/project</div>
-                                  </div>
-                                </div>
-                                {s.bio && <p className="text-xs text-zinc-400 line-clamp-2 mb-2">{s.bio}</p>}
-                                <Button size="sm" className="gap-1" onClick={() => router.push(`/deal/new?seller=${s.wallet}&type=${encodeURIComponent(s.category)}&budget=${Number(s.rate) / 1e18 || 0}&name=${encodeURIComponent(s.name)}`)}>
-                                  <ArrowRight size={14} /> Order {s.name}
-                                </Button>
-                              </motion.div>
-                            ))}
-                          </div>
+                  {renderComposer(true)}
+
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  {STARTER_PROMPTS.map((item) => {
+                    const IconComponent = item.icon;
+                    return (
+                      <button
+                        key={item.title}
+                        type="button"
+                        onClick={() => {
+                          if (isThinking) return;
+                          if (address && chatCount >= chatLimit && !activeConversationIdRef.current) {
+                            showToast('Chat limit reached. Delete a conversation to start a new chat.');
+                            return;
+                          }
+                          setInput(item.prompt);
+                          requestAnimationFrame(() => textareaRef.current?.focus());
+                        }}
+                        disabled={isThinking}
+                        className="group flex min-w-0 flex-col rounded-xl border border-zinc-800/80 bg-zinc-900/60 p-4 text-left transition-all hover:border-zinc-700/80 hover:bg-zinc-800/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500/60 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <p className={`${pressStart2P.className} min-w-0 flex-1 text-[10px] font-normal leading-relaxed tracking-[-0.04em] text-zinc-200 transition-colors group-hover:text-white md:whitespace-nowrap`}>{item.title}</p>
+                          <IconComponent size={16} className="shrink-0 text-zinc-400 transition-colors group-hover:text-blue-400" />
                         </div>
-                      )}
-
-                      {msg.suggestions && (
-                        <div className="mt-4 space-y-3">
-                          <Separator className="bg-zinc-700/50" />
-                          <p className="text-xs text-zinc-400">AI suggests these options:</p>
-                          <div className="grid gap-3">
-                            {msg.suggestions.map((offer, oi) => (
-                              <motion.div
-                                key={offer.label}
-                                initial={{ opacity: 0, x: -10 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                className={cn(
-                                  'p-4 rounded-xl border transition-all cursor-pointer',
-                                  selectedOffer === oi
-                                    ? 'border-blue-500/50 bg-blue-600/10'
-                                    : oi === 1
-                                    ? 'border-violet-500/30 bg-violet-600/5 hover:border-violet-500/50'
-                                    : 'border-zinc-700/50 bg-zinc-800/30 hover:border-zinc-600'
-                                )}
-                                onClick={() => setSelectedOffer(oi)}
-                              >
-                                <div className="flex items-center justify-between mb-2">
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-semibold text-white">{offer.label}</span>
-                                    {oi === 1 && <Badge variant="info" className="text-[10px]">Recommended</Badge>}
-                                  </div>
-                                  <span className="text-lg font-bold text-white">{formatCurrency(offer.amount)}</span>
-                                </div>
-                                <p className="text-sm text-zinc-400 mb-2">{offer.description}</p>
-                                <div className="flex items-center gap-3 text-xs text-zinc-500">
-                                  <span>{offer.timeline}</span>
-                                  <span>·</span>
-                                  <span className={offer.risk === 'low' ? 'text-green-400' : offer.risk === 'medium' ? 'text-amber-400' : 'text-red-400'}>
-                                    {offer.risk.charAt(0).toUpperCase() + offer.risk.slice(1)} Risk
-                                  </span>
-                                </div>
-                              </motion.div>
-                            ))}
-                          </div>
-
-                          {selectedOffer !== null && (
-                            <div className="flex items-center gap-2 pt-2">
-                              <Button size="sm" className="gap-1" onClick={handleAcceptProposal} disabled={factory.isPending}>
-                                {factory.isPending ? <><Loader2 size={14} className="animate-spin" /> Creating...</> : <><ThumbsUp size={14} /> Accept & Create Deal</>}
-                              </Button>
-                              <Button variant="outline" size="sm" className="gap-1" disabled><Zap size={14} /> Counter Offer</Button>
-                              <Button variant="ghost" size="sm" className="gap-1" onClick={() => setSelectedOffer(null)}><X size={14} /> Dismiss</Button>
-                            </div>
-                          )}
+                        <p className="text-xs leading-relaxed text-zinc-400">{item.description}</p>
+                      </button>
+                    );
+                  })}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              messages
+                .filter(msg => msg.id !== 'init')
+                .map((msg) => (
+                  <div key={msg.id}>
+                    {msg.role === 'user' ? (
+                      <motion.div
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="flex justify-end gap-2.5 max-w-[85%] ml-auto"
+                      >
+                        <div className="bg-blue-600 text-white rounded-2xl rounded-tr-xs px-4 py-2.5 shadow-sm text-sm leading-relaxed">
+                          <p className="whitespace-pre-wrap">{msg.content}</p>
                         </div>
-                      )}
-                    </div>
-                    {msg.role === 'user' && (
-                      <div className="w-8 h-8 rounded-lg bg-zinc-700 flex items-center justify-center shrink-0">
-                        <User size={16} className="text-zinc-300" />
-                      </div>
+                      </motion.div>
+                    ) : msg.role === 'ai' ? (
+                      <motion.div
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="flex items-start gap-2.5 max-w-[85%] sm:max-w-[80%]"
+                      >
+                        <SynqAvatar className="w-8 h-8 p-1.5 mt-0.5 shrink-0" />
+                        <div className="bg-zinc-800/80 border border-zinc-700/60 text-zinc-200 rounded-2xl rounded-tl-xs px-4 py-2.5 shadow-xs text-sm leading-relaxed min-w-0">
+                          <FreelancerSearchMessage
+                            content={msg.content}
+                            sellers={msg.sellers}
+                            identitiesMap={identitiesMap}
+                            namesMap={namesMap}
+                            avatarsMap={avatarsMap}
+                            completedCountsMap={completedCountsMap}
+                            reviewCountsMap={reviewCountsMap}
+                            onSelectSeller={handleSelectSeller}
+                          />
+                        </div>
+                      </motion.div>
+                    ) : (
+                      <motion.div
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="bg-zinc-800/30 text-zinc-400 text-center rounded-lg px-4 py-2 text-xs"
+                      >
+                        {msg.content}
+                      </motion.div>
                     )}
-                  </motion.div>
-                ))}
-
-                {isThinking && (
-                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center shrink-0">
-                      <Bot size={16} className="text-white" />
-                    </div>
-                    <div className="bg-zinc-800/50 border border-zinc-700/50 rounded-2xl rounded-tl-md px-4 py-3">
-                      <div className="flex items-center gap-2 text-sm text-zinc-400">
-                        <Loader2 size={14} className="animate-spin text-blue-400" />
-                        Analyzing...
-                      </div>
-                    </div>
-                  </motion.div>
-                )}
-
-                {accepted && (
-                  <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="p-4 rounded-xl border border-green-500/20 bg-green-600/10">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Check size={18} className="text-green-400" />
-                      <span className="text-sm font-medium text-green-400">Deal Created!</span>
-                    </div>
-                    <p className="text-xs text-zinc-400">Your deal has been created on-chain.</p>
-                    <Button size="sm" variant="outline" className="mt-2 gap-1" onClick={() => router.push('/deals')}>
-                      <Plus size={14} /> View My Deals
-                    </Button>
-                  </motion.div>
-                )}
-              </div>
-
-              <div className="p-4 border-t border-zinc-800/50">
-                {error && <p className="text-xs text-red-400 mb-2">{error}</p>}
-                <div className="flex items-center gap-2 bg-zinc-800/50 border border-zinc-700/50 rounded-xl px-4 py-2 focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/20 transition-all">
-                  <input
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-                    placeholder="Describe the deal you want..."
-                    className="flex-1 bg-transparent text-sm text-white placeholder:text-zinc-500 outline-none"
-                  />
-                  <button
-                    onClick={handleSend}
-                    disabled={!input.trim() || isThinking}
-                    className="p-2 rounded-lg bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                  >
-                    <Send size={16} />
-                  </button>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>AI Insights</CardTitle>
-              <CardDescription>AI-powered assistant</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="p-3 rounded-lg bg-blue-600/10 border border-blue-500/20">
-                <div className="flex items-center gap-2 text-sm text-blue-400 mb-1">
-                  <Sparkles size={14} />
-                  How it works
-                </div>
-                <p className="text-sm text-zinc-300">Tell the AI what you need, your budget and timeline, it will help you find a deal that works for both sides. Select a proposal and create an on-chain deal with one click.</p>
-              </div>
-
-              <Separator />
-
-              <div>
-                <h4 className="text-xs text-zinc-500 font-medium uppercase tracking-wider mb-3">Example Prompts</h4>
-                <div className="space-y-2">
-                  {[
-                    'I need a React developer for $5,000, 2 week timeline',
-                    'Smart contract audit for 10 ETH, need it in 7 days',
-                    'Design a logo and branding for $2,000',
-                  ].map((ex, i) => (
-                    <button
-                      key={i}
-                      onClick={() => setInput(ex)}
-                      className="w-full text-left p-2 rounded-lg bg-zinc-800/30 border border-zinc-800/50 text-xs text-zinc-400 hover:text-white hover:border-zinc-700 transition-all"
-                    >
-                      "{ex}"
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <Separator />
-
-              <div>
-                <h4 className="text-xs text-zinc-500 font-medium uppercase tracking-wider mb-3">Agent Activity</h4>
-                <div className="space-y-2 text-sm">
-                  <div className="flex items-center gap-2 text-zinc-400">
-                    <Bot size={14} className="text-blue-400" />
-                    <span>Connecting to AI agent</span>
                   </div>
-                  <div className="flex items-center gap-2 text-zinc-400">
-                    <Bot size={14} className="text-violet-400" />
-                    <span>Parsing deal suggestions</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-zinc-400">
-                    <Bot size={14} className="text-amber-400" />
-                    <span>Ready to create on-chain deal</span>
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+                ))
+            )}
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Connected Wallet</CardTitle>
-              <CardDescription>Deals are created from your wallet</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {address ? (
-                <div className="text-sm text-zinc-300 font-mono truncate">{address}</div>
-              ) : (
-                <p className="text-sm text-zinc-500">Connect your wallet to create deals</p>
-              )}
-            </CardContent>
-          </Card>
+            {isThinking && (
+              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex items-start gap-2.5 max-w-[85%] sm:max-w-[80%]">
+                <SynqAvatar className="w-8 h-8 p-1.5 mt-0.5 shrink-0" />
+                <div className="bg-zinc-800/80 border border-zinc-700/60 text-zinc-400 rounded-2xl rounded-tl-xs px-4 py-2.5 shadow-xs text-xs flex items-center gap-2">
+                  <Loader2 size={14} className="animate-spin text-blue-400" />
+                  Analyzing deal request...
+                </div>
+              </motion.div>
+            )}
+
+            {accepted && (
+              <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="p-4 rounded-xl border border-green-500/20 bg-green-600/10">
+                <div className="flex items-center gap-2 mb-1">
+                  <Check size={18} className="text-green-400" />
+                  <span className="text-sm font-medium text-green-400">Deal Created!</span>
+                </div>
+                <p className="text-xs text-zinc-400">Your deal has been created on-chain.</p>
+                <Button size="sm" variant="outline" className="mt-2 gap-1" onClick={() => router.push('/deals')}>
+                  <Plus size={14} /> View My Deals
+                </Button>
+              </motion.div>
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Floating Modern Composer */}
+          {!isEmptyChat && renderComposer(false)}
         </div>
+
+        {/* PERMANENT DESKTOP HISTORY PANEL WITH DRAFT CONTROL */}
+        <aside className="hidden lg:flex flex-col min-h-0 w-[300px] shrink-0 border border-zinc-800/80 bg-zinc-950/40 rounded-2xl overflow-hidden relative">
+          <div className="p-3.5 border-b border-zinc-800/60 shrink-0 space-y-3 relative" ref={draftContainerRef}>
+            {/* Top Control Row */}
+            <div className="grid grid-cols-[2fr_3fr] gap-1.5 w-full">
+              <Popover.Root
+                open={draftPanelOpen}
+                onOpenChange={(open) => {
+                  if (!open) {
+                    setDraftPanelOpen(false);
+                    setDraftPanelPinned(false);
+                  }
+                }}
+              >
+                <Popover.Trigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onMouseEnter={handleDraftMouseEnter}
+                    onMouseLeave={handleDraftMouseLeave}
+                    onClick={handleDraftClick}
+                    className={cn(
+                      'w-full justify-center px-2 py-1 h-8 text-xs border-zinc-700/80 bg-zinc-900 text-zinc-200 hover:bg-zinc-800 transition-all font-medium gap-1.5',
+                      (draftPanelOpen || draftPanelPinned) && 'border-blue-500/60 bg-blue-500/10 text-blue-300'
+                    )}
+                  >
+                    <FileText size={13} className={cn((draftPanelOpen || draftPanelPinned) ? 'text-blue-400' : 'text-zinc-400')} />
+                    Draft
+                  </Button>
+                </Popover.Trigger>
+
+                <Popover.Portal>
+                  <Popover.Content
+                    side="left"
+                    align="start"
+                    sideOffset={8}
+                    onMouseEnter={handleDraftMouseEnter}
+                    onMouseLeave={handleDraftMouseLeave}
+                    className="z-50 outline-none focus:outline-none"
+                  >
+                    <DraftPanel
+                      state={draftState}
+                      clientIdentity={clientIdentityObj}
+                      freelancerIdentity={freelancerIdentityObj}
+                      onClose={() => { setDraftPanelOpen(false); setDraftPanelPinned(false); }}
+                      onEdit={handleDraftEdit}
+                      onProceed={handleDraftProceed}
+                    />
+                  </Popover.Content>
+                </Popover.Portal>
+              </Popover.Root>
+
+              <Button
+                size="sm"
+                onClick={startNewChat}
+                disabled={isThinking}
+                className="w-full justify-center px-2 py-1 h-8 text-xs bg-blue-600 hover:bg-blue-500 text-white font-semibold gap-1.5"
+              >
+                <Plus size={13} /> New Chat
+              </Button>
+            </div>
+
+            {/* Chat History Title & Subtitle */}
+            <div>
+              <h2 className="text-sm font-semibold text-white">Chat History</h2>
+              <p className="text-[11px] text-zinc-300">Recent negotiation sessions</p>
+            </div>
+
+            {/* Limit Row */}
+            <div className="flex items-center justify-between text-xs text-zinc-300 font-mono pt-0.5">
+              <span>Limit</span>
+              <span>{address ? `${chatCount} / ${chatLimit}` : '0 / 10'}</span>
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+            {renderHistoryContent()}
+          </div>
+        </aside>
       </div>
+
+      {/* MOBILE HISTORY OVERLAY DRAWER */}
+      <AnimatePresence>
+        {mobileHistoryOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setMobileHistoryOpen(false)}
+              className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 lg:hidden"
+            />
+            <motion.aside
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              className="fixed right-0 top-0 bottom-0 w-[300px] max-w-[85vw] bg-zinc-950 border-l border-zinc-800 z-50 flex flex-col p-4 space-y-3 lg:hidden"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <Button
+                  className="flex-1 justify-start gap-2"
+                  onClick={startNewChat}
+                  disabled={isThinking}
+                >
+                  <Plus size={15} /> New Chat
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => setMobileHistoryOpen(false)}
+                  className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800 border border-zinc-800 shrink-0"
+                  aria-label="Close history"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-base font-semibold text-white">Chat History</h2>
+                  <p className="text-xs text-zinc-300">Recent negotiation sessions</p>
+                </div>
+                <span className="text-xs font-mono px-2 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-300">
+                  {address ? `${chatCount} / ${chatLimit}` : '0 / 10'}
+                </span>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto pt-2">
+                {renderHistoryContent()}
+              </div>
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* MOBILE DRAFT OVERLAY MODAL */}
+      <AnimatePresence>
+        {mobileDraftOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setMobileDraftOpen(false)}
+              className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 lg:hidden"
+            />
+            <div className="fixed inset-x-4 top-16 z-50 flex justify-center lg:hidden pointer-events-auto">
+              <DraftPanel
+                state={draftState}
+                clientIdentity={clientIdentityObj}
+                freelancerIdentity={freelancerIdentityObj}
+                onClose={() => setMobileDraftOpen(false)}
+                onEdit={handleDraftEdit}
+                onProceed={handleDraftProceed}
+              />
+            </div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* TEMPORARY FLOATING LIMIT / WALLET TOAST OVERLAY */}
+      <AnimatePresence>
+        {toastMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: 12, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 8, scale: 0.95 }}
+            transition={{ duration: 0.15 }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl bg-zinc-900/95 border border-zinc-700/80 text-zinc-100 text-xs sm:text-sm font-medium shadow-2xl backdrop-blur-md flex items-center gap-2.5 pointer-events-auto"
+          >
+            <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+            <span>{toastMessage}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
+  );
+}
+
+export default function NegotiatorPage() {
+  return (
+    <Suspense fallback={null}>
+      <NegotiatorContent />
+    </Suspense>
   );
 }
