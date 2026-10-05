@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { getAll, create, update, query } from '@/lib/db';
 import { getUserFromRequest } from '@/lib/auth';
+import { validateUsdcPricing } from '@/lib/deals/pricing';
 
 const isWallet = (w: unknown): w is string => typeof w === 'string' && /^0x[0-9a-fA-F]{40}$/.test(w);
 
@@ -34,6 +35,9 @@ function buildDefaultMarketProfile(walletLower: string) {
       linkedin: '',
     },
     portfolio: [],
+    startingRateAmount: null,
+    startingRateCurrency: null,
+    startingRateType: null,
     draftName: '',
     draftCategory: '',
     draftSkills: [],
@@ -77,6 +81,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ wall
         linkedin: typeof record.links?.linkedin === 'string' ? record.links.linkedin : '',
       },
       portfolio: Array.isArray(record.portfolio) ? record.portfolio : [],
+      startingRateAmount: record.startingRateAmount ? String(record.startingRateAmount) : null,
+      startingRateCurrency: (record.startingRateCurrency as string) || null,
+      startingRateType: (record.startingRateType as string) || null,
 
       // Draft Directory fields — exposed ONLY to authenticated wallet owner
       draftName: isOwner && typeof record.draftName === 'string' ? record.draftName : '',
@@ -127,6 +134,9 @@ async function handleUpdate(req: NextRequest, { params }: { params: Promise<{ wa
       typicalDelivery,
       links,
       portfolio,
+      startingRateAmount,
+      startingRateCurrency,
+      startingRateType,
       draftName,
       draftCategory,
       draftSkills,
@@ -287,7 +297,32 @@ async function handleUpdate(req: NextRequest, { params }: { params: Promise<{ wa
       }
     }
 
-    // 7. Draft fields validation (max limits, trim, deduplicate)
+    // 7. Modern USDC Starting Rate Validation
+    let cleanStartingRateAmount: string | null | undefined = undefined;
+    let cleanStartingRateCurrency: string | null | undefined = undefined;
+    let cleanStartingRateType: string | null | undefined = undefined;
+
+    if (startingRateAmount !== undefined) {
+      if (startingRateAmount !== null && String(startingRateAmount).trim() !== '') {
+        const pricingValidation = validateUsdcPricing(
+          String(startingRateAmount),
+          startingRateType,
+          startingRateCurrency || 'USDC'
+        );
+        if (!pricingValidation.valid) {
+          return Response.json({ error: pricingValidation.error || 'Invalid USDC pricing' }, { status: 400 });
+        }
+        cleanStartingRateAmount = pricingValidation.cleanAmount!;
+        cleanStartingRateCurrency = 'USDC';
+        cleanStartingRateType = pricingValidation.cleanType!;
+      } else {
+        cleanStartingRateAmount = null;
+        cleanStartingRateCurrency = null;
+        cleanStartingRateType = null;
+      }
+    }
+
+    // 8. Draft fields validation (max limits, trim, deduplicate)
     const trimmedDraftName = typeof draftName === 'string' ? draftName.trim() : '';
     if (trimmedDraftName.length > 40) {
       return Response.json({ error: 'Draft name exceeds 40 characters limit' }, { status: 400 });
@@ -348,6 +383,11 @@ async function handleUpdate(req: NextRequest, { params }: { params: Promise<{ wa
       typicalDelivery: trimmedDelivery,
       links: cleanLinks,
       portfolio: cleanPortfolio,
+      ...(cleanStartingRateAmount !== undefined ? {
+        startingRateAmount: cleanStartingRateAmount,
+        startingRateCurrency: cleanStartingRateCurrency,
+        startingRateType: cleanStartingRateType,
+      } : {}),
       draftName: trimmedDraftName,
       draftCategory: trimmedDraftCategory,
       draftSkills: cleanDraftSkills,
@@ -378,6 +418,9 @@ async function handleUpdate(req: NextRequest, { params }: { params: Promise<{ wa
         linkedin: record?.links?.linkedin || '',
       },
       portfolio: Array.isArray(record?.portfolio) ? record.portfolio : [],
+      startingRateAmount: record?.startingRateAmount ? String(record.startingRateAmount) : null,
+      startingRateCurrency: record?.startingRateCurrency || null,
+      startingRateType: record?.startingRateType || null,
       draftName: record?.draftName || '',
       draftCategory: record?.draftCategory || '',
       draftSkills: Array.isArray(record?.draftSkills) ? record.draftSkills : [],

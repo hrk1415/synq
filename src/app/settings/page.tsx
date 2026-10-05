@@ -44,6 +44,7 @@ import { useAuthSession } from '@/hooks/useAuthSession';
 import { useRegistry } from '@/hooks/useRegistryContract';
 import { useDirectoryContract } from '@/hooks/useDirectoryContract';
 import { useSepoliaNetwork } from '@/hooks/useSepoliaNetwork';
+import { validateUsdcPricing } from '@/lib/deals/pricing';
 
 const pressStart2P = Press_Start_2P({
   subsets: ['latin'],
@@ -117,6 +118,8 @@ export default function SettingsPage() {
   const [profCategory, setProfCategory] = useState('Web Development');
   const [profSkills, setProfSkills] = useState('');
   const [profRate, setProfRate] = useState('');
+  const [profUsdcRate, setProfUsdcRate] = useState('');
+  const [profRateType, setProfRateType] = useState<'PER_PROJECT' | 'PER_HOUR'>('PER_PROJECT');
   const [profDelivery, setProfDelivery] = useState('');
   const [profQuote, setProfQuote] = useState('');
   const [profAbout, setProfAbout] = useState('');
@@ -160,6 +163,8 @@ export default function SettingsPage() {
     profCategory: string;
     profSkills: string;
     profRate: string;
+    profUsdcRate: string;
+    profRateType: string;
     profQuote: string;
   }
   const [savedBaseline, setSavedBaseline] = useState<OffChainBaseline | null>(null);
@@ -470,6 +475,8 @@ export default function SettingsPage() {
         linkedin: typeof marketData?.links?.linkedin === 'string' ? marketData.links.linkedin : '',
       };
       const portfolioVal = Array.isArray(marketData?.portfolio) ? marketData.portfolio : [];
+      const usdcRateVal = marketData?.startingRateAmount ? String(marketData.startingRateAmount) : '';
+      const rateTypeVal = marketData?.startingRateType === 'PER_HOUR' ? 'PER_HOUR' : 'PER_PROJECT';
 
       setProfHeadline(headlineVal);
       setSecCategories(secCatVal);
@@ -477,6 +484,8 @@ export default function SettingsPage() {
       setProfDelivery(deliveryVal);
       setLinks(linksVal);
       setPortfolio(portfolioVal);
+      setProfUsdcRate(usdcRateVal);
+      setProfRateType(rateTypeVal);
 
       let draftNameVal = '';
       let draftCatVal = 'Web Development';
@@ -520,6 +529,8 @@ export default function SettingsPage() {
         profCategory: draftCatVal,
         profSkills: draftSkillsVal,
         profRate: draftRateVal,
+        profUsdcRate: usdcRateVal,
+        profRateType: rateTypeVal,
         profQuote: draftBioVal,
       });
     })();
@@ -564,7 +575,8 @@ export default function SettingsPage() {
     if (profDelivery !== savedBaseline.profDelivery) return true;
     if (JSON.stringify(secCategories) !== JSON.stringify(savedBaseline.secCategories)) return true;
     if (JSON.stringify(links) !== JSON.stringify(savedBaseline.links)) return true;
-    if (JSON.stringify(portfolio) !== JSON.stringify(savedBaseline.portfolio)) return true;
+    if (profUsdcRate !== savedBaseline.profUsdcRate) return true;
+    if (profRateType !== savedBaseline.profRateType) return true;
 
     if (!directory.myRegistered) {
       if (profName !== savedBaseline.profName) return true;
@@ -586,6 +598,8 @@ export default function SettingsPage() {
     secCategories,
     links,
     portfolio,
+    profUsdcRate,
+    profRateType,
     profName,
     profCategory,
     profSkills,
@@ -723,7 +737,21 @@ export default function SettingsPage() {
         }
       }
 
-      // 4. Save Rich Market Metadata & Drafts
+      // 4. Validate and prepare modern USDC Starting Rate if provided
+      let cleanStartingRateAmount: string | null = null;
+      let cleanStartingRateType: 'PER_PROJECT' | 'PER_HOUR' | null = null;
+      if (profUsdcRate.trim()) {
+        const pricingRes = validateUsdcPricing(profUsdcRate, profRateType);
+        if (!pricingRes.valid) {
+          setSaveError(pricingRes.error || 'Invalid USDC starting rate');
+          setSavingAll(false);
+          return false;
+        }
+        cleanStartingRateAmount = pricingRes.cleanAmount!;
+        cleanStartingRateType = pricingRes.cleanType!;
+      }
+
+      // 5. Save Rich Market Metadata & Drafts
       const skillsArray = profSkills
         .split(',')
         .map((s) => s.trim())
@@ -744,6 +772,9 @@ export default function SettingsPage() {
           typicalDelivery: profDelivery,
           links,
           portfolio,
+          startingRateAmount: cleanStartingRateAmount,
+          startingRateCurrency: cleanStartingRateAmount ? 'USDC' : null,
+          startingRateType: cleanStartingRateType,
           draftName: profName,
           draftCategory: profCategory,
           draftSkills: skillsArray,
@@ -773,6 +804,8 @@ export default function SettingsPage() {
         profCategory,
         profSkills,
         profRate,
+        profUsdcRate: cleanStartingRateAmount || '',
+        profRateType: cleanStartingRateType || 'PER_PROJECT',
         profQuote,
       });
 
@@ -918,6 +951,11 @@ export default function SettingsPage() {
     const cleanName = profName.trim() || nameDraft.trim() || username.trim();
     if (cleanName.length < 2) {
       setRegisterError('Enter a valid Professional / Studio Name (2-40 chars)');
+      return;
+    }
+    const pricingRes = validateUsdcPricing(profUsdcRate, profRateType);
+    if (!pricingRes.valid) {
+      setRegisterError(pricingRes.error || 'Enter a valid starting rate in USDC (> 0)');
       return;
     }
     const rateNum = Number(profRate);
@@ -1322,22 +1360,6 @@ export default function SettingsPage() {
 
             <div>
               <label className="text-xs text-zinc-300 mb-1 block font-medium">
-                Starting Rate (ETH) <span className="text-amber-400">*</span>
-              </label>
-              <Input
-                type="number"
-                value={profRate}
-                onChange={(e) => setProfRate(e.target.value)}
-                placeholder="0.5"
-                min="0.001"
-                step="0.01"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs text-zinc-300 mb-1 block font-medium">
                 Core Skills (Max 8, comma separated) <span className="text-amber-400">*</span>
               </label>
               <Input
@@ -1346,16 +1368,74 @@ export default function SettingsPage() {
                 placeholder="React, Next.js, Solidity, UI Design"
               />
             </div>
+          </div>
 
+          {/* Starting Rate Section — Modern USDC + Directory ETH */}
+          <div className="space-y-3 p-4 rounded-xl bg-zinc-950/40 border border-zinc-800">
             <div>
-              <label className="text-xs text-zinc-300 mb-1 block font-medium">Typical Delivery Time</label>
-              <Input
-                value={profDelivery}
-                onChange={(e) => setProfDelivery(e.target.value)}
-                placeholder="e.g. 2–4 days per milestone"
-                maxLength={60}
-              />
+              <span className="text-xs text-zinc-200 font-semibold block uppercase tracking-wider">
+                Starting Rate <span className="text-amber-400">*</span>
+              </span>
+              <p className="text-[11px] text-zinc-400 mt-0.5">
+                Configure your public marketplace rate in USDC. The on-chain ETH rate is an immutable directory anchor required for registration.
+              </p>
             </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs text-zinc-300 mb-1 flex items-center justify-between font-medium">
+                  <span>In USDC <span className="text-amber-400">*</span></span>
+                  <span className="text-[10px] text-blue-400 font-normal">Publicly displayed</span>
+                </label>
+                <Input
+                  type="text"
+                  value={profUsdcRate}
+                  onChange={(e) => setProfUsdcRate(e.target.value)}
+                  placeholder="50.00"
+                  className="font-mono text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-zinc-300 mb-1 flex items-center justify-between font-medium">
+                  <span>In ETH <span className="text-amber-400">*</span></span>
+                  <span className="text-[10px] text-zinc-500 font-normal">On-chain directory rate</span>
+                </label>
+                <Input
+                  type="number"
+                  value={profRate}
+                  onChange={(e) => setProfRate(e.target.value)}
+                  placeholder="0.02"
+                  min="0.0001"
+                  step="0.01"
+                  className="font-mono text-sm"
+                />
+              </div>
+            </div>
+
+            <div className="max-w-xs">
+              <label className="text-xs text-zinc-300 mb-1 block font-medium">
+                Rate Type <span className="text-amber-400">*</span>
+              </label>
+              <select
+                value={profRateType}
+                onChange={(e) => setProfRateType(e.target.value as 'PER_PROJECT' | 'PER_HOUR')}
+                className="w-full h-10 rounded-xl border border-zinc-700 bg-zinc-800/50 px-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+              >
+                <option value="PER_PROJECT">Per Project</option>
+                <option value="PER_HOUR">Per Hour</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs text-zinc-300 mb-1 block font-medium">Typical Delivery Time</label>
+            <Input
+              value={profDelivery}
+              onChange={(e) => setProfDelivery(e.target.value)}
+              placeholder="e.g. 2–4 days per milestone"
+              maxLength={60}
+            />
           </div>
 
           <div>

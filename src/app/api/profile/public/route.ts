@@ -37,6 +37,9 @@ export async function POST(req: NextRequest) {
         name: (matchedUser?.name as string) || null,
         headline: (matchedMarket?.headline as string) || '',
         secondaryCategories: Array.isArray(matchedMarket?.secondaryCategories) ? matchedMarket.secondaryCategories : [],
+        startingRateAmount: matchedMarket?.startingRateAmount ? String(matchedMarket.startingRateAmount) : null,
+        startingRateCurrency: (matchedMarket?.startingRateCurrency as string) || null,
+        startingRateType: (matchedMarket?.startingRateType as string) || null,
       };
     });
 

@@ -3,7 +3,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { useAccount, useReadContract } from 'wagmi';
-import { formatUnits, isAddress } from 'viem';
+import { isAddress } from 'viem';
+import { getSuggestedDealBudget, formatPublicPricing, type FreelancerPricing } from '@/lib/deals/pricing';
 import {
   Briefcase,
   Users,
@@ -110,6 +111,8 @@ export interface ProviderProfileProps {
   showBreadcrumb?: boolean;
   showCloseButton?: boolean;
   onClose?: () => void;
+  onSelectFreelancer?: (wallet: string) => void;
+  selectButtonLabel?: string;
 }
 
 export function ProviderProfile({
@@ -117,6 +120,8 @@ export function ProviderProfile({
   showBreadcrumb = false,
   showCloseButton = false,
   onClose,
+  onSelectFreelancer,
+  selectButtonLabel,
 }: ProviderProfileProps) {
   const validAddress = isAddress(rawWallet) ? (rawWallet as `0x${string}`) : undefined;
   const { completedCount: authCompletedDeals, isLoading: loadingCompletedDeals } = useFreelancerCompletedDeals(validAddress);
@@ -301,8 +306,6 @@ export function ProviderProfile({
   const directoryName = String(profile?.name || 'Anonymous Provider');
   const category = String(profile?.category || 'General');
   const skills: string[] = Array.isArray(profile?.skills) ? profile.skills : [];
-  const rateWei = BigInt(profile?.rate || 0);
-  const rateEth = formatUnits(rateWei, 18);
   const directoryBio = String(profile?.bio || '').trim(); // Treated as Personal Quote
   const available = profile?.available !== false;
 
@@ -313,13 +316,30 @@ export function ProviderProfile({
   // About Content (Rich About ONLY — no fallback to Personal Quote)
   const aboutContent = richMeta?.about && typeof richMeta.about === 'string' ? richMeta.about.trim() : '';
 
-  // Commercial Action URL
-  const orderUrl = `/deal/new?${new URLSearchParams({
+  // Modern Public Starting Rate (USDC only - no public ETH rate)
+  const rateAmount = richMeta?.startingRateAmount || (publicProfile as any)?.startingRateAmount;
+  const rateType = richMeta?.startingRateType || (publicProfile as any)?.startingRateType;
+  const publicPricing: FreelancerPricing | null =
+    rateAmount && rateType && (rateType === 'PER_PROJECT' || rateType === 'PER_HOUR')
+      ? {
+          amount: String(rateAmount),
+          currency: 'USDC',
+          rateType,
+        }
+      : null;
+  const formattedPricing = formatPublicPricing(publicPricing);
+
+  // Commercial Action URL (ETH never prefills USDC deal budget; only PER_PROJECT USDC does)
+  const suggestedBudget = getSuggestedDealBudget(publicPricing);
+  const searchParamsRecord: Record<string, string> = {
     seller: validAddress,
     type: category,
-    budget: rateEth,
     name: directoryName,
-  }).toString()}`;
+  };
+  if (suggestedBudget) {
+    searchParamsRecord.budget = suggestedBudget;
+  }
+  const orderUrl = `/deal/new?${new URLSearchParams(searchParamsRecord).toString()}`;
 
   // Links Verification
   const links = richMeta?.links || {};
@@ -574,10 +594,19 @@ export function ProviderProfile({
             <CardContent className="p-5 space-y-5">
               <div className="flex items-baseline justify-between border-b border-zinc-800 pb-4">
                 <span className="text-xs text-zinc-400 font-medium uppercase tracking-wider">Starting Rate</span>
-                <div className="text-right">
-                  <span className="text-2xl font-bold text-white">{rateEth}</span>
-                  <span className="text-xs font-semibold text-zinc-400 ml-1">ETH</span>
-                </div>
+                {formattedPricing ? (
+                  <div className="text-right">
+                    <span className="text-2xl font-bold text-white">{formattedPricing.amountDisplay}</span>
+                    <span className="text-xs font-semibold text-zinc-400 ml-1">USDC</span>
+                    <div className="text-[11px] text-zinc-500 font-medium lowercase">
+                      {formattedPricing.typeLabel}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-right">
+                    <span className="text-sm font-semibold text-zinc-500">Rate not set</span>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-3 text-xs">
@@ -615,6 +644,17 @@ export function ProviderProfile({
                   <Link href="/settings">
                     <Pencil size={16} /> Edit Profile
                   </Link>
+                </Button>
+              ) : onSelectFreelancer && validAddress ? (
+                <Button
+                  type="button"
+                  onClick={() => {
+                    onSelectFreelancer(validAddress);
+                    if (onClose) onClose();
+                  }}
+                  className="w-full gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-md font-semibold"
+                >
+                  <Check size={16} /> {selectButtonLabel || 'Select This Freelancer'}
                 </Button>
               ) : (
                 <Button asChild className="w-full gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-md">

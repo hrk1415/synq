@@ -9,19 +9,18 @@ import {
   Check,
   Sparkles,
   Loader2,
-  MessageSquare,
-  ChevronDown,
-  ChevronUp,
   Search,
   X,
-  Calendar,
-  Clock,
-  ShieldCheck,
   Plus,
   Trash2,
   FileSignature,
   Info,
   AlertTriangle,
+  Star,
+  UserCheck,
+  Wallet,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -29,10 +28,9 @@ import { Press_Start_2P } from 'next/font/google';
 import { useAccount, useSignTypedData } from 'wagmi';
 import { getAddress, isAddress } from 'viem';
 
-import { shortenAddress, cn, normalizeWallet } from '@/lib/utils';
+import { shortenAddress, cn } from '@/lib/utils';
 import {
   SYNQ_V2_SEPOLIA_CONFIG,
-  SEPOLIA_CHAIN_ID,
 } from '@/lib/contracts/addresses';
 import {
   ZERO_ADDRESS,
@@ -45,10 +43,8 @@ import {
   formatUsdcAmount,
   hashMilestoneSpec,
   hashStandardV2Milestones,
-  hashDealProposalV2,
   verifyDealProposalSignature,
   validateStandardV2ProtocolRules,
-  validateStandardV2UxRules,
 } from '@/lib/deals/v2';
 import { fetchNextClientProposalNonce } from '@/lib/deals/v2-actions';
 import { sepoliaPublicClient } from '@/lib/chain';
@@ -60,6 +56,8 @@ import { useBatchFreelancerCompletedDeals } from '@/hooks/useFreelancerStats';
 import { useSynqIdentity, useSynqIdentities } from '@/hooks/useSynqIdentity';
 import { useAuthSession } from '@/hooks/useAuthSession';
 import { DealReceipt } from '@/components/deals/DealReceipt';
+import { AIFreelancerMatches, calculateFreelancerMatch } from '@/components/deals/AIFreelancerMatches';
+import { formatPublicPricing, type FreelancerPricing } from '@/lib/deals/pricing';
 import type { DealProposalV2, StandardV2MilestoneInit } from '@/types/deal-v2';
 
 const pressStart2P = Press_Start_2P({
@@ -112,14 +110,58 @@ interface FormMilestone {
 }
 
 const steps = [
-  { title: 'Type', description: 'What are you buying or selling?' },
-  { title: 'Counterparty', description: 'Who is the counterparty?' },
-  { title: 'Deliverables', description: 'What is the overall scope?' },
-  { title: 'Payment', description: 'How should payment be structured?' },
-  { title: 'Milestones', description: 'Define deliverables & deadlines' },
+  { title: 'Type', description: 'What is the deal?' },
+  { title: 'Freelancer', description: 'Who is the freelancer?' },
+  { title: 'Scope', description: 'What is the overall scope?' },
+  { title: 'Budget', description: 'Total deal budget' },
+  { title: 'Deadline', description: 'Project completion target' },
+  { title: 'Payment Structure', description: 'How should payment be structured?' },
   { title: 'Protection', description: 'Adaptive Protection level' },
-  { title: 'Review', description: 'Review & sign proposal' },
+  { title: 'Review', description: 'Review and sign deal terms' },
 ];
+
+function FreelancerAvatar({
+  avatar,
+  name,
+  handle,
+  wallet,
+  size = 'md',
+}: {
+  avatar?: string | null;
+  name?: string | null;
+  handle?: string | null;
+  wallet?: string;
+  size?: 'sm' | 'md' | 'lg';
+}) {
+  const sizeClasses = {
+    sm: 'w-7 h-7 text-[10px]',
+    md: 'w-9 h-9 text-xs',
+    lg: 'w-12 h-12 text-sm',
+  }[size];
+
+  if (avatar) {
+    return (
+      <img
+        src={avatar}
+        alt={name || 'Avatar'}
+        className={cn('rounded-full object-cover shrink-0 border border-zinc-700/60', sizeClasses)}
+      />
+    );
+  }
+
+  const label = name || handle || wallet || 'FL';
+  const initials = label.slice(0, 2).toUpperCase();
+  return (
+    <div
+      className={cn(
+        'rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-bold shrink-0 border border-zinc-700/60',
+        sizeClasses
+      )}
+    >
+      {initials}
+    </div>
+  );
+}
 
 export default function NewDealPage() {
   return (
@@ -138,38 +180,172 @@ export default function NewDealPage() {
 function NewDealForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { address, isConnected } = useAccount();
+  const { address } = useAccount();
   const { collapsed } = useSidebar();
-  const { ensureSepolia, networkReady } = useSepoliaNetwork();
+  const { ensureSepolia } = useSepoliaNetwork();
   const { ensureAuthenticated } = useAuthSession();
   const { signTypedDataAsync } = useSignTypedData();
 
   const directory = useDirectoryContract(address);
   const initialSeller = searchParams.get('seller') || '';
-  const entryMode = useRef<'open' | 'freelancer-prefilled'>(
-    initialSeller ? 'freelancer-prefilled' : 'open'
-  ).current;
 
-  const [step, setStep] = useState(initialSeller ? 1 : 0);
+  const [step, setStep] = useState(0);
   const [matches, setMatches] = useState<any[]>([]);
   const [matchState, setMatchState] = useState<'idle' | 'matching' | 'done'>('idle');
   const [matchError, setMatchError] = useState('');
+  const [aiPanelExpanded, setAiPanelExpanded] = useState(false);
 
   const prefilledDeadline = searchParams.get('deadline') || '';
+  const [deadlineDate, setDeadlineDate] = useState<string>(prefilledDeadline || '');
+  const [deadlineTime, setDeadlineTime] = useState<string>('23:59');
+  const [selectedDeadlinePreset, setSelectedDeadlinePreset] = useState<number | null>(null);
+
+  const dateInputRef = useRef<HTMLInputElement>(null);
+  const timeInputRef = useRef<HTMLInputElement>(null);
+
+  const openDatePicker = () => {
+    try {
+      if (dateInputRef.current && 'showPicker' in HTMLInputElement.prototype) {
+        dateInputRef.current.showPicker();
+      }
+    } catch {
+      dateInputRef.current?.focus();
+    }
+  };
+
+  const openTimePicker = () => {
+    try {
+      if (timeInputRef.current && 'showPicker' in HTMLInputElement.prototype) {
+        timeInputRef.current.showPicker();
+      }
+    } catch {
+      timeInputRef.current?.focus();
+    }
+  };
+
+  const handleDeadlineDateChange = (date: string) => {
+    setDeadlineDate(date);
+    setSelectedDeadlinePreset(null);
+    if (milestones.length > 0) {
+      const updated = [...milestones];
+      updated[updated.length - 1] = {
+        ...updated[updated.length - 1],
+        deadlineDate: date,
+      };
+      if (form.paymentStructure === '50-50' && updated.length === 2 && date) {
+        try {
+          const targetTs = new Date(`${date}T${deadlineTime || '23:59'}`).getTime();
+          const nowTs = Date.now();
+          if (targetTs > nowTs) {
+            const midTs = new Date(nowTs + (targetTs - nowTs) / 2);
+            const y = midTs.getFullYear();
+            const m = String(midTs.getMonth() + 1).padStart(2, '0');
+            const d = String(midTs.getDate()).padStart(2, '0');
+            updated[0] = { ...updated[0], deadlineDate: `${y}-${m}-${d}` };
+          }
+        } catch {}
+      }
+      setMilestones(updated);
+    }
+  };
+
+  const handleDeadlineTimeChange = (time: string) => {
+    setDeadlineTime(time);
+    setSelectedDeadlinePreset(null);
+    if (milestones.length > 0) {
+      const updated = [...milestones];
+      updated[updated.length - 1] = {
+        ...updated[updated.length - 1],
+        deadlineTime: time,
+      };
+      setMilestones(updated);
+    }
+  };
+
+  const applyDeadlinePreset = (days: number) => {
+    setSelectedDeadlinePreset(days);
+    const target = new Date();
+    target.setDate(target.getDate() + days);
+    const y = target.getFullYear();
+    const m = String(target.getMonth() + 1).padStart(2, '0');
+    const d = String(target.getDate()).padStart(2, '0');
+    const hh = String(target.getHours()).padStart(2, '0');
+    const mm = String(target.getMinutes()).padStart(2, '0');
+    const dateStr = `${y}-${m}-${d}`;
+    const timeStr = `${hh}:${mm}`;
+    setDeadlineDate(dateStr);
+    setDeadlineTime(timeStr);
+    if (milestones.length > 0) {
+      const updated = [...milestones];
+      updated[updated.length - 1] = {
+        ...updated[updated.length - 1],
+        deadlineDate: dateStr,
+        deadlineTime: timeStr,
+      };
+      if (form.paymentStructure === '50-50' && updated.length === 2 && dateStr) {
+        try {
+          const targetTs = target.getTime();
+          const nowTs = Date.now();
+          if (targetTs > nowTs) {
+            const midTs = new Date(nowTs + (targetTs - nowTs) / 2);
+            const my = midTs.getFullYear();
+            const mmth = String(midTs.getMonth() + 1).padStart(2, '0');
+            const md = String(midTs.getDate()).padStart(2, '0');
+            updated[0] = { ...updated[0], deadlineDate: `${my}-${mmth}-${md}` };
+          }
+        } catch {}
+      }
+      setMilestones(updated);
+    }
+  };
+
+  const formattedLocalDelivery = useMemo(() => {
+    if (!deadlineDate || !deadlineTime) return null;
+    try {
+      const d = new Date(`${deadlineDate}T${deadlineTime}`);
+      if (isNaN(d.getTime())) return null;
+      const datePart = d.toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      });
+      const timePart = d.toLocaleTimeString(undefined, {
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+      return `${datePart} at ${timePart}`;
+    } catch {
+      return null;
+    }
+  }, [deadlineDate, deadlineTime]);
+
   const rawUrlPayment = searchParams.get('payment');
-  const initialPaymentStructure =
+  const validUrlPayment =
     rawUrlPayment === '50/50' || rawUrlPayment === '50-50' || rawUrlPayment === 'half'
       ? '50-50'
       : rawUrlPayment === 'single'
       ? 'single'
-      : 'custom';
+      : rawUrlPayment === 'custom'
+      ? 'custom'
+      : null;
 
-  const [form, setForm] = useState({
+  const [paymentStructureSelected, setPaymentStructureSelected] = useState<boolean>(!!validUrlPayment);
+  const [expandedMilestoneIndex, setExpandedMilestoneIndex] = useState<number | null>(validUrlPayment ? 0 : null);
+
+  const [form, setForm] = useState<{
+    type: string;
+    counterparty: string;
+    budget: string;
+    deliverables: string;
+    paymentStructure: 'single' | '50-50' | 'custom' | '';
+    protection: boolean;
+    expiryDays: number;
+  }>({
     type: searchParams.get('type') || '',
     counterparty: initialSeller,
-    budget: searchParams.get('budget') || '1.00',
+    budget: searchParams.get('budget') || '',
     deliverables: '',
-    paymentStructure: initialPaymentStructure as 'single' | '50-50' | 'custom',
+    paymentStructure: validUrlPayment || '',
     protection: false,
     expiryDays: 7,
   });
@@ -182,30 +358,63 @@ function NewDealForm() {
     return `${year}-${month}-${day}`;
   };
 
-  const [milestones, setMilestones] = useState<FormMilestone[]>([
-    {
-      title: 'Milestone 1 — Initial Deliverable',
-      description: 'Initial project milestone deliverable and acceptance criteria.',
-      amountUsdc: '0.50',
-      deadlineDate: prefilledDeadline || getDefaultDeadlineDate(7),
-      deadlineTime: '23:59',
-      reviewWindowSeconds: 86400,
-      gracePeriodSeconds: 0,
-    },
-    {
-      title: 'Milestone 2 — Final Delivery',
-      description: 'Final project milestone deliverable, testing, and acceptance.',
-      amountUsdc: '0.50',
-      deadlineDate: prefilledDeadline || getDefaultDeadlineDate(14),
-      deadlineTime: '23:59',
-      reviewWindowSeconds: 86400,
-      gracePeriodSeconds: 0,
-    },
-  ]);
+  const initialBudgetParam = searchParams.get('budget')?.trim();
+  const initialHalfBudget = initialBudgetParam && !isNaN(Number(initialBudgetParam)) && Number(initialBudgetParam) > 0
+    ? formatUsdcAmount(parseUsdcAmount(initialBudgetParam) / 2n)
+    : '';
+
+  const [milestones, setMilestones] = useState<FormMilestone[]>(() => {
+    if (!validUrlPayment) return [];
+    if (validUrlPayment === 'single') {
+      return [
+        {
+          title: 'Final Deliverable',
+          description: 'Complete deliverable according to agreed scope.',
+          amountUsdc: initialBudgetParam || '',
+          deadlineDate: prefilledDeadline || getDefaultDeadlineDate(14),
+          deadlineTime: '23:59',
+          reviewWindowSeconds: 86400,
+          gracePeriodSeconds: 0,
+        },
+      ];
+    }
+    if (validUrlPayment === '50-50') {
+      return [
+        {
+          title: 'Milestone 1 — Initial Deliverable',
+          description: 'Initial deliverables and progress demo.',
+          amountUsdc: initialHalfBudget,
+          deadlineDate: getDefaultDeadlineDate(7),
+          deadlineTime: '23:59',
+          reviewWindowSeconds: 86400,
+          gracePeriodSeconds: 0,
+        },
+        {
+          title: 'Milestone 2 — Final Deliverable',
+          description: 'Final delivery and documentation.',
+          amountUsdc: initialHalfBudget,
+          deadlineDate: prefilledDeadline || getDefaultDeadlineDate(14),
+          deadlineTime: '23:59',
+          reviewWindowSeconds: 86400,
+          gracePeriodSeconds: 0,
+        },
+      ];
+    }
+    return [
+      {
+        title: '',
+        description: '',
+        amountUsdc: '',
+        deadlineDate: '',
+        deadlineTime: '23:59',
+        reviewWindowSeconds: 86400,
+        gracePeriodSeconds: 0,
+      },
+    ];
+  });
 
   const [signing, setSigning] = useState(false);
   const [error, setError] = useState('');
-  const [submittedProposal, setSubmittedProposal] = useState<any | null>(null);
   const [nonceConflict, setNonceConflict] = useState(false);
   const [refreshingNonce, setRefreshingNonce] = useState(false);
 
@@ -267,24 +476,30 @@ function NewDealForm() {
         const h = data.handoff;
         handoffLoadedRef.current = true;
 
-        const targetStructure = h.paymentStructure && ['single', '50-50', 'custom'].includes(h.paymentStructure)
-          ? h.paymentStructure
-          : 'custom';
+        const explicitStructure = h.paymentStructure && ['single', '50-50', 'custom'].includes(h.paymentStructure)
+          ? (h.paymentStructure as 'single' | '50-50' | 'custom')
+          : null;
 
-        const amountStr = h.amount ? String(h.amount) : '1.00';
+        if (explicitStructure) {
+          setPaymentStructureSelected(true);
+        }
+
+        const amountStr = h.amount ? String(h.amount) : '';
         const deadlineDateStr = h.deadline || getDefaultDeadlineDate(14);
+        if (h.deadline) {
+          setDeadlineDate(h.deadline);
+        }
 
         setForm((prev) => ({
           ...prev,
           type: h.title ?? prev.type ?? '',
           counterparty: h.seller ?? prev.counterparty ?? '',
-          budget: amountStr,
+          budget: amountStr || prev.budget,
           deliverables: h.scope ?? prev.deliverables ?? '',
-          paymentStructure: targetStructure,
+          paymentStructure: explicitStructure || '',
         }));
 
-        // Adjust milestones based on negotiated handoff
-        if (targetStructure === 'single') {
+        if (explicitStructure === 'single') {
           setMilestones([
             {
               title: h.title ? `${h.title} — Final Delivery` : 'Final Deliverable',
@@ -296,8 +511,9 @@ function NewDealForm() {
               gracePeriodSeconds: 0,
             },
           ]);
-        } else if (targetStructure === '50-50') {
-          let halfAmount = '0.50';
+          setExpandedMilestoneIndex(0);
+        } else if (explicitStructure === '50-50') {
+          let halfAmount = '';
           try {
             const totalUnits = parseUsdcAmount(amountStr);
             halfAmount = formatUsdcAmount(totalUnits / 2n);
@@ -322,6 +538,20 @@ function NewDealForm() {
               gracePeriodSeconds: 0,
             },
           ]);
+          setExpandedMilestoneIndex(0);
+        } else if (explicitStructure === 'custom') {
+          setMilestones([
+            {
+              title: '',
+              description: '',
+              amountUsdc: '',
+              deadlineDate: '',
+              deadlineTime: '23:59',
+              reviewWindowSeconds: 86400,
+              gracePeriodSeconds: 0,
+            },
+          ]);
+          setExpandedMilestoneIndex(0);
         }
 
         const targetStep = typeof h.targetStep === 'number' ? Math.min(h.targetStep, 6) : 6;
@@ -340,32 +570,43 @@ function NewDealForm() {
     };
   }, [negotiatorConvId, negotiatorMode, ensureAuthenticated]);
 
-  // Adjust milestone amounts when payment structure or budget changes
   const applyPaymentStructure = (struct: 'single' | '50-50' | 'custom', budgetStr: string) => {
-    let cleanBudget = budgetStr.trim() || '1.00';
+    const rawBudget = (budgetStr || '').trim();
+    let hasValidBudget = false;
+    let singleAmount = '';
+    let half1Amount = '';
+    let half2Amount = '';
+
+    if (rawBudget && !isNaN(Number(rawBudget)) && Number(rawBudget) > 0) {
+      try {
+        const total = parseUsdcAmount(rawBudget);
+        hasValidBudget = true;
+        singleAmount = formatUsdcAmount(total);
+        const half1 = total / 2n;
+        const half2 = total - half1;
+        half1Amount = formatUsdcAmount(half1);
+        half2Amount = formatUsdcAmount(half2);
+      } catch {}
+    }
+
     if (struct === 'single') {
       setMilestones([
         {
           title: form.type ? `${form.type} — Final Delivery` : 'Final Deliverable',
           description: form.deliverables || 'Complete deliverable according to agreed scope.',
-          amountUsdc: cleanBudget,
-          deadlineDate: milestones[0]?.deadlineDate || getDefaultDeadlineDate(14),
-          deadlineTime: '23:59',
+          amountUsdc: hasValidBudget ? singleAmount : '',
+          deadlineDate: deadlineDate || milestones[0]?.deadlineDate || getDefaultDeadlineDate(14),
+          deadlineTime: deadlineTime || '23:59',
           reviewWindowSeconds: 86400,
           gracePeriodSeconds: 0,
         },
       ]);
     } else if (struct === '50-50') {
-      let half = '0.50';
-      try {
-        const total = parseUsdcAmount(cleanBudget);
-        half = formatUsdcAmount(total / 2n);
-      } catch {}
       setMilestones([
         {
           title: 'Milestone 1 — Initial Deliverable',
           description: 'Initial deliverables and progress demo.',
-          amountUsdc: half,
+          amountUsdc: hasValidBudget ? half1Amount : '',
           deadlineDate: milestones[0]?.deadlineDate || getDefaultDeadlineDate(7),
           deadlineTime: '23:59',
           reviewWindowSeconds: 86400,
@@ -373,9 +614,21 @@ function NewDealForm() {
         },
         {
           title: 'Milestone 2 — Final Deliverable',
-          description: 'Final delivery and documentation.',
-          amountUsdc: half,
-          deadlineDate: milestones[1]?.deadlineDate || getDefaultDeadlineDate(14),
+          description: form.deliverables || 'Final delivery and documentation.',
+          amountUsdc: hasValidBudget ? half2Amount : '',
+          deadlineDate: deadlineDate || milestones[1]?.deadlineDate || getDefaultDeadlineDate(14),
+          deadlineTime: deadlineTime || '23:59',
+          reviewWindowSeconds: 86400,
+          gracePeriodSeconds: 0,
+        },
+      ]);
+    } else if (struct === 'custom') {
+      setMilestones([
+        {
+          title: '',
+          description: '',
+          amountUsdc: '',
+          deadlineDate: '',
           deadlineTime: '23:59',
           reviewWindowSeconds: 86400,
           gracePeriodSeconds: 0,
@@ -384,17 +637,25 @@ function NewDealForm() {
     }
   };
 
-  // Live search and freelancer directory state
+  const getMilestoneDisplayTitle = (title: string, index: number) => {
+    const prefix = `Milestone ${index + 1}`;
+    const trimmed = (title || '').trim();
+    if (!trimmed) return prefix;
+    if (new RegExp(`^milestone\\s*${index + 1}\\s*([—:\\-]\\s*)?`, 'i').test(trimmed)) {
+      const stripped = trimmed.replace(new RegExp(`^milestone\\s*${index + 1}\\s*([—:\\-]\\s*)?`, 'i'), '').trim();
+      return stripped ? `${prefix} — ${stripped}` : prefix;
+    }
+    return `${prefix} — ${trimmed}`;
+  };
+
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [showAllMatches, setShowAllMatches] = useState(false);
-  const [isAiExpanded, setIsAiExpanded] = useState(false);
   const [avatarsMap, setAvatarsMap] = useState<Record<string, string>>({});
   const [namesMap, setNamesMap] = useState<Record<string, string>>({});
+  const [pricingMap, setPricingMap] = useState<Record<string, FreelancerPricing | null>>({});
   const [reviewCountsMap, setReviewCountsMap] = useState<Record<string, number>>({});
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
-  const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const searchRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -412,17 +673,6 @@ function NewDealForm() {
 
   const freelancerIdentity = useSynqIdentity(form.counterparty);
   const clientIdentity = useSynqIdentity(address);
-
-  const formatIdentityDisplay = (idObj: { wallet: string; displayHandle: string | null; shortWallet: string }) => {
-    if (!idObj.wallet) return '';
-    if (idObj.displayHandle) {
-      return `${idObj.displayHandle} (${idObj.shortWallet})`;
-    }
-    return idObj.shortWallet;
-  };
-
-  const freelancerIdentityText = formatIdentityDisplay(freelancerIdentity);
-  const clientIdentityText = formatIdentityDisplay(clientIdentity);
 
   const filteredSuggestions = useMemo(() => {
     const rawInput = form.type.trim();
@@ -482,21 +732,215 @@ function NewDealForm() {
         if (!isMounted || !Array.isArray(data?.profiles)) return;
         const avatarMap: Record<string, string> = {};
         const nameMap: Record<string, string> = {};
+        const pMap: Record<string, FreelancerPricing | null> = {};
         for (const p of data.profiles) {
           if (p?.wallet) {
             const key = String(p.wallet).toLowerCase();
             if (p.avatar) avatarMap[key] = p.avatar;
             if (p.name) nameMap[key] = p.name;
+            if (p.pricing) {
+              pMap[key] = p.pricing;
+            } else if (p.startingRateAmount && (p.startingRateType === 'PER_PROJECT' || p.startingRateType === 'PER_HOUR')) {
+              pMap[key] = {
+                amount: String(p.startingRateAmount),
+                currency: 'USDC',
+                rateType: p.startingRateType,
+              };
+            } else {
+              pMap[key] = null;
+            }
           }
         }
         setAvatarsMap(avatarMap);
         setNamesMap(nameMap);
+        setPricingMap(pMap);
       })
       .catch(() => {});
     return () => {
       isMounted = false;
     };
   }, [uniqueWalletsKey]);
+
+  useEffect(() => {
+    if (!uniqueWalletsKey) return;
+    let isMounted = true;
+    fetch(`/api/reviews?sellers=${uniqueWalletsKey}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!isMounted || !data?.counts) return;
+        setReviewCountsMap(data.counts);
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, [uniqueWalletsKey]);
+
+  const selectedFreelancerProfile = useMemo(() => {
+    if (!form.counterparty || !isAddress(form.counterparty)) return null;
+    const target = form.counterparty.toLowerCase();
+    return (
+      (directory.profiles || []).find(
+        (p: any) => p?.wallet && String(p.wallet).toLowerCase() === target
+      ) || null
+    );
+  }, [form.counterparty, directory.profiles]);
+
+  // Valid selectable directory freelancers (excluding self, zero address, invalid)
+  const availableProfiles = useMemo(() => {
+    return (directory.profiles || []).filter((p: any) => {
+      if (!p || !p.wallet) return false;
+      const w = String(p.wallet).toLowerCase();
+      if (w === ZERO_ADDRESS.toLowerCase()) return false;
+      if (address && w === address.toLowerCase()) return false;
+      return true;
+    });
+  }, [directory.profiles, address]);
+
+  // Deterministic local freelancer scoring baseline
+  const scoreSeller = (p: any, type: string, deliverables: string) => {
+    let score = 0;
+    const typeLower = (type || '').toLowerCase();
+    const cat = String(p.category || '').toLowerCase();
+    if (typeLower && typeLower !== 'other') {
+      if (cat === typeLower) score += 30;
+      else if (cat && (cat.includes(typeLower) || typeLower.includes(cat))) score += 18;
+    }
+    const skills = (p.skills || []).map((s: string) => String(s).toLowerCase());
+    const bio = String(p.bio || '').toLowerCase();
+    const name = String(p.name || '').toLowerCase();
+    const terms = [
+      ...tokenize(type || ''),
+      ...tokenize(deliverables || ''),
+      typeLower.replace(/\s/g, ''),
+    ].filter((t) => t && t.length >= 3);
+
+    const haystack = [name, bio, ...skills].join(' ');
+    for (const t of terms) {
+      if (skills.some((s: string) => s.includes(t) || t.includes(s))) score += 10;
+      else if (haystack.includes(t)) score += 6;
+    }
+    if (p.available) score += 5;
+    const walletKey = String(p.wallet || '').toLowerCase();
+    const completedCount = completedCountsMap[walletKey] ?? Number(p.completedDeals || 0);
+    score += Math.min(completedCount * 2, 10);
+    return score;
+  };
+
+  const runMatch = (autoPick = false) => {
+    setMatchState('matching');
+    setMatchError('');
+
+    if (directory.isLoading) {
+      setMatches([]);
+      setMatchState('done');
+      setMatchError('Loading registered freelancers... try again in a moment.');
+      return;
+    }
+
+    if (availableProfiles.length === 0) {
+      setMatches([]);
+      setMatchState('done');
+      setMatchError(
+        'No freelancers are registered in the Deal Port yet. Register a freelancer profile on the Deal Port page first.'
+      );
+      return;
+    }
+
+    const scored = availableProfiles
+      .map((p: any) => ({
+        p,
+        score: scoreSeller(p, form.type, form.deliverables),
+      }))
+      .sort((a: any, b: any) => b.score - a.score)
+      .slice(0, 3);
+
+    setMatches(scored);
+    setMatchState('done');
+
+    if (autoPick && scored.length > 0) {
+      selectFreelancer(scored[0].p.wallet);
+    }
+  };
+
+  // Real-time typeahead search results
+  const searchResults = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return [];
+
+    type ScoredMatch = {
+      p: any;
+      priority: number;
+    };
+
+    const resultList: ScoredMatch[] = [];
+
+    for (const p of availableProfiles) {
+      const w = String(p.wallet).toLowerCase();
+      const name = String(p.name || '').toLowerCase();
+      const cat = String(p.category || '').toLowerCase();
+      const skills = (p.skills || []).map((s: string) => String(s).toLowerCase());
+      const idInfo = sellerIdentities[w];
+      const handle = String(idInfo?.handle || '').toLowerCase();
+      const displayHandle = String(idInfo?.displayHandle || '').toLowerCase();
+      const publicName = String(namesMap[w] || '').toLowerCase();
+
+      // Direct wallet match
+      if (w === query) {
+        resultList.push({ p, priority: 100 });
+        continue;
+      }
+      if (w.includes(query)) {
+        resultList.push({ p, priority: 60 });
+        continue;
+      }
+      // Handle match
+      if (handle === query || displayHandle === query || `@${handle}` === query) {
+        resultList.push({ p, priority: 95 });
+        continue;
+      }
+      if (handle.includes(query) || displayHandle.includes(query)) {
+        resultList.push({ p, priority: 85 });
+        continue;
+      }
+      // Name match
+      if (name === query || publicName === query) {
+        resultList.push({ p, priority: 90 });
+        continue;
+      }
+      if (name.includes(query) || publicName.includes(query)) {
+        resultList.push({ p, priority: 80 });
+        continue;
+      }
+      // Skills match
+      if (skills.some((s: string) => s === query)) {
+        resultList.push({ p, priority: 75 });
+        continue;
+      }
+      if (skills.some((s: string) => s.includes(query))) {
+        resultList.push({ p, priority: 70 });
+        continue;
+      }
+      // Category match
+      if (cat.includes(query)) {
+        resultList.push({ p, priority: 65 });
+        continue;
+      }
+    }
+
+    resultList.sort((a, b) => b.priority - a.priority);
+    return resultList.map((m) => m.p);
+  }, [searchQuery, availableProfiles, sellerIdentities, namesMap]);
+
+  const queryIsAddress = isAddress(searchQuery.trim());
+  const queryIsOwnAddress = !!(
+    address &&
+    queryIsAddress &&
+    searchQuery.trim().toLowerCase() === address.toLowerCase()
+  );
+  const queryMatchesDirectoryProfile = searchResults.some(
+    (p) => String(p.wallet).toLowerCase() === searchQuery.trim().toLowerCase()
+  );
 
   const update = (key: string, value: any) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -519,20 +963,28 @@ function NewDealForm() {
     setMilestones((prev) => [
       ...prev,
       {
-        title: `Milestone ${prev.length + 1}`,
-        description: 'Deliverable specification.',
-        amountUsdc: '0.50',
-        deadlineDate: getDefaultDeadlineDate(7 * (prev.length + 1)),
+        title: '',
+        description: '',
+        amountUsdc: '',
+        deadlineDate: '',
         deadlineTime: '23:59',
         reviewWindowSeconds: 86400,
         gracePeriodSeconds: 0,
       },
     ]);
+    setExpandedMilestoneIndex(milestones.length);
   };
 
   const removeMilestone = (index: number) => {
     if (milestones.length <= 1) return;
     setMilestones((prev) => prev.filter((_, i) => i !== index));
+    if (expandedMilestoneIndex !== null) {
+      if (expandedMilestoneIndex === index) {
+        setExpandedMilestoneIndex(Math.max(0, index - 1));
+      } else if (expandedMilestoneIndex > index) {
+        setExpandedMilestoneIndex(expandedMilestoneIndex - 1);
+      }
+    }
   };
 
   // Total escrow calculation
@@ -550,6 +1002,52 @@ function NewDealForm() {
     return formatUsdcAmount(totalEscrowBaseUnits);
   }, [totalEscrowBaseUnits]);
 
+  // Context for AI Freelancer Matches (derived strictly from user-entered intent)
+  const aiDraftContext = useMemo(
+    () => ({
+      title: form.type.trim() || undefined,
+      counterparty: form.counterparty || undefined,
+      deliverables: step >= 2 && form.deliverables.trim() ? form.deliverables.trim() : undefined,
+      budget:
+        step >= 3 && form.budget.trim() && !isNaN(Number(form.budget)) && Number(form.budget) > 0
+          ? form.budget.trim()
+          : undefined,
+      paymentStructure: step >= 5 ? form.paymentStructure : undefined,
+      milestones:
+        step >= 5
+          ? milestones.map((m) => ({
+              title: m.title.trim(),
+              description: m.description.trim(),
+              amountUsdc: m.amountUsdc,
+            }))
+          : undefined,
+    }),
+    [step, form.type, form.counterparty, form.budget, form.deliverables, form.paymentStructure, milestones]
+  );
+
+  // Selected freelancer match percentage (calculated with the same deterministic engine)
+  const selectedMatchPercentage = useMemo(() => {
+    if (!form.counterparty || !isAddress(form.counterparty)) return undefined;
+    const p = selectedFreelancerProfile || {
+      wallet: form.counterparty,
+      name: namesMap[form.counterparty.toLowerCase()] || 'Direct Wallet',
+      available: true,
+    };
+    const completedDeals =
+      completedCountsMap[form.counterparty.toLowerCase()] ?? Number(p.completedDeals || 0);
+    return calculateFreelancerMatch({
+      profile: p,
+      draftContext: aiDraftContext,
+      completedDeals,
+    });
+  }, [
+    form.counterparty,
+    selectedFreelancerProfile,
+    namesMap,
+    completedCountsMap,
+    aiDraftContext,
+  ]);
+
   // Validation
   const canProceed = () => {
     switch (step) {
@@ -564,13 +1062,36 @@ function NewDealForm() {
       case 2:
         return form.deliverables.trim().length > 0;
       case 3:
-        return totalEscrowBaseUnits > 0n;
-      case 4:
-        if (milestones.length === 0 || milestones.length > 10) return false;
+        return (
+          form.budget.trim().length > 0 &&
+          !isNaN(Number(form.budget)) &&
+          Number(form.budget) > 0
+        );
+      case 4: {
+        if (!deadlineDate?.trim() || !deadlineTime?.trim()) return false;
+        const ts = Math.floor(new Date(`${deadlineDate.trim()}T${deadlineTime.trim()}`).getTime() / 1000);
         const now = Math.floor(Date.now() / 1000);
+        return !isNaN(ts) && ts > now;
+      }
+      case 5: {
+        if (!paymentStructureSelected || !form.paymentStructure) return false;
+        if (!['single', '50-50', 'custom'].includes(form.paymentStructure)) return false;
+        if (milestones.length === 0 || milestones.length > 10) return false;
+        if (form.paymentStructure === 'single' && milestones.length !== 1) return false;
+        if (form.paymentStructure === '50-50' && milestones.length !== 2) return false;
+        if (form.paymentStructure === 'custom' && (milestones.length < 1 || milestones.length > 10)) return false;
+        const now = Math.floor(Date.now() / 1000);
+        let sumUnits = 0n;
         for (const m of milestones) {
           if (!m.title.trim()) return false;
           if (!m.amountUsdc || isNaN(Number(m.amountUsdc)) || Number(m.amountUsdc) <= 0) return false;
+          try {
+            const units = parseUsdcAmount(m.amountUsdc);
+            if (units <= 0n) return false;
+            sumUnits += units;
+          } catch {
+            return false;
+          }
           if (!m.deadlineDate) return false;
           const ts = Math.floor(new Date(`${m.deadlineDate}T${m.deadlineTime || '23:59'}`).getTime() / 1000);
           if (isNaN(ts) || ts <= now) return false;
@@ -578,6 +1099,19 @@ function NewDealForm() {
             return false;
           }
         }
+        if (form.budget && !isNaN(Number(form.budget)) && Number(form.budget) > 0) {
+          try {
+            const expectedBudgetUnits = parseUsdcAmount(form.budget);
+            if (sumUnits !== expectedBudgetUnits) return false;
+          } catch {
+            return false;
+          }
+        }
+        return true;
+      }
+      case 6:
+        return true;
+      case 7:
         return true;
       default:
         return true;
@@ -635,7 +1169,6 @@ function NewDealForm() {
         }
 
         const graceSec = BigInt(m.gracePeriodSeconds);
-
         const specText = m.description.trim() || m.title.trim();
         const specHash = hashMilestoneSpec(specText);
 
@@ -750,7 +1283,6 @@ function NewDealForm() {
         throw new Error(resData.error || 'Failed to submit deal proposal');
       }
 
-      setSubmittedProposal(resData.proposal);
       // Route to proposal view
       router.push(`/deals/proposals/${resData.proposal.proposalId}`);
     } catch (err: any) {
@@ -764,9 +1296,9 @@ function NewDealForm() {
     switch (step) {
       case 0:
         return (
-          <div className="space-y-3">
+          <div className="space-y-4">
             <label htmlFor="job-title-input" className="block text-sm font-medium text-zinc-300">
-              What do you need done?
+              What&apos;s the Deal?
             </label>
             <div className="relative">
               <Input
@@ -781,7 +1313,7 @@ function NewDealForm() {
                   setTimeout(() => setShowSuggestions(false), 150);
                 }}
                 placeholder="Type a job title..."
-                className="w-full text-sm bg-zinc-900/60 border-zinc-700 text-white placeholder:text-zinc-500 focus:border-blue-500/60"
+                className="w-full text-sm bg-zinc-900/60 border-zinc-700 text-white placeholder:text-zinc-500 focus:border-blue-500/60 h-11"
                 autoComplete="off"
               />
               {showSuggestions && filteredSuggestions.length > 0 && (
@@ -816,100 +1348,254 @@ function NewDealForm() {
 
       case 1:
         return (
-          <div className="space-y-4">
-            <p className="text-sm text-zinc-400 mb-2">
-              Choose the freelancer you want to propose this deal to.
-            </p>
+          <div className="space-y-5">
+            <h3 className="text-base font-semibold text-white">
+              Choose the freelancer you want to propose this deal to
+            </h3>
 
-            {/* FREELANCER LIVE SEARCH */}
-            <div ref={searchRef} className="relative space-y-1">
-              <label htmlFor="freelancer-search-input" className="text-xs text-zinc-400 font-medium block">
-                Search Freelancers
-              </label>
-              <div className="relative">
-                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
-                <Input
-                  id="freelancer-search-input"
-                  value={searchQuery}
-                  onChange={(e) => {
-                    setSearchQuery(e.target.value);
-                    setSearchFocused(true);
-                  }}
-                  onFocus={() => setSearchFocused(true)}
-                  placeholder="Search freelancers by handle, name, skill, or wallet..."
-                  className="w-full pl-9 pr-8 text-sm bg-zinc-900/60 border-zinc-700/60 text-white placeholder:text-zinc-500 focus:border-blue-500/60 rounded-xl"
-                  autoComplete="off"
-                />
-                {searchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-0.5"
-                  >
-                    <X size={14} />
-                  </button>
-                )}
-              </div>
-
-              {/* SEARCH DROPDOWN */}
-              {searchFocused && searchQuery.trim().length > 0 && (
-                <div className="absolute left-0 right-0 top-full mt-1.5 z-30 overflow-hidden rounded-xl border border-zinc-700/70 bg-zinc-900/95 p-1.5 shadow-2xl backdrop-blur-md">
-                  <div className="space-y-1 max-h-72 overflow-y-auto">
-                    {(directory.profiles || [])
-                      .filter((p: any) => p && p.wallet && p.wallet !== address)
-                      .slice(0, 5)
-                      .map((p: any) => (
-                        <button
-                          key={p.wallet}
-                          type="button"
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            selectFreelancer(p.wallet);
-                            setSearchQuery('');
-                            setSearchFocused(false);
-                          }}
-                          className="w-full text-left p-2.5 rounded-lg hover:bg-zinc-800/60 flex items-center justify-between gap-3"
-                        >
-                          <div className="min-w-0">
-                            <div className="text-sm font-semibold text-white truncate">
-                              {p.name || shortenAddress(p.wallet)}
-                            </div>
-                            <div className="text-xs font-mono text-zinc-400 truncate">
-                              {shortenAddress(p.wallet)}
-                            </div>
-                          </div>
-                        </button>
-                      ))}
+            {/* SELECTED FREELANCER STATE */}
+            {form.counterparty && isAddress(form.counterparty) ? (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <UserCheck size={16} className="text-emerald-400" />
+                    <span className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
+                      Selected Freelancer
+                    </span>
                   </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      clearSelectedFreelancer();
+                      setSearchQuery('');
+                    }}
+                    className="text-xs text-blue-400 hover:text-blue-300 hover:bg-blue-600/10 h-7 px-2.5"
+                  >
+                    Change
+                  </Button>
                 </div>
-              )}
-            </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-xs text-zinc-400 font-medium block">Freelancer Wallet</label>
-                <div className="w-full px-3 py-2 rounded-lg border border-zinc-700/60 bg-zinc-900/60 font-mono text-sm text-zinc-200 h-10 flex items-center select-none truncate">
-                  {freelancerIdentityText || form.counterparty || (
-                    <span className="text-zinc-500 font-sans italic text-xs">No freelancer selected</span>
+                <div className="p-4 rounded-xl border border-zinc-800/80 bg-zinc-900/60 shadow-sm flex items-center justify-between gap-4">
+                  {/* LEFT: PFP + NAME/HANDLE + WALLET/STATUS */}
+                  <div className="flex items-center gap-3.5 min-w-0 flex-1">
+                    <FreelancerAvatar
+                      avatar={avatarsMap[form.counterparty.toLowerCase()]}
+                      name={selectedFreelancerProfile?.name || namesMap[form.counterparty.toLowerCase()]}
+                      handle={freelancerIdentity.handle}
+                      wallet={form.counterparty}
+                      size="lg"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline gap-2 flex-wrap truncate">
+                        <span className="text-base font-bold text-white truncate">
+                          {selectedFreelancerProfile?.name ||
+                            namesMap[form.counterparty.toLowerCase()] ||
+                            'Direct Wallet'}
+                        </span>
+                        {freelancerIdentity.displayHandle && (
+                          <span className="text-xs font-mono text-blue-400 truncate">
+                            {freelancerIdentity.displayHandle}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 mt-1 text-xs font-mono">
+                        <span className="text-zinc-400">
+                          {shortenAddress(form.counterparty)}
+                        </span>
+                        <span className="text-zinc-600">•</span>
+                        {selectedFreelancerProfile?.available === false ? (
+                          <span className="text-amber-400/90 font-sans text-[11px]">
+                            ○ Busy
+                          </span>
+                        ) : (
+                          <span className="text-emerald-400 font-sans text-[11px]">
+                            ● Active
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* RIGHT: LARGE MATCH % */}
+                  {selectedMatchPercentage !== undefined && (
+                    <div className="text-right shrink-0 leading-none pl-2">
+                      <div className="text-2xl sm:text-3xl font-black text-emerald-400 font-mono tracking-tight">
+                        {selectedMatchPercentage}%
+                      </div>
+                      <div className="text-[9px] uppercase tracking-wider text-zinc-500 font-bold mt-0.5">
+                        MATCH
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <p className="text-xs text-zinc-400">
+                  Click <strong className="text-white font-medium">Next</strong> below to confirm this freelancer and continue.
+                </p>
+              </div>
+            ) : (
+              /* DISCOVERY & SEARCH MODE */
+              <div className="space-y-4">
+                {/* SEARCH INPUT & DROPDOWN */}
+                <div ref={searchRef} className="relative space-y-1">
+                  <label htmlFor="freelancer-search-input" className="text-xs text-zinc-400 font-medium block">
+                    Search Freelancers
+                  </label>
+                  <div className="relative">
+                    <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
+                    <Input
+                      id="freelancer-search-input"
+                      value={searchQuery}
+                      onChange={(e) => {
+                        setSearchQuery(e.target.value);
+                        setSearchFocused(true);
+                      }}
+                      onFocus={() => setSearchFocused(true)}
+                      placeholder="Search freelancers by handle, name, skill, category, or wallet..."
+                      className="w-full pl-9 pr-8 text-sm bg-zinc-900/60 border-zinc-700/60 text-white placeholder:text-zinc-500 focus:border-blue-500/60 rounded-xl h-11"
+                      autoComplete="off"
+                    />
+                    {searchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setSearchQuery('')}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-0.5"
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* REAL-TIME TYPEAHEAD DROPDOWN */}
+                  {searchFocused && searchQuery.trim().length > 0 && (
+                    <div className="absolute left-0 right-0 top-full mt-1.5 z-30 overflow-hidden rounded-xl border border-zinc-700/80 bg-zinc-900/98 p-1.5 shadow-2xl backdrop-blur-md">
+                      <div className="space-y-1 max-h-72 overflow-y-auto">
+                        {/* Direct Address Entry (when valid EVM address) */}
+                        {queryIsAddress && !queryIsOwnAddress && !queryMatchesDirectoryProfile && (
+                          <button
+                            type="button"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              selectFreelancer(searchQuery.trim());
+                              setSearchQuery('');
+                              setSearchFocused(false);
+                            }}
+                            className="w-full text-left p-2.5 rounded-lg hover:bg-blue-600/15 border border-blue-500/20 bg-blue-950/20 flex items-center justify-between gap-3 transition-colors"
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="w-8 h-8 rounded-full bg-blue-600/30 border border-blue-500/40 flex items-center justify-center text-blue-400 shrink-0">
+                                <Wallet size={14} />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="text-xs font-semibold text-white flex items-center gap-1.5">
+                                  <span>Use direct address</span>
+                                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400 border border-zinc-700">
+                                    Unregistered
+                                  </span>
+                                </div>
+                                <div className="text-[11px] font-mono text-blue-300 truncate">
+                                  {searchQuery.trim()}
+                                </div>
+                              </div>
+                            </div>
+                            <span className="text-xs text-blue-400 shrink-0 font-medium">Select →</span>
+                          </button>
+                        )}
+
+                        {/* Own Wallet Guard */}
+                        {queryIsOwnAddress && (
+                          <div className="p-3 text-center text-xs text-amber-400 bg-amber-950/20 border border-amber-500/30 rounded-lg">
+                            Cannot create a deal proposal with your own wallet address.
+                          </div>
+                        )}
+
+                        {/* Directory Matches */}
+                        {searchResults.map((p: any) => {
+                          const w = String(p.wallet).toLowerCase();
+                          const idInfo = sellerIdentities[w];
+                          const displayName = namesMap[w] || p.name || 'Freelancer';
+                          const handle = idInfo?.displayHandle || (p.name ? `@${p.name.toLowerCase().replace(/\s+/g, '')}` : null);
+                          const dealsDone = completedCountsMap[w] ?? Number(p.completedDeals || 0);
+
+                          return (
+                            <button
+                              key={p.wallet}
+                              type="button"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                selectFreelancer(p.wallet);
+                                setSearchQuery('');
+                                setSearchFocused(false);
+                              }}
+                              className="w-full text-left p-2.5 rounded-lg hover:bg-zinc-800/70 border border-transparent hover:border-zinc-700/60 flex items-center justify-between gap-3 transition-colors"
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <FreelancerAvatar
+                                  avatar={avatarsMap[w]}
+                                  name={displayName}
+                                  handle={handle}
+                                  wallet={p.wallet}
+                                  size="md"
+                                />
+                                <div className="min-w-0">
+                                  <div className="text-sm font-semibold text-white truncate flex items-center gap-1.5">
+                                    <span>{displayName}</span>
+                                    {handle && (
+                                      <span className="text-xs font-mono text-blue-400 font-normal">
+                                        {handle}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-xs text-zinc-400 truncate">
+                                    {p.category && <span className="text-zinc-300 mr-1.5">{p.category}</span>}
+                                    {(p.skills || []).slice(0, 3).join(', ')}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="text-right shrink-0">
+                                {(() => {
+                                  const itemPricing = formatPublicPricing(pricingMap[w]);
+                                  if (itemPricing) {
+                                    return (
+                                      <div className="text-xs font-semibold text-white">
+                                        {itemPricing.amountDisplay} <span className="text-[10px] text-zinc-400 font-normal">USDC / {pricingMap[w]?.rateType === 'PER_HOUR' ? 'hour' : 'project'}</span>
+                                      </div>
+                                    );
+                                  }
+                                  return <div className="text-[11px] text-zinc-500">Rate not set</div>;
+                                })()}
+                                <div className="text-[10px] text-zinc-500">
+                                  {dealsDone} deal{dealsDone === 1 ? '' : 's'}
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })}
+
+                        {/* No Results Fallback */}
+                        {searchResults.length === 0 && !queryIsAddress && (
+                          <div className="p-4 text-center text-xs text-zinc-500">
+                            No registered freelancers found matching &quot;{searchQuery}&quot;
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   )}
                 </div>
               </div>
-              <div className="space-y-1">
-                <label className="text-xs text-zinc-400 font-medium block">Client Wallet</label>
-                <div className="w-full px-3 py-2 rounded-lg border border-zinc-700/60 bg-zinc-900/60 font-mono text-sm text-zinc-200 h-10 flex items-center select-none truncate">
-                  {clientIdentityText || shortenAddress(address || '')}
-                </div>
-              </div>
-            </div>
+            )}
           </div>
         );
 
       case 2:
         return (
-          <div className="space-y-3">
-            <p className="text-sm text-zinc-400 mb-2">
-              Describe the overall deliverables and scope of the engagement.
-            </p>
+          <div className="space-y-4">
+            <h3 className="text-base font-semibold text-white">
+              Describe the overall deliverables scope of the engagement.
+            </h3>
+
             <div className="relative space-y-1">
               <textarea
                 value={form.deliverables}
@@ -928,37 +1614,8 @@ function NewDealForm() {
 
       case 3:
         return (
-          <div className="space-y-5">
-            <div>
-              <h3 className="text-base font-semibold text-white mb-1">Payment Structure & Total Budget</h3>
-              <p className="text-xs text-zinc-400">Standard V2 uses canonical Sepolia USDC (6 decimals) escrow.</p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              {[
-                { value: 'single', label: 'Single Release', desc: '100% on final deliverable' },
-                { value: '50-50', label: '50/50 Milestones', desc: 'Two equal milestone releases' },
-                { value: 'custom', label: 'Custom Stages', desc: 'Tailored milestone breakdown' },
-              ].map((opt) => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => {
-                    update('paymentStructure', opt.value);
-                    applyPaymentStructure(opt.value as any, form.budget);
-                  }}
-                  className={cn(
-                    'p-3.5 rounded-xl border text-left transition-all',
-                    form.paymentStructure === opt.value
-                      ? 'border-blue-500/50 bg-blue-600/10 shadow-sm'
-                      : 'border-zinc-700/50 bg-zinc-800/30 hover:border-zinc-600'
-                  )}
-                >
-                  <div className="text-sm font-semibold text-white">{opt.label}</div>
-                  <div className="text-xs text-zinc-400 mt-0.5">{opt.desc}</div>
-                </button>
-              ))}
-            </div>
+          <div className="space-y-4">
+            <h3 className="text-base font-semibold text-white">What&apos;s your budget?</h3>
 
             <div className="space-y-1.5">
               <label htmlFor="deal-budget-input" className="text-xs text-zinc-400 font-medium block">
@@ -971,17 +1628,17 @@ function NewDealForm() {
                   onChange={(e) => {
                     const val = e.target.value;
                     update('budget', val);
-                    if (form.paymentStructure !== 'custom') {
+                    if (form.paymentStructure && form.paymentStructure !== 'custom') {
                       applyPaymentStructure(form.paymentStructure, val);
                     }
                   }}
-                  placeholder="1.00"
-                  className="w-full pl-3.5 pr-16 font-mono text-sm bg-zinc-900/60 border-zinc-700/60 text-white placeholder:text-zinc-500 focus:border-blue-500/60 rounded-xl h-10"
+                  placeholder="0.00"
+                  className="w-full pl-4 pr-18 font-mono text-base bg-zinc-900/60 border-zinc-700/60 text-white placeholder:text-zinc-500 focus:border-blue-500/60 rounded-xl h-14"
                   type="number"
                   min="0"
                   step="0.01"
                 />
-                <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-zinc-400 text-xs font-semibold uppercase pointer-events-none">
+                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-400 text-xs font-semibold uppercase pointer-events-none">
                   USDC
                 </span>
               </div>
@@ -989,150 +1646,315 @@ function NewDealForm() {
           </div>
         );
 
-      case 4:
+      case 4: {
+        const today = new Date().toISOString().slice(0, 10);
         return (
           <div className="space-y-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-base font-semibold text-white mb-0.5">Milestone Schedule</h3>
-                <p className="text-xs text-zinc-400">
-                  Total Escrow: <span className="font-semibold text-blue-400">{formattedTotalEscrow} USDC</span> across {milestones.length} milestone{milestones.length === 1 ? '' : 's'}.
-                </p>
+            <h3 className="text-base font-semibold text-white">When do you need the job done?</h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label htmlFor="deal-deadline-date" className="text-xs text-zinc-400 font-medium block">
+                  TARGET COMPLETION DATE
+                </label>
+                <Input
+                  ref={dateInputRef}
+                  id="deal-deadline-date"
+                  type="date"
+                  min={today}
+                  value={deadlineDate}
+                  onClick={openDatePicker}
+                  onChange={(e) => {
+                    handleDeadlineDateChange(e.target.value);
+                    setSelectedDeadlinePreset(null);
+                  }}
+                  className="w-full font-mono text-sm bg-zinc-900/60 border-zinc-700/60 text-white focus:border-blue-500/60 rounded-xl h-11 [color-scheme:dark] cursor-pointer [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:scale-125 [&::-webkit-calendar-picker-indicator]:opacity-90 hover:[&::-webkit-calendar-picker-indicator]:opacity-100"
+                />
               </div>
-              {form.paymentStructure === 'custom' && milestones.length < 10 && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={addMilestone}
-                  className="text-xs gap-1.5 border-zinc-700 bg-zinc-800/40 text-zinc-300"
-                >
-                  <Plus size={14} /> Add Milestone
-                </Button>
-              )}
+
+              <div className="space-y-1.5">
+                <label htmlFor="deal-deadline-time" className="text-xs text-zinc-400 font-medium block">
+                  TARGET TIME
+                </label>
+                <Input
+                  ref={timeInputRef}
+                  id="deal-deadline-time"
+                  type="time"
+                  value={deadlineTime}
+                  onClick={openTimePicker}
+                  onChange={(e) => {
+                    handleDeadlineTimeChange(e.target.value);
+                    setSelectedDeadlinePreset(null);
+                  }}
+                  className="w-full font-mono text-sm bg-zinc-900/60 border-zinc-700/60 text-white focus:border-blue-500/60 rounded-xl h-11 [color-scheme:dark] cursor-pointer [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:scale-125 [&::-webkit-calendar-picker-indicator]:opacity-90 hover:[&::-webkit-calendar-picker-indicator]:opacity-100"
+                />
+              </div>
             </div>
 
-            <div className="space-y-4 max-h-[460px] overflow-y-auto pr-1">
-              {milestones.map((m, idx) => (
-                <div
-                  key={idx}
-                  className="p-4 rounded-xl border border-zinc-800 bg-zinc-900/50 space-y-3 relative"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-bold uppercase tracking-wider text-blue-400">
-                      Milestone {idx + 1}
-                    </span>
-                    {form.paymentStructure === 'custom' && milestones.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => removeMilestone(idx)}
-                        className="text-zinc-500 hover:text-red-400 transition-colors p-1"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
-                        Title
-                      </label>
-                      <Input
-                        value={m.title}
-                        onChange={(e) => updateMilestone(idx, 'title', e.target.value)}
-                        placeholder={`Milestone ${idx + 1} Title`}
-                        className="text-xs bg-zinc-950/40 border-zinc-800 text-white h-9"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
-                        Amount (USDC)
-                      </label>
-                      <Input
-                        value={m.amountUsdc}
-                        onChange={(e) => updateMilestone(idx, 'amountUsdc', e.target.value)}
-                        placeholder="0.50"
-                        className="text-xs font-mono bg-zinc-950/40 border-zinc-800 text-white h-9"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
-                      Acceptance Specification
-                    </label>
-                    <textarea
-                      value={m.description}
-                      onChange={(e) => updateMilestone(idx, 'description', e.target.value)}
-                      placeholder="Specify the work deliverable and acceptance criteria (hashed into specHash)..."
-                      className="w-full h-18 rounded-lg border border-zinc-800 bg-zinc-950/40 p-2.5 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-blue-500/50 resize-none"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div className="space-y-1">
-                      <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
-                        Work Deadline
-                      </label>
-                      <Input
-                        type="date"
-                        value={m.deadlineDate}
-                        onChange={(e) => updateMilestone(idx, 'deadlineDate', e.target.value)}
-                        className="text-xs font-mono bg-zinc-950/40 border-zinc-800 text-white h-9"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
-                        Review Window
-                      </label>
-                      <select
-                        value={m.reviewWindowSeconds}
-                        onChange={(e) => updateMilestone(idx, 'reviewWindowSeconds', Number(e.target.value))}
-                        className="w-full rounded-md border border-zinc-800 bg-zinc-950/40 px-3 text-xs text-white h-9"
-                      >
-                        <option value={86400}>24 Hours</option>
-                        <option value={259200}>3 Days</option>
-                        <option value={604800}>7 Days</option>
-                        <option value={1209600}>14 Days</option>
-                      </select>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
-                        Grace Period
-                      </label>
-                      <select
-                        value={m.gracePeriodSeconds}
-                        onChange={(e) => updateMilestone(idx, 'gracePeriodSeconds', Number(e.target.value))}
-                        className="w-full rounded-md border border-zinc-800 bg-zinc-950/40 px-3 text-xs text-white h-9"
-                      >
-                        <option value={0}>0 Days</option>
-                        <option value={86400}>1 Day</option>
-                        <option value={259200}>3 Days</option>
-                        <option value={604800}>7 Days</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-              ))}
+            {/* QUICK PRESET DEADLINE CARDS */}
+            <div className="space-y-1.5">
+              <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider block">
+                Quick Presets
+              </span>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                {[
+                  { days: 3, label: '3 days' },
+                  { days: 5, label: '5 days' },
+                  { days: 10, label: '10 days' },
+                  { days: 30, label: '30 days' },
+                ].map((preset) => {
+                  const isSelected = selectedDeadlinePreset === preset.days;
+                  return (
+                    <button
+                      key={preset.days}
+                      type="button"
+                      onClick={() => applyDeadlinePreset(preset.days)}
+                      className={cn(
+                        'px-3 py-2 rounded-lg border text-center transition-all text-xs font-medium',
+                        isSelected
+                          ? 'border-blue-500/60 bg-blue-600/20 text-blue-300 shadow-sm'
+                          : 'border-zinc-800 bg-zinc-900/50 text-zinc-300 hover:border-zinc-700 hover:bg-zinc-800/40'
+                      )}
+                    >
+                      {preset.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
+
+            {formattedLocalDelivery && (
+              <div className="p-3.5 rounded-xl border border-zinc-800 bg-zinc-900/40 text-xs text-zinc-400 flex items-center justify-between">
+                <span>Target Delivery:</span>
+                <span className="font-mono text-zinc-100 text-sm font-semibold">
+                  {formattedLocalDelivery}
+                </span>
+              </div>
+            )}
           </div>
         );
+      }
 
       case 5:
         return (
+          <div className="space-y-6">
+            {/* CARD 1 — PAYMENT STRUCTURE */}
+            <div className="p-5 sm:p-6 rounded-2xl bg-zinc-900/80 border border-zinc-800/80 shadow-md space-y-4">
+              <h3 className="text-base font-semibold text-white">
+                Choose how funds should be released across milestones.
+              </h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {[
+                  { value: 'single', label: 'Single Release', desc: '100% on final deliverable' },
+                  { value: '50-50', label: '50/50 Milestones', desc: 'Two equal milestone releases' },
+                  { value: 'custom', label: 'Custom Stages', desc: 'Tailored milestone breakdown' },
+                ].map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => {
+                      setPaymentStructureSelected(true);
+                      update('paymentStructure', opt.value);
+                      applyPaymentStructure(opt.value as any, form.budget);
+                      setExpandedMilestoneIndex(0);
+                    }}
+                    className={cn(
+                      'p-3.5 rounded-xl border text-left transition-all',
+                      paymentStructureSelected && form.paymentStructure === opt.value
+                        ? 'border-blue-500/50 bg-blue-600/10 shadow-sm'
+                        : 'border-zinc-700/50 bg-zinc-800/30 hover:border-zinc-600'
+                    )}
+                  >
+                    <div className="text-sm font-semibold text-white">{opt.label}</div>
+                    <div className="text-xs text-zinc-400 mt-0.5">{opt.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* CARD 2 — MILESTONES (Rendered ONLY after explicit selection) */}
+            {paymentStructureSelected && form.paymentStructure && milestones.length > 0 && (
+              <div className="p-5 sm:p-6 rounded-2xl bg-zinc-900/80 border border-zinc-800/80 shadow-md space-y-4">
+                {/* Milestone Card Header */}
+                <div>
+                  <h4 className="text-sm font-semibold text-white">Milestone Breakdown</h4>
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    Total Escrow: <span className="font-semibold text-blue-400 font-mono">{formattedTotalEscrow} USDC</span> across {milestones.length} milestone{milestones.length === 1 ? '' : 's'}.
+                  </p>
+                </div>
+
+                {/* Collapsible Accordion List */}
+                <div className="space-y-3">
+                  {milestones.map((m, idx) => {
+                    const isExpanded = expandedMilestoneIndex === idx;
+                    const displayTitle = getMilestoneDisplayTitle(m.title, idx);
+
+                    return (
+                      <div
+                        key={idx}
+                        className="rounded-xl border border-zinc-800 bg-zinc-900/50 overflow-hidden transition-colors"
+                      >
+                        {/* Collapsed Header Bar */}
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => setExpandedMilestoneIndex(isExpanded ? null : idx)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              setExpandedMilestoneIndex(isExpanded ? null : idx);
+                            }
+                          }}
+                          className="w-full flex items-center justify-between p-3.5 hover:bg-zinc-800/40 cursor-pointer select-none transition-colors"
+                        >
+                          <span className="text-xs font-semibold text-zinc-200 truncate pr-2">
+                            {displayTitle}
+                          </span>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {form.paymentStructure === 'custom' && milestones.length > 1 && (
+                              <button
+                                type="button"
+                                aria-label={`Remove Milestone ${idx + 1}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  removeMilestone(idx);
+                                }}
+                                className="text-zinc-500 hover:text-red-400 transition-colors p-1"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            )}
+                            <div className="text-zinc-400">
+                              {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Expanded State Body */}
+                        {isExpanded && (
+                          <div className="p-4 pt-2 border-t border-zinc-800/70 space-y-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <div className="space-y-1">
+                                <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
+                                  Title
+                                </label>
+                                <Input
+                                  value={m.title}
+                                  onChange={(e) => updateMilestone(idx, 'title', e.target.value)}
+                                  placeholder={`Milestone ${idx + 1} Title`}
+                                  className="text-xs bg-zinc-950/40 border-zinc-800 text-white h-9"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
+                                  Amount (USDC)
+                                </label>
+                                <Input
+                                  value={m.amountUsdc}
+                                  onChange={(e) => updateMilestone(idx, 'amountUsdc', e.target.value)}
+                                  placeholder="0.00"
+                                  className="text-xs font-mono bg-zinc-950/40 border-zinc-800 text-white h-9"
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
+                                Acceptance Specification
+                              </label>
+                              <textarea
+                                value={m.description}
+                                onChange={(e) => updateMilestone(idx, 'description', e.target.value)}
+                                placeholder="Specify the work deliverable and acceptance criteria (hashed into specHash)..."
+                                className="w-full h-18 rounded-lg border border-zinc-800 bg-zinc-950/40 p-2.5 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-blue-500/50 resize-none font-sans"
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                              <div className="space-y-1">
+                                <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
+                                  Work Deadline
+                                </label>
+                                <Input
+                                  type="date"
+                                  value={m.deadlineDate}
+                                  onChange={(e) => updateMilestone(idx, 'deadlineDate', e.target.value)}
+                                  className="text-xs font-mono bg-zinc-950/40 border-zinc-800 text-white h-9"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
+                                  Review Window
+                                </label>
+                                <select
+                                  value={m.reviewWindowSeconds}
+                                  onChange={(e) => updateMilestone(idx, 'reviewWindowSeconds', Number(e.target.value))}
+                                  className="w-full rounded-md border border-zinc-800 bg-zinc-950/40 px-3 text-xs text-white h-9"
+                                >
+                                  <option value={86400}>24 Hours</option>
+                                  <option value={259200}>3 Days</option>
+                                  <option value={604800}>7 Days</option>
+                                  <option value={1209600}>14 Days</option>
+                                </select>
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
+                                  Grace Period
+                                </label>
+                                <select
+                                  value={m.gracePeriodSeconds}
+                                  onChange={(e) => updateMilestone(idx, 'gracePeriodSeconds', Number(e.target.value))}
+                                  className="w-full rounded-md border border-zinc-800 bg-zinc-950/40 px-3 text-xs text-white h-9"
+                                >
+                                  <option value={0}>0 Days</option>
+                                  <option value={86400}>1 Day</option>
+                                  <option value={259200}>3 Days</option>
+                                  <option value={604800}>7 Days</option>
+                                </select>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {/* Add Milestone Bar for Custom Stages */}
+                  {form.paymentStructure === 'custom' && milestones.length < 10 && (
+                    <button
+                      type="button"
+                      onClick={addMilestone}
+                      className="w-full flex items-center justify-center gap-2 p-3 rounded-xl border border-dashed border-zinc-700/80 bg-zinc-900/30 hover:border-zinc-500 hover:bg-zinc-800/40 text-xs font-medium text-zinc-300 transition-all cursor-pointer"
+                    >
+                      <Plus size={15} className="text-blue-400" />
+                      <span>Add Milestone</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+
+      case 6:
+        return (
           <div className="space-y-4">
-            <p className="text-sm text-zinc-400">Choose the protection level for this deal.</p>
+            <div>
+              <h3 className="text-base font-semibold text-white mb-0.5">Adaptive Protection</h3>
+              <p className="text-xs text-zinc-400">Choose the protection level for this deal proposal.</p>
+            </div>
+
             <div className="space-y-2.5">
               <button
                 type="button"
-                className="w-full p-3.5 rounded-xl border border-blue-500/50 bg-blue-600/10 text-left shadow-sm"
+                className="w-full p-4 rounded-xl border border-blue-500/50 bg-blue-600/10 text-left shadow-sm"
               >
-                <div className="text-sm font-medium text-white">No Protection</div>
-                <div className="text-xs text-zinc-400 mt-0.5">Proceed with standard smart contract escrow</div>
+                <div className="text-sm font-semibold text-white">No Protection (Standard V2 Escrow)</div>
+                <div className="text-xs text-zinc-400 mt-0.5">Proceed with non-custodial smart contract escrow and dispute resolution</div>
               </button>
 
               <button
@@ -1140,12 +1962,12 @@ function NewDealForm() {
                 disabled
                 aria-disabled="true"
                 tabIndex={-1}
-                className="w-full p-3.5 rounded-xl border border-zinc-800/60 bg-zinc-900/30 opacity-60 cursor-not-allowed text-left select-none"
+                className="w-full p-4 rounded-xl border border-zinc-800/60 bg-zinc-900/30 opacity-60 cursor-not-allowed text-left select-none"
               >
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="text-sm font-medium text-zinc-300">Adaptive Protection</div>
-                    <div className="text-xs text-zinc-500 mt-0.5">Coming soon...</div>
+                    <div className="text-xs text-zinc-500 mt-0.5">Pool-backed coverage is currently in development</div>
                   </div>
                   <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-zinc-800 text-zinc-400 border border-zinc-700/50 uppercase tracking-wider">
                     Coming Soon
@@ -1156,7 +1978,7 @@ function NewDealForm() {
           </div>
         );
 
-      case 6:
+      case 7:
         return (
           <div className="space-y-5">
             <div className="rounded-xl border border-blue-500/30 bg-blue-950/20 p-4 space-y-2">
@@ -1303,7 +2125,16 @@ function NewDealForm() {
   };
 
   return (
-    <div className="space-y-6 pt-0 pb-36">
+    <div
+      className={cn(
+        'space-y-6 pt-0 transition-all duration-300',
+        !aiPanelExpanded || step < 1 || step >= 7
+          ? 'pb-36'
+          : step === 1
+          ? 'pb-40 lg:pb-[460px]'
+          : 'pb-36 sm:pb-40'
+      )}
+    >
       {/* PAGE HEADER */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className={`${pressStart2P.className} text-xl md:text-2xl font-normal text-white tracking-tight`}>
@@ -1315,9 +2146,9 @@ function NewDealForm() {
 
       {/* MAIN CONTAINER */}
       <div className="max-w-5xl mx-auto space-y-8">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        <div className={cn('grid grid-cols-1 lg:grid-cols-12 gap-6', (step === 0 || step === 1) ? 'lg:items-center items-start' : 'items-start lg:items-start')}>
           {/* WIZARD COLUMN */}
-          <div className={cn(step < 6 ? 'lg:col-span-8 space-y-6' : 'lg:col-span-8 lg:col-start-3 space-y-6')}>
+          <div className={cn('lg:col-span-8 space-y-6', (step === 0 || step === 1) ? '' : 'lg:self-start')}>
             <div className="p-6 rounded-2xl bg-zinc-900/70 border border-zinc-800/80 shadow-2xl space-y-6">
               {handoffLoading ? (
                 <div className="flex flex-col items-center justify-center py-16 text-center space-y-3">
@@ -1343,13 +2174,13 @@ function NewDealForm() {
                   <motion.div key={step} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
                     {renderStep()}
 
-                    {error && step < 6 && (
+                    {error && step < 7 && (
                       <div className="mt-4 p-3 rounded-lg bg-red-600/10 border border-red-500/20 text-sm text-red-400">
                         {error}
                       </div>
                     )}
 
-                    {step < 6 && (
+                    {step < 7 && (
                       <div className="flex items-center justify-between mt-8 pt-4 border-t border-zinc-800/60">
                         <Button
                           variant="outline"
@@ -1368,41 +2199,80 @@ function NewDealForm() {
                 </AnimatePresence>
               )}
             </div>
+
+            {/* AI FREELANCER MATCHES (Persistent across Steps 2 through 7) */}
+            {step >= 1 && step < 7 && (
+              <AIFreelancerMatches
+                draftContext={aiDraftContext}
+                availableProfiles={availableProfiles}
+                avatarsMap={avatarsMap}
+                namesMap={namesMap}
+                sellerIdentities={sellerIdentities}
+                completedCountsMap={completedCountsMap}
+                reviewCountsMap={reviewCountsMap}
+                pricingMap={pricingMap}
+                clientAddress={address}
+                isExpanded={aiPanelExpanded}
+                onToggleExpand={() => setAiPanelExpanded((prev) => !prev)}
+                onSelectFreelancer={(wallet) => {
+                  selectFreelancer(wallet);
+                }}
+                selectedWallet={form.counterparty}
+                anchoredGrowth={step === 1}
+              />
+            )}
           </div>
 
-          {/* SIDEBAR PREVIEW (Steps 0-5 only) */}
-          {step < 6 && (
-            <div className="lg:col-span-4 relative z-10">
-              <DealReceipt
-                variant="compact"
-                title={form.type || 'Standard V2 Deal Proposal'}
-                client={{
-                  wallet: address,
-                  name: address ? namesMap[address.toLowerCase()] || undefined : undefined,
-                  handle: clientIdentity.handle,
-                  displayHandle: clientIdentity.displayHandle,
-                  avatar: address ? avatarsMap[address.toLowerCase()] || null : null,
-                }}
-                freelancer={
-                  form.counterparty
-                    ? {
-                        wallet: form.counterparty,
-                        name: undefined,
-                        handle: freelancerIdentity.handle,
-                        displayHandle: freelancerIdentity.displayHandle,
-                        avatar: avatarsMap[form.counterparty.toLowerCase()] || null,
-                      }
-                    : undefined
-                }
-                budget={formattedTotalEscrow}
-                asset={{ symbol: 'USDC', isErc20: true }}
-                scope={form.deliverables}
-                deadline={milestones[milestones.length - 1]?.deadlineDate}
-                paymentStructure={form.paymentStructure}
-                protectionEnabled={false}
-              />
-            </div>
-          )}
+          {/* SIDEBAR PREVIEW (Steps 1-7, progressively populated) */}
+          <div className={cn('lg:col-span-4 relative z-10', (step === 0 || step === 1) ? '' : 'lg:self-start')}>
+            <DealReceipt
+              variant="compact"
+              title={form.type.trim() || undefined}
+              client={{
+                wallet: address,
+                name: address ? namesMap[address.toLowerCase()] || undefined : undefined,
+                handle: clientIdentity.handle,
+                displayHandle: clientIdentity.displayHandle,
+                avatar: address ? avatarsMap[address.toLowerCase()] || null : null,
+              }}
+              freelancer={
+                step >= 1 &&
+                form.counterparty &&
+                isAddress(form.counterparty) &&
+                form.counterparty.toLowerCase() !== ZERO_ADDRESS.toLowerCase() &&
+                (!address || form.counterparty.toLowerCase() !== address.toLowerCase())
+                  ? {
+                      wallet: form.counterparty,
+                      name:
+                        selectedFreelancerProfile?.name ||
+                        namesMap[form.counterparty.toLowerCase()] ||
+                        undefined,
+                      handle: freelancerIdentity.handle,
+                      displayHandle: freelancerIdentity.displayHandle,
+                      avatar: avatarsMap[form.counterparty.toLowerCase()] || null,
+                    }
+                  : undefined
+              }
+              scope={step >= 2 && form.deliverables.trim() ? form.deliverables.trim() : undefined}
+              budget={
+                step >= 3 && form.budget.trim() && !isNaN(Number(form.budget)) && Number(form.budget) > 0
+                  ? form.budget.trim()
+                  : undefined
+              }
+              asset={{ symbol: 'USDC', isErc20: true }}
+              deadline={
+                step >= 4 &&
+                deadlineDate?.trim() &&
+                deadlineTime?.trim() &&
+                !isNaN(new Date(`${deadlineDate.trim()}T${deadlineTime.trim()}`).getTime()) &&
+                Math.floor(new Date(`${deadlineDate.trim()}T${deadlineTime.trim()}`).getTime() / 1000) > Math.floor(Date.now() / 1000)
+                  ? `${deadlineDate.trim()}T${deadlineTime.trim()}`
+                  : undefined
+              }
+              paymentStructure={step >= 5 && paymentStructureSelected && form.paymentStructure ? form.paymentStructure : undefined}
+              protectionEnabled={step >= 6 ? false : undefined}
+            />
+          </div>
         </div>
       </div>
 

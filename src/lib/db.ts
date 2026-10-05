@@ -55,6 +55,9 @@ function mapMarketProfile(r: any) {
     draftSkills: Array.isArray(r.draftSkills) ? r.draftSkills : [],
     draftRate: r.draftRate || '',
     draftBio: r.draftBio || '',
+    startingRateAmount: r.startingRateAmount ? String(r.startingRateAmount) : null,
+    startingRateCurrency: r.startingRateCurrency || null,
+    startingRateType: r.startingRateType || null,
     createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt,
     updatedAt: r.updatedAt instanceof Date ? r.updatedAt.toISOString() : r.updatedAt,
   };
@@ -635,6 +638,9 @@ export async function create(collection: string, data: any): Promise<any> {
         draftSkills: Array.isArray(data.draftSkills) ? data.draftSkills : [],
         draftRate: data.draftRate || null,
         draftBio: data.draftBio || null,
+        startingRateAmount: data.startingRateAmount !== undefined ? (data.startingRateAmount === null ? null : String(data.startingRateAmount)) : null,
+        startingRateCurrency: data.startingRateCurrency !== undefined ? (data.startingRateCurrency === null ? null : String(data.startingRateCurrency)) : null,
+        startingRateType: data.startingRateType !== undefined ? (data.startingRateType === null ? null : String(data.startingRateType)) : null,
         createdAt: data.createdAt ? new Date(data.createdAt) : now,
         updatedAt: data.updatedAt ? new Date(data.updatedAt) : now,
       };
@@ -656,6 +662,9 @@ export async function create(collection: string, data: any): Promise<any> {
             draftSkills: insertData.draftSkills,
             draftRate: insertData.draftRate,
             draftBio: insertData.draftBio,
+            startingRateAmount: insertData.startingRateAmount,
+            startingRateCurrency: insertData.startingRateCurrency,
+            startingRateType: insertData.startingRateType,
             updatedAt: insertData.updatedAt,
           },
         })
@@ -804,6 +813,9 @@ export async function update(collection: string, id: string, data: any): Promise
       if (data.draftSkills !== undefined) updatePayload.draftSkills = data.draftSkills;
       if (data.draftRate !== undefined) updatePayload.draftRate = data.draftRate;
       if (data.draftBio !== undefined) updatePayload.draftBio = data.draftBio;
+      if (data.startingRateAmount !== undefined) updatePayload.startingRateAmount = data.startingRateAmount === null ? null : String(data.startingRateAmount);
+      if (data.startingRateCurrency !== undefined) updatePayload.startingRateCurrency = data.startingRateCurrency === null ? null : String(data.startingRateCurrency);
+      if (data.startingRateType !== undefined) updatePayload.startingRateType = data.startingRateType === null ? null : String(data.startingRateType);
 
       const rows = await db
         .update(schema.marketProfiles)

@@ -7,9 +7,16 @@ import { ProviderProfile } from './ProviderProfile';
 export interface ProviderProfileModalProps {
   wallet: string | null;
   onClose: () => void;
+  onSelectFreelancer?: (wallet: string) => void;
+  selectButtonLabel?: string;
 }
 
-export function ProviderProfileModal({ wallet, onClose }: ProviderProfileModalProps) {
+export function ProviderProfileModal({
+  wallet,
+  onClose,
+  onSelectFreelancer,
+  selectButtonLabel,
+}: ProviderProfileModalProps) {
   // Lock body scroll while modal is open
   useEffect(() => {
     if (!wallet) return;
@@ -49,7 +56,13 @@ export function ProviderProfileModal({ wallet, onClose }: ProviderProfileModalPr
             className="w-full max-w-[1180px] max-h-[90vh] bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl overflow-y-auto p-5 sm:p-6 md:p-8 relative text-white"
             onClick={(e) => e.stopPropagation()}
           >
-            <ProviderProfile wallet={wallet} showCloseButton onClose={onClose} />
+            <ProviderProfile
+              wallet={wallet}
+              showCloseButton
+              onClose={onClose}
+              onSelectFreelancer={onSelectFreelancer}
+              selectButtonLabel={selectButtonLabel}
+            />
           </motion.div>
         </motion.div>
       )}

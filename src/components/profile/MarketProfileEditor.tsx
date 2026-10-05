@@ -28,6 +28,7 @@ import { Separator } from '@/components/ui/separator';
 import { useDirectoryContract } from '@/hooks/useDirectoryContract';
 import { useSepoliaNetwork } from '@/hooks/useSepoliaNetwork';
 import { useAuthSession } from '@/hooks/useAuthSession';
+import { validateUsdcPricing } from '@/lib/deals/pricing';
 
 const SELLER_CATEGORIES = ['Web Development', 'Design', 'Smart Contract', 'Content'];
 const EMPTY_REG = { name: '', category: 'Web Development', skills: '', rate: '', bio: '' };
@@ -67,6 +68,8 @@ export interface RichMarketMetadata {
     linkedin: string;
   };
   portfolio: PortfolioProject[];
+  startingRateAmount: string;
+  startingRateType: 'PER_PROJECT' | 'PER_HOUR';
 }
 
 const EMPTY_RICH_METADATA: RichMarketMetadata = {
@@ -81,6 +84,8 @@ const EMPTY_RICH_METADATA: RichMarketMetadata = {
     linkedin: '',
   },
   portfolio: [],
+  startingRateAmount: '',
+  startingRateType: 'PER_PROJECT',
 };
 
 export function MarketProfileEditor({
@@ -180,6 +185,8 @@ export function MarketProfileEditor({
               linkedin: typeof data.links?.linkedin === 'string' ? data.links.linkedin : '',
             },
             portfolio: Array.isArray(data.portfolio) ? data.portfolio : [],
+            startingRateAmount: data.startingRateAmount ? String(data.startingRateAmount) : '',
+            startingRateType: data.startingRateType === 'PER_HOUR' ? 'PER_HOUR' : 'PER_PROJECT',
           });
         }
       })
@@ -209,8 +216,15 @@ export function MarketProfileEditor({
     }
     const rate = Number(regForm.rate);
     if (!rate || rate <= 0 || !isFinite(rate)) {
-      setRegError('Enter a valid rate');
+      setRegError('Enter a valid starting rate in ETH (> 0)');
       return;
+    }
+    if (!directory.myRegistered) {
+      const usdcValidation = validateUsdcPricing(richForm.startingRateAmount, richForm.startingRateType);
+      if (!usdcValidation.valid) {
+        setRegError(usdcValidation.error || 'Enter a valid starting rate in USDC (> 0)');
+        return;
+      }
     }
     const skills = regForm.skills.split(',').map((s) => s.trim()).filter(Boolean).slice(0, 8);
     if (skills.length === 0) {
@@ -396,6 +410,19 @@ export function MarketProfileEditor({
       }
     }
 
+    // Validate modern USDC starting rate if configured
+    let cleanStartingRateAmount: string | null = null;
+    let cleanStartingRateType: 'PER_PROJECT' | 'PER_HOUR' | null = null;
+    if (richForm.startingRateAmount.trim()) {
+      const pricingRes = validateUsdcPricing(richForm.startingRateAmount, richForm.startingRateType);
+      if (!pricingRes.valid) {
+        setRichError(pricingRes.error || 'Invalid USDC starting rate');
+        return;
+      }
+      cleanStartingRateAmount = pricingRes.cleanAmount!;
+      cleanStartingRateType = pricingRes.cleanType!;
+    }
+
     setRichSaving(true);
     try {
       const token = await ensureAuthenticated();
@@ -413,6 +440,9 @@ export function MarketProfileEditor({
           typicalDelivery: richForm.typicalDelivery,
           links: richForm.links,
           portfolio: richForm.portfolio,
+          startingRateAmount: cleanStartingRateAmount,
+          startingRateCurrency: cleanStartingRateAmount ? 'USDC' : null,
+          startingRateType: cleanStartingRateType,
         }),
       });
 
@@ -443,6 +473,8 @@ export function MarketProfileEditor({
             linkedin: data.profile.links?.linkedin || '',
           },
           portfolio: Array.isArray(data.profile.portfolio) ? data.profile.portfolio : [],
+          startingRateAmount: data.profile.startingRateAmount ? String(data.profile.startingRateAmount) : '',
+          startingRateType: data.profile.startingRateType === 'PER_HOUR' ? 'PER_HOUR' : 'PER_PROJECT',
         });
       }
 
@@ -495,26 +527,70 @@ export function MarketProfileEditor({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <label className="text-xs text-zinc-400 mb-1 block">Core Skills (Max 8, comma separated)</label>
+          <Input
+            value={regForm.skills}
+            onChange={(e) => setRegForm({ ...regForm, skills: e.target.value })}
+            placeholder="React, Next.js, Solidity, UI Design"
+          />
+        </div>
+
+        {/* Starting Rate Section — Modern USDC + Directory ETH */}
+        <div className="space-y-3 p-3 rounded-lg bg-zinc-950/40 border border-zinc-800">
           <div>
-            <label className="text-xs text-zinc-400 mb-1 block">Core Skills (Max 8, comma separated)</label>
-            <Input
-              value={regForm.skills}
-              onChange={(e) => setRegForm({ ...regForm, skills: e.target.value })}
-              placeholder="React, Next.js, Solidity, UI Design"
-            />
+            <span className="text-xs text-zinc-200 font-semibold block uppercase tracking-wider">
+              Starting Rate
+            </span>
+            <p className="text-[11px] text-zinc-400 mt-0.5">
+              USDC starting rate is displayed publicly across Synq. The on-chain ETH rate is an immutable directory anchor required for registration.
+            </p>
           </div>
 
-          <div>
-            <label className="text-xs text-zinc-400 mb-1 block">Starting Rate (ETH)</label>
-            <Input
-              type="number"
-              value={regForm.rate}
-              onChange={(e) => setRegForm({ ...regForm, rate: e.target.value })}
-              placeholder="0.5"
-              min="0.001"
-              step="0.01"
-            />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-zinc-300 mb-1 flex items-center justify-between font-medium">
+                <span>In USDC</span>
+                <span className="text-[10px] text-blue-400 font-normal">Publicly displayed</span>
+              </label>
+              <Input
+                type="text"
+                value={richForm.startingRateAmount}
+                onChange={(e) => setRichForm({ ...richForm, startingRateAmount: e.target.value })}
+                placeholder="50.00"
+                className="font-mono text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs text-zinc-300 mb-1 flex items-center justify-between font-medium">
+                <span>In ETH</span>
+                <span className="text-[10px] text-zinc-500 font-normal">On-chain directory rate</span>
+              </label>
+              <Input
+                type="number"
+                value={regForm.rate}
+                onChange={(e) => setRegForm({ ...regForm, rate: e.target.value })}
+                placeholder="0.02"
+                min="0.0001"
+                step="0.01"
+                className="font-mono text-sm"
+              />
+            </div>
+          </div>
+
+          <div className="max-w-xs">
+            <label className="text-xs text-zinc-300 mb-1 block font-medium">
+              Rate Type
+            </label>
+            <select
+              value={richForm.startingRateType}
+              onChange={(e) => setRichForm({ ...richForm, startingRateType: e.target.value as 'PER_PROJECT' | 'PER_HOUR' })}
+              className="w-full h-9 rounded-lg border border-zinc-700 bg-zinc-800/50 px-2.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+            >
+              <option value="PER_PROJECT">Per Project</option>
+              <option value="PER_HOUR">Per Hour</option>
+            </select>
           </div>
         </div>
 

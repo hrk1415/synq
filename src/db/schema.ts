@@ -32,6 +32,10 @@ export const marketProfiles = pgTable('market_profiles', {
   typicalDelivery: text('typical_delivery'),
   links: jsonb('links').$type<Record<string, string>>().default({}).notNull(),
   portfolio: jsonb('portfolio').$type<Array<{ id?: string; title: string; description?: string; image?: string; link?: string; tags?: string[] }>>().default([]).notNull(),
+  // Modern USDC starting rate metadata
+  startingRateAmount: numeric('starting_rate_amount', { precision: 18, scale: 6 }),
+  startingRateCurrency: text('starting_rate_currency'),
+  startingRateType: text('starting_rate_type'),
   // Private owner-only draft fields
   draftName: text('draft_name'),
   draftCategory: text('draft_category'),
@@ -42,6 +46,9 @@ export const marketProfiles = pgTable('market_profiles', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   check('chk_market_profiles_wallet_lower', sql`wallet_address = LOWER(wallet_address)`),
+  check('chk_market_profiles_rate_amount_pos', sql`starting_rate_amount IS NULL OR starting_rate_amount > 0`),
+  check('chk_market_profiles_rate_currency_usdc', sql`starting_rate_currency IS NULL OR starting_rate_currency = 'USDC'`),
+  check('chk_market_profiles_rate_type_valid', sql`starting_rate_type IS NULL OR starting_rate_type IN ('PER_PROJECT', 'PER_HOUR')`),
 ]);
 
 /**
@@ -215,6 +222,11 @@ export interface AiNegotiatorSellerResult {
   bio: string;
   available: boolean;
   match: number;
+  pricing?: {
+    amount: string;
+    currency: 'USDC';
+    rateType: 'PER_PROJECT' | 'PER_HOUR';
+  } | null;
 }
 
 export interface TermState<T> {

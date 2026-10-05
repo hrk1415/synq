@@ -49,7 +49,7 @@ export interface DealReceiptProps {
   scope?: string | DealReceiptField<string>;
   deadline?: string | number | DealReceiptField<string | number>;
   paymentStructure?: string | DealReceiptField<string>;
-  protectionEnabled?: boolean;
+  protectionEnabled?: boolean | null;
   statusBadge?: string;
   actions?: React.ReactNode;
   className?: string;
@@ -80,7 +80,7 @@ export function DealReceipt({
   scope,
   deadline,
   paymentStructure,
-  protectionEnabled = false,
+  protectionEnabled,
   statusBadge,
   actions,
   className,
@@ -131,7 +131,19 @@ export function DealReceipt({
         deadlineText += ` · ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
       }
     } else if (typeof deadlineParsed.value === 'string') {
-      deadlineText = deadlineParsed.value;
+      const parsedDate = new Date(deadlineParsed.value);
+      if (!isNaN(parsedDate.getTime())) {
+        deadlineText = parsedDate.toLocaleDateString('en-GB', {
+          day: 'numeric',
+          month: 'short',
+          year: isExpanded ? 'numeric' : undefined,
+        });
+        if (isExpanded) {
+          deadlineText += ` · ${parsedDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        }
+      } else {
+        deadlineText = deadlineParsed.value;
+      }
     }
   }
   if (!deadlineText && deadlineParsed.raw) {
@@ -143,7 +155,7 @@ export function DealReceipt({
   if (paymentParsed.value) {
     const val = String(paymentParsed.value).toLowerCase();
     if (val === '50-50' || val === '50/50' || val === 'half') paymentText = '50/50 Milestones';
-    else if (val === 'custom') paymentText = 'Custom Milestones';
+    else if (val === 'custom') paymentText = 'Custom Stages';
     else if (val === 'single') paymentText = 'Single Release';
     else paymentText = String(paymentParsed.value);
   }
@@ -181,14 +193,18 @@ export function DealReceipt({
         {/* TITLE SECTION */}
         <div className="space-y-1">
           <span className="text-[10px] text-zinc-400 font-medium uppercase tracking-wider block">Title</span>
-          <p className={cn('font-semibold truncate', isExpanded ? 'text-sm font-bold' : 'text-xs', titleParsed.status === 'MISSING' ? 'text-zinc-500 italic' : titleParsed.status === 'PROPOSED' ? 'text-blue-300' : 'text-white')}>
-            {titleParsed.value || <span className="text-zinc-500 italic">Not set</span>}
-            {titleParsed.status === 'PROPOSED' && (
-              <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30 font-mono">
-                proposed
-              </span>
-            )}
-          </p>
+          {titleParsed.status === 'MISSING' || !titleParsed.value ? (
+            <div className="w-28 h-3.5 bg-zinc-700/60 rounded" />
+          ) : (
+            <p className={cn('font-semibold truncate', isExpanded ? 'text-sm font-bold' : 'text-xs', titleParsed.status === 'PROPOSED' ? 'text-blue-300' : 'text-white')}>
+              {titleParsed.value}
+              {titleParsed.status === 'PROPOSED' && (
+                <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30 font-mono">
+                  proposed
+                </span>
+              )}
+            </p>
+          )}
         </div>
 
         {/* PARTY RELATIONSHIP SECTION (CLIENT ↔ FREELANCER) */}
@@ -290,9 +306,34 @@ export function DealReceipt({
           {isExpanded && (
             <div className="flex items-center justify-between">
               <span className="text-zinc-400">Deal Type</span>
-              <span className="text-white font-medium truncate max-w-[220px]">
-                {titleParsed.value || <span className="text-zinc-500 italic">Not set</span>}
-              </span>
+              {titleParsed.status === 'MISSING' || !titleParsed.value ? (
+                <div className="w-28 h-3.5 bg-zinc-700/60 rounded" />
+              ) : (
+                <span className="text-white font-medium truncate max-w-[220px]">
+                  {titleParsed.value}
+                </span>
+              )}
+            </div>
+          )}
+
+          {!isExpanded && (
+            <div className="flex items-center justify-between">
+              <span className="text-zinc-400">Scope</span>
+              {scopeParsed.status === 'MISSING' || !scopeText ? (
+                <div className="w-24 h-3.5 bg-zinc-700/60 rounded" />
+              ) : (
+                <div className="relative group inline-block text-right">
+                  <span className={cn('font-medium truncate inline-block border-b border-dashed border-zinc-700 hover:border-zinc-400 transition-colors cursor-help', isChat ? 'max-w-[180px]' : 'max-w-[140px]', scopeParsed.status === 'PROPOSED' ? 'text-blue-300' : 'text-white')}>
+                    {scopeText.length > scopePreviewLimit ? `${scopeText.slice(0, scopePreviewLimit)}...` : scopeText}
+                  </span>
+                  {scopeText.length > scopePreviewLimit && (
+                    <div className="absolute right-0 bottom-full mb-2 hidden group-hover:block group-focus:block z-50 w-64 p-3 rounded-xl bg-zinc-900/95 border border-zinc-700 text-xs text-zinc-200 shadow-2xl backdrop-blur-md whitespace-pre-wrap leading-relaxed text-left pointer-events-none">
+                      <div className="font-semibold text-blue-400 mb-1 text-[10px] uppercase tracking-wider">Full Deliverables / Scope</div>
+                      {scopeText}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -318,27 +359,6 @@ export function DealReceipt({
               <span className="text-white font-medium">
                 {assetSymbol} {isErc20 ? '(ERC-20)' : '(native)'}
               </span>
-            </div>
-          )}
-
-          {!isExpanded && (
-            <div className="flex items-center justify-between">
-              <span className="text-zinc-400">Scope</span>
-              {scopeParsed.status === 'MISSING' || !scopeText ? (
-                <div className="w-24 h-3.5 bg-zinc-700/60 rounded" />
-              ) : (
-                <div className="relative group inline-block text-right">
-                  <span className={cn('font-medium truncate inline-block border-b border-dashed border-zinc-700 hover:border-zinc-400 transition-colors cursor-help', isChat ? 'max-w-[180px]' : 'max-w-[140px]', scopeParsed.status === 'PROPOSED' ? 'text-blue-300' : 'text-white')}>
-                    {scopeText.length > scopePreviewLimit ? `${scopeText.slice(0, scopePreviewLimit)}...` : scopeText}
-                  </span>
-                  {scopeText.length > scopePreviewLimit && (
-                    <div className="absolute right-0 bottom-full mb-2 hidden group-hover:block group-focus:block z-50 w-64 p-3 rounded-xl bg-zinc-900/95 border border-zinc-700 text-xs text-zinc-200 shadow-2xl backdrop-blur-md whitespace-pre-wrap leading-relaxed text-left pointer-events-none">
-                      <div className="font-semibold text-blue-400 mb-1 text-[10px] uppercase tracking-wider">Full Deliverables / Scope</div>
-                      {scopeText}
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
           )}
 
@@ -371,9 +391,13 @@ export function DealReceipt({
 
           <div className="flex items-center justify-between">
             <span className="text-zinc-400">Protection</span>
-            <span className={protectionEnabled ? 'text-emerald-400 font-medium' : 'text-zinc-500'}>
-              {protectionEnabled ? 'Adaptive ON' : 'None'}
-            </span>
+            {protectionEnabled === undefined || protectionEnabled === null ? (
+              <div className="w-16 h-3.5 bg-zinc-700/60 rounded" />
+            ) : (
+              <span className={protectionEnabled ? 'text-emerald-400 font-medium' : 'text-zinc-500'}>
+                {protectionEnabled ? 'Adaptive ON' : 'None'}
+              </span>
+            )}
           </div>
         </div>
 

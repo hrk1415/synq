@@ -735,6 +735,24 @@ export async function findSellers(prompt: string): Promise<any> {
       /* degrade gracefully: 0 experience bonus */
     }
 
+    let marketProfilesMap: Record<string, any> = {};
+    if (typeof window === 'undefined') {
+      try {
+        const dynamicImport = new Function('specifier', 'return import(specifier)');
+        const dbModule = await dynamicImport('@/lib/db');
+        const allMarkets = await dbModule.getAll('marketProfiles');
+        if (Array.isArray(allMarkets)) {
+          for (const mp of allMarkets) {
+            if (mp?.walletAddress) {
+              marketProfilesMap[String(mp.walletAddress).toLowerCase()] = mp;
+            }
+          }
+        }
+      } catch {
+        /* degrade gracefully */
+      }
+    }
+
     const terms = tokenizeSellerQuery(prompt);
     const scored = sellers.map((p) => {
       let score = 0;
@@ -756,17 +774,33 @@ export async function findSellers(prompt: string): Promise<any> {
 
     const top = scored.slice(0, 5);
     const topScore = top[0]?.score || 0;
-    const withScore = top.map(({ p, score, completedDealsCount }) => ({
-      wallet: String(p.wallet),
-      name: String(p.name || 'Anonymous'),
-      category: String(p.category || '-'),
-      skills: (p.skills || []).slice(0, 4).map((s: string) => String(s)),
-      rate: String(p.rate || '0'),
-      bio: String(p.bio || '').slice(0, 100),
-      available: !!p.available,
-      completedDeals: completedDealsCount,
-      match: topScore > 0 ? Math.min(Math.round((score / topScore) * 100), 99) : 50,
-    }));
+    const withScore = top.map(({ p, score, completedDealsCount }) => {
+      const wLower = String(p.wallet).toLowerCase();
+      const mp = marketProfilesMap[wLower];
+      const validPricing =
+        mp?.startingRateAmount &&
+        mp?.startingRateType &&
+        (mp.startingRateType === 'PER_PROJECT' || mp.startingRateType === 'PER_HOUR')
+          ? {
+              amount: String(mp.startingRateAmount),
+              currency: 'USDC' as const,
+              rateType: mp.startingRateType as 'PER_PROJECT' | 'PER_HOUR',
+            }
+          : null;
+
+      return {
+        wallet: String(p.wallet),
+        name: String(p.name || 'Anonymous'),
+        category: String(p.category || '-'),
+        skills: (p.skills || []).slice(0, 4).map((s: string) => String(s)),
+        rate: String(p.rate || '0'),
+        pricing: validPricing,
+        bio: String(p.bio || '').slice(0, 100),
+        available: !!p.available,
+        completedDeals: completedDealsCount,
+        match: topScore > 0 ? Math.min(Math.round((score / topScore) * 100), 99) : 50,
+      };
+    });
 
     return {
       type: 'sellers',

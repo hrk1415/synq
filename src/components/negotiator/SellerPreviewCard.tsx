@@ -2,8 +2,8 @@
 
 import React from 'react';
 import { Briefcase, Users, Star, CheckCircle2, Clock } from 'lucide-react';
-import { formatUnits } from 'viem';
 import type { AiNegotiatorSellerResult } from '@/db/schema';
+import { formatPublicPricing } from '@/lib/deals/pricing';
 
 interface SellerPreviewCardProps {
   seller: AiNegotiatorSellerResult;
@@ -56,21 +56,8 @@ export function SellerPreviewCard({
   const topSkills = skills.slice(0, 3);
   const extraSkills = skills.length - topSkills.length;
   
-  // Format rate if it's wei string or eth number
-  let rateDisplay = '0';
-  if (seller.rate) {
-    try {
-      if (seller.rate.includes('.')) {
-        rateDisplay = seller.rate;
-      } else {
-        rateDisplay = formatUnits(BigInt(seller.rate), 18);
-      }
-    } catch {
-      rateDisplay = seller.rate;
-    }
-  }
-
   const match = typeof seller.match === 'number' ? seller.match : undefined;
+  const publicPricing = formatPublicPricing(seller.pricing);
 
   return (
     <div className="w-[280px] sm:w-[300px] rounded-xl border border-zinc-800 bg-zinc-900/95 p-4 shadow-2xl backdrop-blur-md space-y-3.5 text-zinc-200">
@@ -99,10 +86,20 @@ export function SellerPreviewCard({
           )}
         </div>
         <div className="text-right shrink-0">
-          <div className="text-sm font-bold text-white leading-tight">
-            {rateDisplay} <span className="text-[10px] text-zinc-400 font-normal">ETH</span>
-          </div>
-          <div className="text-[10px] text-zinc-500">rate/project</div>
+          {publicPricing ? (
+            <>
+              <div className="text-sm font-bold text-white leading-tight">
+                {publicPricing.amountDisplay} <span className="text-[10px] text-zinc-400 font-semibold">USDC</span>
+              </div>
+              <div className="text-[10px] text-zinc-500">
+                {publicPricing.typeLabel}
+              </div>
+            </>
+          ) : (
+            <div className="text-xs font-medium text-zinc-500 leading-tight">
+              Rate not set
+            </div>
+          )}
         </div>
       </div>
 

@@ -5,7 +5,6 @@ import { Press_Start_2P } from 'next/font/google';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { Search, Loader2, SlidersHorizontal, Check } from 'lucide-react';
-import { formatUnits } from 'viem';
 import { Input } from '@/components/ui/input';
 import { useAccount, useReadContracts } from 'wagmi';
 import { useDirectoryContract } from '@/hooks/useDirectoryContract';
@@ -15,6 +14,7 @@ import { ProviderProfileModal } from '@/components/marketplace/ProviderProfileMo
 import { CONTRACT_ADDRESSES, SEPOLIA_CHAIN_ID } from '@/lib/contracts/addresses';
 import { registryABI } from '@/hooks/useRegistryContract';
 import { useBatchFreelancerCompletedDeals } from '@/hooks/useFreelancerStats';
+import { FreelancerPricing, getSuggestedDealBudget } from '@/lib/deals/pricing';
 
 const pressStart2P = Press_Start_2P({
   subsets: ['latin'],
@@ -35,6 +35,7 @@ export default function MarketplacePage() {
   const filterRef = useRef<HTMLDivElement>(null);
 
   const [avatarsMap, setAvatarsMap] = useState<Record<string, string>>({});
+  const [pricingMap, setPricingMap] = useState<Record<string, FreelancerPricing>>({});
   const [reviewCountsMap, setReviewCountsMap] = useState<Record<string, number>>({});
   const [selectedWallet, setSelectedWallet] = useState<string | null>(null);
 
@@ -113,13 +114,23 @@ export default function MarketplacePage() {
       .then((res) => res.json())
       .then((data) => {
         if (cancelled || !Array.isArray(data?.profiles)) return;
-        const map: Record<string, string> = {};
+        const aMap: Record<string, string> = {};
+        const pMap: Record<string, FreelancerPricing> = {};
         for (const item of data.profiles) {
-          if (item?.wallet && item?.avatar) {
-            map[String(item.wallet).toLowerCase()] = item.avatar;
+          const wLower = String(item.wallet).toLowerCase();
+          if (item?.avatar) {
+            aMap[wLower] = item.avatar;
+          }
+          if (item?.startingRateAmount && item?.startingRateType) {
+            pMap[wLower] = {
+              amount: String(item.startingRateAmount),
+              currency: 'USDC',
+              rateType: item.startingRateType,
+            };
           }
         }
-        setAvatarsMap(map);
+        setAvatarsMap(aMap);
+        setPricingMap(pMap);
       })
       .catch(() => { /* keep initials fallback on error */ });
 
@@ -153,10 +164,14 @@ export default function MarketplacePage() {
   }, [profiles, category, search]);
 
   const order = (p: any) => {
+    const walletLower = String(p.wallet).toLowerCase();
+    const pricing = pricingMap[walletLower];
+    const suggestedBudget = getSuggestedDealBudget(pricing);
+
     const q = new URLSearchParams({
       seller: String(p.wallet),
       type: String(p.category || ''),
-      budget: Number(formatUnits(BigInt(p.rate || 0), 18)) > 0 ? String(Number(formatUnits(BigInt(p.rate || 0), 18))) : '',
+      budget: suggestedBudget || '',
       name: String(p.name || ''),
     });
     router.push(`/deal/new?${q.toString()}`);
@@ -282,6 +297,7 @@ export default function MarketplacePage() {
                   onOpenProfile={(wallet) => setSelectedWallet(wallet)}
                   avatar={avatarsMap[walletLower]}
                   synqHandle={handlesMap[walletLower]}
+                  pricing={pricingMap[walletLower]}
                   reviewCount={reviewCountsMap[walletLower] ?? 0}
                   completedDeals={completedCountsMap[walletLower]}
                 />
