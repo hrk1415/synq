@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, Suspense, useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, LayoutGroup, useReducedMotion } from 'framer-motion';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   ArrowLeft,
@@ -15,6 +15,7 @@ import {
   Trash2,
   FileSignature,
   Info,
+  HelpCircle,
   AlertTriangle,
   Star,
   UserCheck,
@@ -116,7 +117,7 @@ const steps = [
   { title: 'Budget', description: 'Total deal budget' },
   { title: 'Deadline', description: 'Project completion target' },
   { title: 'Payment Structure', description: 'How should payment be structured?' },
-  { title: 'Protection', description: 'Adaptive Protection level' },
+  { title: 'Protection', description: 'Choose the protection level you want for this deal' },
   { title: 'Review', description: 'Review and sign deal terms' },
 ];
 
@@ -190,6 +191,12 @@ function NewDealForm() {
   const initialSeller = searchParams.get('seller') || '';
 
   const [step, setStep] = useState(0);
+  const shouldReduceMotion = useReducedMotion();
+  const [isReviewTransitioning, setIsReviewTransitioning] = useState<'forward' | 'backward' | null>(null);
+
+  const isReviewView =
+    (step === 7 && isReviewTransitioning !== 'backward') || isReviewTransitioning === 'forward';
+
   const [matches, setMatches] = useState<any[]>([]);
   const [matchState, setMatchState] = useState<'idle' | 'matching' | 'done'>('idle');
   const [matchError, setMatchError] = useState('');
@@ -332,13 +339,21 @@ function NewDealForm() {
   const [paymentStructureSelected, setPaymentStructureSelected] = useState<boolean>(!!validUrlPayment);
   const [expandedMilestoneIndex, setExpandedMilestoneIndex] = useState<number | null>(validUrlPayment ? 0 : null);
 
+  const rawUrlProtection = searchParams.get('protection')?.trim().toUpperCase();
+  const validUrlProtection: 'STANDARD' | 'PREMIUM' | '' =
+    rawUrlProtection === 'STANDARD'
+      ? 'STANDARD'
+      : rawUrlProtection === 'PREMIUM'
+      ? 'PREMIUM'
+      : '';
+
   const [form, setForm] = useState<{
     type: string;
     counterparty: string;
     budget: string;
     deliverables: string;
     paymentStructure: 'single' | '50-50' | 'custom' | '';
-    protection: boolean;
+    protectionSelection: 'STANDARD' | 'PREMIUM' | '';
     expiryDays: number;
   }>({
     type: searchParams.get('type') || '',
@@ -346,7 +361,7 @@ function NewDealForm() {
     budget: searchParams.get('budget') || '',
     deliverables: '',
     paymentStructure: validUrlPayment || '',
-    protection: false,
+    protectionSelection: validUrlProtection || '',
     expiryDays: 7,
   });
 
@@ -434,6 +449,33 @@ function NewDealForm() {
       setRefreshingNonce(false);
     }
   };
+
+  const [showPremiumInfo, setShowPremiumInfo] = useState(false);
+  const premiumInfoRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showPremiumInfo) return;
+    const handleClickOutside = (e: MouseEvent | TouchEvent) => {
+      if (premiumInfoRef.current && !premiumInfoRef.current.contains(e.target as Node)) {
+        setShowPremiumInfo(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowPremiumInfo(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showPremiumInfo]);
+
+  useEffect(() => {
+    setShowPremiumInfo(false);
+  }, [step]);
 
   // Negotiator Handoff
   const negotiatorConvId = searchParams.get('negotiatorConversationId');
@@ -1110,9 +1152,9 @@ function NewDealForm() {
         return true;
       }
       case 6:
-        return true;
+        return form.protectionSelection === 'STANDARD' || form.protectionSelection === 'PREMIUM';
       case 7:
-        return true;
+        return form.protectionSelection === 'STANDARD';
       default:
         return true;
     }
@@ -1122,6 +1164,37 @@ function NewDealForm() {
     setError('');
     setNonceConflict(false);
     if (step > 0) setStep(step - 1);
+  };
+
+  const handleContinueToReview = () => {
+    if (isReviewTransitioning) return;
+    if (!canProceed()) return;
+
+    if (shouldReduceMotion) {
+      setStep(7);
+      return;
+    }
+
+    setIsReviewTransitioning('forward');
+    setTimeout(() => {
+      setStep(7);
+      setIsReviewTransitioning(null);
+    }, 550);
+  };
+
+  const handlePreviousFromReview = () => {
+    if (isReviewTransitioning) return;
+
+    if (shouldReduceMotion) {
+      setStep(6);
+      return;
+    }
+
+    setIsReviewTransitioning('backward');
+    setTimeout(() => {
+      setStep(6);
+      setIsReviewTransitioning(null);
+    }, 550);
   };
 
   // Sign & Send Proposal Action
@@ -1138,6 +1211,11 @@ function NewDealForm() {
 
     if (address.toLowerCase() === form.counterparty.toLowerCase()) {
       setError('Client and freelancer cannot be the same wallet address (self-deal forbidden).');
+      return;
+    }
+
+    if (form.protectionSelection === 'PREMIUM') {
+      setError("Premium Protection activation isn't live yet. Select Standard Protection to submit this proposal.");
       return;
     }
 
@@ -1942,36 +2020,222 @@ function NewDealForm() {
 
       case 6:
         return (
-          <div className="space-y-4">
+          <div className="space-y-6">
             <div>
-              <h3 className="text-base font-semibold text-white mb-0.5">Adaptive Protection</h3>
-              <p className="text-xs text-zinc-400">Choose the protection level for this deal proposal.</p>
+              <h3 className="text-base font-semibold text-white">Choose the protection level you want for this deal.</h3>
             </div>
 
-            <div className="space-y-2.5">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* STANDARD PROTECTION CARD */}
               <button
                 type="button"
-                className="w-full p-4 rounded-xl border border-blue-500/50 bg-blue-600/10 text-left shadow-sm"
+                onClick={() => {
+                  update('protectionSelection', 'STANDARD');
+                }}
+                className={cn(
+                  'p-5 rounded-2xl border text-left transition-all relative flex flex-col justify-between cursor-pointer space-y-4',
+                  form.protectionSelection === 'STANDARD'
+                    ? 'border-blue-500/60 bg-blue-600/10 shadow-sm'
+                    : 'border-zinc-800/80 bg-zinc-900/40 hover:border-zinc-700 hover:bg-zinc-800/30'
+                )}
               >
-                <div className="text-sm font-semibold text-white">No Protection (Standard V2 Escrow)</div>
-                <div className="text-xs text-zinc-400 mt-0.5">Proceed with non-custodial smart contract escrow and dispute resolution</div>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-white">Standard Protection</span>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-zinc-800 text-zinc-300 border border-zinc-700/60 uppercase tracking-wider">
+                      Included
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-zinc-400 leading-relaxed">
+                    Secure escrow, milestone releases and standard dispute resolution.
+                  </p>
+
+                  <div className="space-y-1.5 pt-1">
+                    {[
+                      'Secure escrow',
+                      'Milestone-based releases',
+                      'Standard dispute resolution',
+                    ].map((benefit, i) => (
+                      <div key={i} className="flex items-center gap-2 text-[11px] text-zinc-400">
+                        <Check size={12} className="text-blue-400 shrink-0" />
+                        <span>{benefit}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-2 border-t border-zinc-800/60">
+                  <span className="text-[11px] text-zinc-500 font-medium">Core Protection</span>
+                  <div
+                    className={cn(
+                      'w-4 h-4 rounded-full flex items-center justify-center transition-all',
+                      form.protectionSelection === 'STANDARD'
+                        ? 'border-2 border-blue-500 bg-blue-500 text-white'
+                        : 'border border-zinc-600 bg-transparent'
+                    )}
+                  >
+                    {form.protectionSelection === 'STANDARD' && (
+                      <div className="w-1.5 h-1.5 rounded-full bg-white" />
+                    )}
+                  </div>
+                </div>
               </button>
 
+              {/* PREMIUM PROTECTION CARD */}
               <button
                 type="button"
-                disabled
-                aria-disabled="true"
-                tabIndex={-1}
-                className="w-full p-4 rounded-xl border border-zinc-800/60 bg-zinc-900/30 opacity-60 cursor-not-allowed text-left select-none"
+                onClick={() => {
+                  update('protectionSelection', 'PREMIUM');
+                }}
+                className={cn(
+                  'p-5 rounded-2xl border text-left transition-all relative flex flex-col justify-between cursor-pointer space-y-4',
+                  form.protectionSelection === 'PREMIUM'
+                    ? 'border-blue-500/60 bg-blue-600/10 shadow-sm'
+                    : 'border-zinc-800/80 bg-zinc-900/40 hover:border-zinc-700 hover:bg-zinc-800/30'
+                )}
               >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-sm font-medium text-zinc-300">Adaptive Protection</div>
-                    <div className="text-xs text-zinc-500 mt-0.5">Pool-backed coverage is currently in development</div>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 relative" ref={premiumInfoRef}>
+                      <span className="text-sm font-semibold text-white">Premium Protection</span>
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        aria-label="Learn about Premium Protection"
+                        aria-expanded={showPremiumInfo}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowPremiumInfo((prev) => !prev);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setShowPremiumInfo((prev) => !prev);
+                          }
+                        }}
+                        className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 hover:bg-zinc-700/80 transition-colors focus:outline-none focus:ring-1 focus:ring-blue-400 cursor-pointer"
+                      >
+                        <HelpCircle size={10} className="shrink-0" />
+                      </span>
+
+                      {showPremiumInfo && (
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          className="absolute left-0 top-full mt-2 w-72 sm:w-80 max-w-[calc(100vw-3rem)] rounded-xl bg-zinc-900 border border-zinc-700/80 p-3.5 shadow-2xl shadow-black/80 z-30 cursor-default text-left space-y-2.5"
+                        >
+                          <div className="flex items-center justify-between pb-1.5 border-b border-zinc-800">
+                            <span className="text-xs font-semibold text-zinc-200">
+                              How Premium Protection works
+                            </span>
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              aria-label="Close"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setShowPremiumInfo(false);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setShowPremiumInfo(false);
+                                }
+                              }}
+                              className="text-zinc-500 hover:text-zinc-300 transition-colors p-0.5 rounded cursor-pointer"
+                            >
+                              <X size={12} />
+                            </span>
+                          </div>
+
+                          <div className="space-y-2 text-xs">
+                            <div className="space-y-0.5">
+                              <div className="font-medium text-white flex items-center gap-1.5 text-[11px]">
+                                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
+                                Coverage
+                              </div>
+                              <p className="text-[11px] text-zinc-400 leading-relaxed pl-3">
+                                Up to 20% additional recovery on eligible failed milestones.
+                              </p>
+                            </div>
+
+                            <div className="space-y-0.5">
+                              <div className="font-medium text-white flex items-center gap-1.5 text-[11px]">
+                                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
+                                Claim
+                              </div>
+                              <p className="text-[11px] text-zinc-400 leading-relaxed pl-3">
+                                Submit a claim after an eligible milestone failure.
+                              </p>
+                            </div>
+
+                            <div className="space-y-0.5">
+                              <div className="font-medium text-white flex items-center gap-1.5 text-[11px]">
+                                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
+                                Review
+                              </div>
+                              <p className="text-[11px] text-zinc-400 leading-relaxed pl-3">
+                                Your protection claim is reviewed before payout.
+                              </p>
+                            </div>
+
+                            <div className="space-y-0.5">
+                              <div className="font-medium text-white flex items-center gap-1.5 text-[11px]">
+                                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
+                                Payout
+                              </div>
+                              <p className="text-[11px] text-zinc-400 leading-relaxed pl-3">
+                                Approved claims are paid separately from your original deal escrow.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-500/20 text-blue-300 border border-blue-500/40 uppercase tracking-wider">
+                      Premium
+                    </span>
                   </div>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-zinc-800 text-zinc-400 border border-zinc-700/50 uppercase tracking-wider">
-                    Coming Soon
-                  </span>
+
+                  <p className="text-xs text-zinc-300 leading-relaxed font-medium">
+                    Get up to 20% additional recovery coverage when an eligible milestone fails.
+                  </p>
+
+                  <div className="space-y-1.5 pt-1">
+                    {[
+                      'Additional recovery coverage',
+                      'Priority dispute review',
+                      'Replacement freelancer assistance',
+                    ].map((benefit, i) => (
+                      <div key={i} className="flex items-center gap-2 text-[11px] text-zinc-400">
+                        <Check size={12} className="text-blue-400 shrink-0" />
+                        <span>{benefit}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="text-[11px] text-zinc-500 italic pt-1">
+                    Premium fee shown before activation
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-2 border-t border-zinc-800/60">
+                  <span className="text-[11px] text-zinc-500 font-medium">Enhanced Recovery</span>
+                  <div
+                    className={cn(
+                      'w-4 h-4 rounded-full flex items-center justify-center transition-all',
+                      form.protectionSelection === 'PREMIUM'
+                        ? 'border-2 border-blue-500 bg-blue-500 text-white'
+                        : 'border border-zinc-600 bg-transparent'
+                    )}
+                  >
+                    {form.protectionSelection === 'PREMIUM' && (
+                      <div className="w-1.5 h-1.5 rounded-full bg-white" />
+                    )}
+                  </div>
                 </div>
               </button>
             </div>
@@ -1979,145 +2243,7 @@ function NewDealForm() {
         );
 
       case 7:
-        return (
-          <div className="space-y-5">
-            <div className="rounded-xl border border-blue-500/30 bg-blue-950/20 p-4 space-y-2">
-              <div className="flex items-center gap-2 text-blue-400 text-sm font-semibold">
-                <Info size={16} /> Important Protocol Notice
-              </div>
-              <p className="text-xs text-blue-200/90 leading-relaxed">
-                NO FUNDS MOVE WHEN YOU SIGN THIS PROPOSAL. The designated freelancer must review and accept the proposal on-chain before a Deal contract is deployed. You will fund escrow only after acceptance.
-              </p>
-            </div>
-
-            {/* Proposal Summary Details */}
-            <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 space-y-4 text-xs">
-              <div className="grid grid-cols-2 gap-3 border-b border-zinc-800/80 pb-3">
-                <div>
-                  <span className="text-zinc-500 block uppercase tracking-wider text-[10px]">Client</span>
-                  <span className="font-mono text-zinc-200">{shortenAddress(address || '')}</span>
-                </div>
-                <div>
-                  <span className="text-zinc-500 block uppercase tracking-wider text-[10px]">Freelancer</span>
-                  <span className="font-mono text-zinc-200">{shortenAddress(form.counterparty || '')}</span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 border-b border-zinc-800/80 pb-3">
-                <div>
-                  <span className="text-zinc-500 block uppercase tracking-wider text-[10px]">Total Escrow</span>
-                  <span className="font-bold text-white text-sm">{formattedTotalEscrow} USDC</span>
-                </div>
-                <div>
-                  <span className="text-zinc-500 block uppercase tracking-wider text-[10px]">Milestones</span>
-                  <span className="font-bold text-white text-sm">{milestones.length}</span>
-                </div>
-                <div>
-                  <span className="text-zinc-500 block uppercase tracking-wider text-[10px]">Protection</span>
-                  <span className="text-zinc-300">Disabled (Standard)</span>
-                </div>
-                <div>
-                  <span className="text-zinc-500 block uppercase tracking-wider text-[10px]">Proposal Expiry</span>
-                  <span className="text-zinc-300">{form.expiryDays} days</span>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <span className="text-zinc-400 font-semibold block text-[11px] uppercase tracking-wider">
-                  Milestones Breakdown
-                </span>
-                <div className="space-y-2 max-h-48 overflow-y-auto">
-                  {milestones.map((m, idx) => (
-                    <div key={idx} className="p-2.5 rounded-lg border border-zinc-800/60 bg-zinc-950/40 space-y-1">
-                      <div className="flex items-center justify-between text-zinc-200 font-medium">
-                        <span>{m.title || `Milestone ${idx + 1}`}</span>
-                        <span className="font-mono text-blue-400">{m.amountUsdc} USDC</span>
-                      </div>
-                      <div className="text-[11px] text-zinc-400 truncate">
-                        {m.description || 'No description provided'}
-                      </div>
-                      <div className="flex items-center gap-3 text-[10px] text-zinc-500 pt-0.5">
-                        <span>Deadline: {m.deadlineDate}</span>
-                        <span>Review: {m.reviewWindowSeconds / 86400}d</span>
-                        <span>Grace: {m.gracePeriodSeconds / 86400}d</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Nonce Conflict Banner */}
-            {nonceConflict && (
-              <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 space-y-3">
-                <div className="flex items-start gap-3">
-                  <AlertTriangle className="h-5 w-5 text-amber-400 mt-0.5 shrink-0" />
-                  <div className="space-y-1">
-                    <h4 className="font-semibold text-amber-200 text-sm">Proposal Nonce Conflict</h4>
-                    <p className="text-xs text-zinc-300 leading-relaxed">
-                      Another proposal from this wallet used this proposal nonce. Your deal terms have not been lost and no funds moved.
-                    </p>
-                    <p className="text-xs text-zinc-400">
-                      Refresh the proposal nonce and sign again to submit.
-                    </p>
-                  </div>
-                </div>
-                <div className="pt-1 flex items-center gap-3">
-                  <Button
-                    type="button"
-                    onClick={handleRefreshNonce}
-                    disabled={refreshingNonce}
-                    className="bg-amber-600 hover:bg-amber-500 text-white font-medium px-4 py-1.5 text-xs rounded-lg flex items-center gap-2"
-                  >
-                    {refreshingNonce ? (
-                      <>
-                        <Loader2 size={14} className="animate-spin" />
-                        Refreshing Nonce...
-                      </>
-                    ) : (
-                      <>Refresh Nonce & Review</>
-                    )}
-                  </Button>
-                </div>
-              </div>
-            )}
-
-            {/* Error Message */}
-            {error && !nonceConflict && (
-              <div className="p-3 rounded-lg bg-red-600/10 border border-red-500/20 text-xs text-red-400">
-                {error}
-              </div>
-            )}
-
-            {/* Sign & Send Action */}
-            <div className="flex items-center justify-between pt-2">
-              <Button
-                variant="outline"
-                onClick={handlePrevious}
-                disabled={signing}
-                className="gap-2 border-zinc-700 bg-zinc-800/40 text-zinc-300"
-              >
-                <ArrowLeft size={16} /> Previous
-              </Button>
-
-              <Button
-                onClick={handleSignAndSendProposal}
-                disabled={signing || !canProceed()}
-                className="gap-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold shadow-lg shadow-blue-900/30"
-              >
-                {signing ? (
-                  <>
-                    <Loader2 size={16} className="animate-spin" /> Signing & Sending...
-                  </>
-                ) : (
-                  <>
-                    <FileSignature size={16} /> Sign & Send Proposal
-                  </>
-                )}
-              </Button>
-            </div>
-          </div>
-        );
+        return null;
 
       default:
         return null;
@@ -2128,7 +2254,9 @@ function NewDealForm() {
     <div
       className={cn(
         'space-y-6 pt-0 transition-all duration-300',
-        !aiPanelExpanded || step < 1 || step >= 7
+        isReviewView
+          ? 'pb-36'
+          : !aiPanelExpanded || step < 1 || step >= 7
           ? 'pb-36'
           : step === 1
           ? 'pb-40 lg:pb-[460px]'
@@ -2146,134 +2274,323 @@ function NewDealForm() {
 
       {/* MAIN CONTAINER */}
       <div className="max-w-5xl mx-auto space-y-8">
-        <div className={cn('grid grid-cols-1 lg:grid-cols-12 gap-6', (step === 0 || step === 1) ? 'lg:items-center items-start' : 'items-start lg:items-start')}>
-          {/* WIZARD COLUMN */}
-          <div className={cn('lg:col-span-8 space-y-6', (step === 0 || step === 1) ? '' : 'lg:self-start')}>
-            <div className="p-6 rounded-2xl bg-zinc-900/70 border border-zinc-800/80 shadow-2xl space-y-6">
-              {handoffLoading ? (
-                <div className="flex flex-col items-center justify-center py-16 text-center space-y-3">
-                  <Loader2 size={24} className="animate-spin text-blue-400" />
-                  <p className="text-sm font-medium text-zinc-300">Fetching negotiated deal terms...</p>
-                  <p className="text-xs text-zinc-500">Loading your draft from AI Negotiator</p>
-                </div>
-              ) : handoffError ? (
-                <div className="py-8 text-center space-y-4">
-                  <div className="p-4 rounded-xl bg-red-600/10 border border-red-500/20 text-sm text-red-400 font-medium">
-                    {handoffError}
-                  </div>
-                  <Button
-                    variant="outline"
-                    onClick={() => router.push('/negotiator')}
-                    className="gap-2 border-zinc-700/60 bg-zinc-900/40 text-zinc-300"
-                  >
-                    <ArrowLeft size={16} /> Back to AI Negotiator
-                  </Button>
-                </div>
-              ) : (
-                <AnimatePresence mode="wait">
-                  <motion.div key={step} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
-                    {renderStep()}
-
-                    {error && step < 7 && (
-                      <div className="mt-4 p-3 rounded-lg bg-red-600/10 border border-red-500/20 text-sm text-red-400">
-                        {error}
+        <LayoutGroup id="synq-create-deal-layout">
+          <AnimatePresence mode="popLayout" initial={false}>
+            {!isReviewView ? (
+              <motion.div
+                key="wizard-layout-container"
+                exit={{
+                  opacity: 0,
+                  scale: 0.98,
+                  transition: {
+                    duration: shouldReduceMotion ? 0.05 : 0.45,
+                    ease: [0.16, 1, 0.3, 1],
+                  },
+                }}
+                className={cn('grid grid-cols-1 lg:grid-cols-12 gap-6', (step === 0 || step === 1) ? 'lg:items-center items-start' : 'items-start lg:items-start')}
+              >
+                {/* WIZARD COLUMN */}
+                <div className={cn('lg:col-span-8 space-y-6', (step === 0 || step === 1) ? '' : 'lg:self-start')}>
+                <div className="p-6 rounded-2xl bg-zinc-900/70 border border-zinc-800/80 shadow-2xl space-y-6">
+                  {handoffLoading ? (
+                    <div className="flex flex-col items-center justify-center py-16 text-center space-y-3">
+                      <Loader2 size={24} className="animate-spin text-blue-400" />
+                      <p className="text-sm font-medium text-zinc-300">Fetching negotiated deal terms...</p>
+                      <p className="text-xs text-zinc-500">Loading your draft from AI Negotiator</p>
+                    </div>
+                  ) : handoffError ? (
+                    <div className="py-8 text-center space-y-4">
+                      <div className="p-4 rounded-xl bg-red-600/10 border border-red-500/20 text-sm text-red-400 font-medium">
+                        {handoffError}
                       </div>
-                    )}
+                      <Button
+                        variant="outline"
+                        onClick={() => router.push('/negotiator')}
+                        className="gap-2 border-zinc-700/60 bg-zinc-900/40 text-zinc-300"
+                      >
+                        <ArrowLeft size={16} /> Back to AI Negotiator
+                      </Button>
+                    </div>
+                  ) : (
+                    <AnimatePresence mode="wait">
+                      <motion.div key={step} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
+                        {renderStep()}
 
-                    {step < 7 && (
-                      <div className="flex items-center justify-between mt-8 pt-4 border-t border-zinc-800/60">
+                        {error && step < 7 && (
+                          <div className="mt-4 p-3 rounded-lg bg-red-600/10 border border-red-500/20 text-sm text-red-400">
+                            {error}
+                          </div>
+                        )}
+
+                        {step < 7 && (
+                          <div className="flex items-center justify-between mt-8 pt-4 border-t border-zinc-800/60">
+                            <Button
+                              variant="outline"
+                              onClick={handlePrevious}
+                              disabled={step === 0 || !!isReviewTransitioning}
+                              className="gap-2 border-zinc-700/60 bg-zinc-900/40 text-zinc-300 hover:bg-zinc-800/60 hover:text-white"
+                            >
+                              <ArrowLeft size={16} /> Previous
+                            </Button>
+                            <Button
+                              onClick={step === 6 ? handleContinueToReview : () => setStep(step + 1)}
+                              disabled={!canProceed() || !!isReviewTransitioning}
+                              className="gap-2 bg-blue-600 hover:bg-blue-500 text-white"
+                            >
+                              {step === 6 ? (
+                                <>
+                                  Continue <ArrowRight size={16} />
+                                </>
+                              ) : (
+                                <>
+                                  Next <ArrowRight size={16} />
+                                </>
+                              )}
+                            </Button>
+                          </div>
+                        )}
+                      </motion.div>
+                    </AnimatePresence>
+                  )}
+                </div>
+
+                {/* AI FREELANCER MATCHES (Persistent across Steps 2 through 7) */}
+                {step >= 1 && step < 7 && (
+                  <AIFreelancerMatches
+                    draftContext={aiDraftContext}
+                    availableProfiles={availableProfiles}
+                    avatarsMap={avatarsMap}
+                    namesMap={namesMap}
+                    sellerIdentities={sellerIdentities}
+                    completedCountsMap={completedCountsMap}
+                    reviewCountsMap={reviewCountsMap}
+                    pricingMap={pricingMap}
+                    clientAddress={address}
+                    isExpanded={aiPanelExpanded}
+                    onToggleExpand={() => setAiPanelExpanded((prev) => !prev)}
+                    onSelectFreelancer={(wallet) => {
+                      selectFreelancer(wallet);
+                    }}
+                    selectedWallet={form.counterparty}
+                    anchoredGrowth={step === 1}
+                  />
+                )}
+              </div>
+
+              {/* SIDEBAR PREVIEW (Steps 1-7, progressively populated) */}
+              <div className={cn('lg:col-span-4 relative z-10', (step === 0 || step === 1) ? '' : 'lg:self-start')}>
+                <motion.div
+                  layoutId="synq-deal-receipt-surface"
+                  transition={{
+                    duration: shouldReduceMotion ? 0.05 : 0.55,
+                    ease: [0.16, 1, 0.3, 1],
+                  }}
+                >
+                  <DealReceipt
+                    variant="compact"
+                    title={form.type.trim() || undefined}
+                    client={{
+                      wallet: address,
+                      name: address ? namesMap[address.toLowerCase()] || undefined : undefined,
+                      handle: clientIdentity.handle,
+                      displayHandle: clientIdentity.displayHandle,
+                      avatar: address ? avatarsMap[address.toLowerCase()] || null : null,
+                    }}
+                    freelancer={
+                      step >= 1 &&
+                      form.counterparty &&
+                      isAddress(form.counterparty) &&
+                      form.counterparty.toLowerCase() !== ZERO_ADDRESS.toLowerCase() &&
+                      (!address || form.counterparty.toLowerCase() !== address.toLowerCase())
+                        ? {
+                            wallet: form.counterparty,
+                            name:
+                              selectedFreelancerProfile?.name ||
+                              namesMap[form.counterparty.toLowerCase()] ||
+                              undefined,
+                            handle: freelancerIdentity.handle,
+                            displayHandle: freelancerIdentity.displayHandle,
+                            avatar: avatarsMap[form.counterparty.toLowerCase()] || null,
+                          }
+                        : undefined
+                    }
+                    scope={step >= 2 && form.deliverables.trim() ? form.deliverables.trim() : undefined}
+                    budget={
+                      step >= 3 && form.budget.trim() && !isNaN(Number(form.budget)) && Number(form.budget) > 0
+                        ? form.budget.trim()
+                        : undefined
+                    }
+                    asset={{ symbol: 'USDC', isErc20: true }}
+                    deadline={
+                      step >= 4 &&
+                      deadlineDate?.trim() &&
+                      deadlineTime?.trim() &&
+                      !isNaN(new Date(`${deadlineDate.trim()}T${deadlineTime.trim()}`).getTime()) &&
+                      Math.floor(new Date(`${deadlineDate.trim()}T${deadlineTime.trim()}`).getTime() / 1000) > Math.floor(Date.now() / 1000)
+                        ? `${deadlineDate.trim()}T${deadlineTime.trim()}`
+                        : undefined
+                    }
+                    paymentStructure={step >= 5 && paymentStructureSelected && form.paymentStructure ? form.paymentStructure : undefined}
+                    protection={
+                      form.protectionSelection === 'STANDARD'
+                        ? 'Standard Protection'
+                        : form.protectionSelection === 'PREMIUM'
+                        ? 'Premium Protection'
+                        : null
+                    }
+                  />
+                </motion.div>
+              </div>
+            </motion.div>
+          ) : (
+            /* STEP 8: CENTERED REVIEW RECEIPT & CONTROLS */
+            <motion.div
+              key="review-layout-container"
+              exit={{ opacity: 0, transition: { duration: 0.3 } }}
+              className="w-full flex flex-col items-center"
+            >
+              <motion.div
+                layoutId="synq-deal-receipt-surface"
+                transition={{
+                  duration: shouldReduceMotion ? 0.05 : 0.55,
+                  ease: [0.16, 1, 0.3, 1],
+                }}
+                className="w-full max-w-[600px]"
+              >
+                <DealReceipt
+                  variant="review"
+                  title={form.type.trim() || undefined}
+                  client={{
+                    wallet: address,
+                    name: address ? namesMap[address.toLowerCase()] || undefined : undefined,
+                    handle: clientIdentity.handle,
+                    displayHandle: clientIdentity.displayHandle,
+                    avatar: address ? avatarsMap[address.toLowerCase()] || null : null,
+                  }}
+                  freelancer={
+                    form.counterparty &&
+                    isAddress(form.counterparty) &&
+                    form.counterparty.toLowerCase() !== ZERO_ADDRESS.toLowerCase() &&
+                    (!address || form.counterparty.toLowerCase() !== address.toLowerCase())
+                      ? {
+                          wallet: form.counterparty,
+                          name:
+                            selectedFreelancerProfile?.name ||
+                            namesMap[form.counterparty.toLowerCase()] ||
+                            undefined,
+                          handle: freelancerIdentity.handle,
+                          displayHandle: freelancerIdentity.displayHandle,
+                          avatar: avatarsMap[form.counterparty.toLowerCase()] || null,
+                        }
+                      : undefined
+                  }
+                  scope={form.deliverables.trim() ? form.deliverables.trim() : undefined}
+                  budget={
+                    form.budget.trim() && !isNaN(Number(form.budget)) && Number(form.budget) > 0
+                      ? form.budget.trim()
+                      : undefined
+                  }
+                  asset={{ symbol: 'USDC', isErc20: true }}
+                  deadline={
+                    deadlineDate?.trim() &&
+                    deadlineTime?.trim() &&
+                    !isNaN(new Date(`${deadlineDate.trim()}T${deadlineTime.trim()}`).getTime()) &&
+                    Math.floor(new Date(`${deadlineDate.trim()}T${deadlineTime.trim()}`).getTime() / 1000) > Math.floor(Date.now() / 1000)
+                      ? `${deadlineDate.trim()}T${deadlineTime.trim()}`
+                      : undefined
+                  }
+                  paymentStructure={paymentStructureSelected && form.paymentStructure ? form.paymentStructure : undefined}
+                  protection={
+                    form.protectionSelection === 'STANDARD'
+                      ? 'Standard Protection'
+                      : form.protectionSelection === 'PREMIUM'
+                      ? 'Premium Protection'
+                      : null
+                  }
+                  actions={
+                    <div className="space-y-4 pt-1">
+                      {/* Nonce Conflict Banner */}
+                      {nonceConflict && (
+                        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5 space-y-2.5 text-left">
+                          <div className="flex items-start gap-2.5">
+                            <AlertTriangle className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
+                            <div className="space-y-1">
+                              <h4 className="font-semibold text-amber-200 text-xs">Proposal Nonce Conflict</h4>
+                              <p className="text-[11px] text-zinc-300 leading-relaxed">
+                                Another proposal from this wallet used this proposal nonce. Your deal terms have not been lost and no funds moved.
+                              </p>
+                              <p className="text-[11px] text-zinc-400">
+                                Refresh the proposal nonce and sign again to submit.
+                              </p>
+                            </div>
+                          </div>
+                          <div className="pt-0.5 flex items-center gap-2">
+                            <Button
+                              type="button"
+                              onClick={handleRefreshNonce}
+                              disabled={refreshingNonce}
+                              className="bg-amber-600 hover:bg-amber-500 text-white font-medium px-3 py-1 text-xs rounded-lg flex items-center gap-1.5"
+                            >
+                              {refreshingNonce ? (
+                                <>
+                                  <Loader2 size={12} className="animate-spin" />
+                                  Refreshing Nonce...
+                                </>
+                              ) : (
+                                <>Refresh Nonce & Review</>
+                              )}
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Error Message */}
+                      {error && !nonceConflict && (
+                        <div className="p-3 rounded-lg bg-red-600/10 border border-red-500/20 text-xs text-red-400 text-left">
+                          {error}
+                        </div>
+                      )}
+
+                      {/* Concise Protocol Notice */}
+                      <p className="text-xs text-zinc-400 text-center leading-relaxed px-2">
+                        No funds move when you sign. The freelancer must accept the proposal before you fund escrow.
+                      </p>
+
+                      {/* Action Buttons */}
+                      <div className="flex items-center justify-between gap-3 pt-1">
                         <Button
                           variant="outline"
-                          onClick={handlePrevious}
-                          disabled={step === 0}
-                          className="gap-2 border-zinc-700/60 bg-zinc-900/40 text-zinc-300 hover:bg-zinc-800/60 hover:text-white"
+                          onClick={handlePreviousFromReview}
+                          disabled={signing || !!isReviewTransitioning}
+                          className="gap-2 border-zinc-700 bg-zinc-800/40 text-zinc-300 hover:bg-zinc-800 hover:text-white"
                         >
                           <ArrowLeft size={16} /> Previous
                         </Button>
-                        <Button onClick={() => setStep(step + 1)} disabled={!canProceed()} className="gap-2 bg-blue-600 hover:bg-blue-500 text-white">
-                          Next <ArrowRight size={16} />
+
+                        <Button
+                          onClick={handleSignAndSendProposal}
+                          disabled={signing || !canProceed() || !!isReviewTransitioning || form.protectionSelection === 'PREMIUM'}
+                          className="gap-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold shadow-lg shadow-blue-900/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {signing ? (
+                            <>
+                              <Loader2 size={16} className="animate-spin" /> Signing & Sending...
+                            </>
+                          ) : (
+                            <>
+                              <FileSignature size={16} /> Sign & Send Proposal
+                            </>
+                          )}
                         </Button>
                       </div>
-                    )}
-                  </motion.div>
-                </AnimatePresence>
-              )}
-            </div>
-
-            {/* AI FREELANCER MATCHES (Persistent across Steps 2 through 7) */}
-            {step >= 1 && step < 7 && (
-              <AIFreelancerMatches
-                draftContext={aiDraftContext}
-                availableProfiles={availableProfiles}
-                avatarsMap={avatarsMap}
-                namesMap={namesMap}
-                sellerIdentities={sellerIdentities}
-                completedCountsMap={completedCountsMap}
-                reviewCountsMap={reviewCountsMap}
-                pricingMap={pricingMap}
-                clientAddress={address}
-                isExpanded={aiPanelExpanded}
-                onToggleExpand={() => setAiPanelExpanded((prev) => !prev)}
-                onSelectFreelancer={(wallet) => {
-                  selectFreelancer(wallet);
-                }}
-                selectedWallet={form.counterparty}
-                anchoredGrowth={step === 1}
-              />
-            )}
-          </div>
-
-          {/* SIDEBAR PREVIEW (Steps 1-7, progressively populated) */}
-          <div className={cn('lg:col-span-4 relative z-10', (step === 0 || step === 1) ? '' : 'lg:self-start')}>
-            <DealReceipt
-              variant="compact"
-              title={form.type.trim() || undefined}
-              client={{
-                wallet: address,
-                name: address ? namesMap[address.toLowerCase()] || undefined : undefined,
-                handle: clientIdentity.handle,
-                displayHandle: clientIdentity.displayHandle,
-                avatar: address ? avatarsMap[address.toLowerCase()] || null : null,
-              }}
-              freelancer={
-                step >= 1 &&
-                form.counterparty &&
-                isAddress(form.counterparty) &&
-                form.counterparty.toLowerCase() !== ZERO_ADDRESS.toLowerCase() &&
-                (!address || form.counterparty.toLowerCase() !== address.toLowerCase())
-                  ? {
-                      wallet: form.counterparty,
-                      name:
-                        selectedFreelancerProfile?.name ||
-                        namesMap[form.counterparty.toLowerCase()] ||
-                        undefined,
-                      handle: freelancerIdentity.handle,
-                      displayHandle: freelancerIdentity.displayHandle,
-                      avatar: avatarsMap[form.counterparty.toLowerCase()] || null,
-                    }
-                  : undefined
-              }
-              scope={step >= 2 && form.deliverables.trim() ? form.deliverables.trim() : undefined}
-              budget={
-                step >= 3 && form.budget.trim() && !isNaN(Number(form.budget)) && Number(form.budget) > 0
-                  ? form.budget.trim()
-                  : undefined
-              }
-              asset={{ symbol: 'USDC', isErc20: true }}
-              deadline={
-                step >= 4 &&
-                deadlineDate?.trim() &&
-                deadlineTime?.trim() &&
-                !isNaN(new Date(`${deadlineDate.trim()}T${deadlineTime.trim()}`).getTime()) &&
-                Math.floor(new Date(`${deadlineDate.trim()}T${deadlineTime.trim()}`).getTime() / 1000) > Math.floor(Date.now() / 1000)
-                  ? `${deadlineDate.trim()}T${deadlineTime.trim()}`
-                  : undefined
-              }
-              paymentStructure={step >= 5 && paymentStructureSelected && form.paymentStructure ? form.paymentStructure : undefined}
-              protectionEnabled={step >= 6 ? false : undefined}
-            />
-          </div>
-        </div>
+                    </div>
+                  }
+                />
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </LayoutGroup>
       </div>
 
       {/* PROGRESS TRACKER */}
