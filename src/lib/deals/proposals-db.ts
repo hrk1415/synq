@@ -44,7 +44,7 @@ import {
   validateStandardV2UxRules,
 } from '@/lib/deals/v2';
 import { normalizeWallet } from '@/lib/utils';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, or, inArray } from 'drizzle-orm';
 import { synqFactoryV2ABI } from '@/lib/contracts/abis';
 import { sepoliaPublicClient } from '@/lib/chain';
 import { canonicalizeConversationPair } from '@/lib/conversation-pair';
@@ -546,6 +546,7 @@ export interface IDealProposalRepository {
     proposalNonce: string,
   ): Promise<DealProposalRow | null>;
   getByDealAddress(dealAddress: string): Promise<DealProposalRow | null>;
+  getByDealAddressesForParticipant(dealAddresses: string[], userWallet: string): Promise<DealProposalRow[]>;
   create(data: NewDealProposalRow): Promise<DealProposalRow>;
   updateStatus(
     proposalId: string,
@@ -602,6 +603,29 @@ export class DrizzleDealProposalRepository implements IDealProposalRepository {
       .where(eq(dealProposals.dealAddress, normalizeWallet(dealAddress)))
       .limit(1);
     return row || null;
+  }
+
+  async getByDealAddressesForParticipant(
+    dealAddresses: string[],
+    userWallet: string,
+  ): Promise<DealProposalRow[]> {
+    if (!dealAddresses.length) return [];
+    const db = getDb();
+    const normUser = normalizeWallet(userWallet);
+    const normDeals = dealAddresses.map(normalizeWallet);
+    const rows = await db
+      .select()
+      .from(dealProposals)
+      .where(
+        and(
+          inArray(dealProposals.dealAddress, normDeals),
+          or(
+            eq(dealProposals.clientWallet, normUser),
+            eq(dealProposals.freelancerWallet, normUser),
+          ),
+        ),
+      );
+    return rows;
   }
 
   async create(data: NewDealProposalRow): Promise<DealProposalRow> {
@@ -773,6 +797,25 @@ export class InMemoryDealProposalRepository implements IDealProposalRepository {
     return null;
   }
 
+  async getByDealAddressesForParticipant(
+    dealAddresses: string[],
+    userWallet: string,
+  ): Promise<DealProposalRow[]> {
+    const normUser = normalizeWallet(userWallet);
+    const dealSet = new Set(dealAddresses.map(normalizeWallet));
+    const results: DealProposalRow[] = [];
+    for (const record of this.records.values()) {
+      if (
+        record.dealAddress &&
+        dealSet.has(normalizeWallet(record.dealAddress)) &&
+        (normalizeWallet(record.clientWallet) === normUser || normalizeWallet(record.freelancerWallet) === normUser)
+      ) {
+        results.push(record);
+      }
+    }
+    return results;
+  }
+
   async create(data: NewDealProposalRow): Promise<DealProposalRow> {
     const now = new Date();
     const record: DealProposalRow = {
@@ -927,6 +970,14 @@ export async function getDealProposalByDealAddress(
   repo: IDealProposalRepository = activeRepo,
 ): Promise<DealProposalRow | null> {
   return repo.getByDealAddress(dealAddress);
+}
+
+export async function getDealProposalsByDealAddresses(
+  dealAddresses: string[],
+  userWallet: string,
+  repo: IDealProposalRepository = activeRepo,
+): Promise<DealProposalRow[]> {
+  return repo.getByDealAddressesForParticipant(dealAddresses, userWallet);
 }
 
 export async function getDealProposalByClientNonce(

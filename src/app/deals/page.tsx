@@ -1,20 +1,31 @@
 'use client';
 
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { Press_Start_2P } from 'next/font/google';
 import { motion } from 'framer-motion';
 import Link from 'next/link';
-import { Search, ArrowRight, Loader2, SlidersHorizontal, Check } from 'lucide-react';
+import { Search, ArrowRight, Loader2, SlidersHorizontal, Check, RefreshCw, AlertCircle } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { useAccount, useReadContract } from 'wagmi';
-import { nexotiqFactoryABI } from '@/lib/contracts/abis';
-import { formatTokenAmount, shortenAddress } from '@/lib/utils';
-import { CONTRACT_ADDRESSES, getTokenInfo, SEPOLIA_CHAIN_ID } from '@/lib/contracts/addresses';
+import { useAccount } from 'wagmi';
+import { shortenAddress } from '@/lib/utils';
+import { SYNQ_V2_SEPOLIA_CONFIG } from '@/lib/contracts/addresses';
 import { ChainGuard } from '@/components/shared/ChainGuard';
-import { useDealStatuses } from '@/hooks/useDealStatuses';
 import { useSynqIdentities } from '@/hooks/useSynqIdentity';
+import { useAuthSession } from '@/hooks/useAuthSession';
+import { sepoliaPublicClient } from '@/lib/chain';
+import { formatUsdcAmount } from '@/lib/deals/v2';
+import {
+  type DiscoveredV2Deal,
+  type DealProposalMetadata,
+  fetchUserDealAddressesFromFactory,
+  mergeAndDeduplicateDealAddresses,
+  fetchV2DealsSummary,
+  enrichDealsWithMetadata,
+  V2_DEAL_STATE_LABELS,
+  V2_STATUS_BADGE_VARIANT,
+} from '@/lib/deals/v2-deals-discovery';
 
 const pressStart2P = Press_Start_2P({
   subsets: ['latin'],
@@ -22,39 +33,27 @@ const pressStart2P = Press_Start_2P({
   display: 'swap',
 });
 
-const statusLabels: Record<string, string> = {
-  '0': 'Draft',
-  '1': 'Active',
-  '2': 'Completed',
-  '3': 'Disputed',
-  '4': 'Cancelled',
-};
-
-const statusBadgeVariant: Record<string, any> = {
-  '0': 'secondary',
-  '1': 'info',
-  '2': 'success',
-  '3': 'destructive',
-  '4': 'secondary',
-};
-
 const filterOptions = [
   { value: 'all', label: 'All Deals' },
+  { value: '0', label: 'Draft' },
   { value: '1', label: 'Active' },
   { value: '2', label: 'Completed' },
-  { value: '3', label: 'Disputed' },
+  { value: '3', label: 'Terminated' },
   { value: '4', label: 'Cancelled' },
 ];
 
 export default function DealsPage() {
   const { address } = useAccount();
+  const { getToken } = useAuthSession();
+  const [deals, setDeals] = useState<DiscoveredV2Deal[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [filterOpen, setFilterOpen] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
-
-  const factoryAddress = CONTRACT_ADDRESSES.sepolia.NexotiqFactory as `0x${string}`;
-  const onSupportedChain = true;
+  const isFetchingRef = useRef(false);
+  const lastFetchedAddressRef = useRef<string | null>(null);
 
   // Click-outside & Escape key handling for Filter Dropdown
   useEffect(() => {
@@ -75,134 +74,211 @@ export default function DealsPage() {
     };
   }, [filterOpen]);
 
-  const formatDealValue = (deal: any) => {
-    if (!deal.totalValue) return '-';
-    const token = getTokenInfo('sepolia', String(deal.asset || ''));
-    if (!token) return '-';
-    let b: bigint;
-    try {
-      b = BigInt(String(deal.totalValue));
-    } catch {
-      b = 0n;
-    }
-    return `${formatTokenAmount(b, token.decimals)} ${token.symbol}`;
-  };
-
-  const { data: rawDeals, isLoading } = useReadContract({
-    address: factoryAddress,
-    abi: nexotiqFactoryABI,
-    functionName: 'getUserDeals',
-    args: address ? [address] : undefined,
-    chainId: SEPOLIA_CHAIN_ID,
-    query: { enabled: !!address && onSupportedChain },
-  });
-
-  const uniqueDealAddresses = useMemo(() => {
-    if (!rawDeals) return [];
-    const seen = new Set<string>();
-    const list: string[] = [];
-    for (const d of rawDeals as any[]) {
-      if (!d || !d.dealAddress) continue;
-      const addr = String(d.dealAddress).toLowerCase();
-      if (!seen.has(addr)) {
-        seen.add(addr);
-        list.push(d.dealAddress);
+  // Authoritative Standard V2 Deal Discovery & State Fetching
+  const loadDeals = useCallback(
+    async (force = false) => {
+      if (!address) {
+        setDeals([]);
+        setIsLoading(false);
+        setLoadError(null);
+        lastFetchedAddressRef.current = null;
+        return;
       }
+
+      // Concurrency guard: avoid firing overlapping batches of RPC calls
+      if (isFetchingRef.current && !force) {
+        return;
+      }
+
+      try {
+        isFetchingRef.current = true;
+        setIsLoading(true);
+        setLoadError(null);
+
+        // 1. Authoritative enumeration on canonical SynqFactoryV2
+        const { clientDeals, freelancerDeals } = await fetchUserDealAddressesFromFactory(
+          sepoliaPublicClient,
+          SYNQ_V2_SEPOLIA_CONFIG.factory,
+          address,
+        );
+
+        // 2. Case-insensitive merge and deduplication
+        const uniqueAddresses = mergeAndDeduplicateDealAddresses(clientDeals, freelancerDeals);
+
+        if (uniqueAddresses.length === 0) {
+          setDeals([]);
+          lastFetchedAddressRef.current = address.toLowerCase();
+          return;
+        }
+
+        // 3. Batch-read authoritative V2 Deal contract states
+        const onChainStates = await fetchV2DealsSummary(sepoliaPublicClient, uniqueAddresses);
+
+        // 4. Optional PostgreSQL metadata enrichment (non-blocking for cards)
+        let metadataMap: Record<string, DealProposalMetadata> = {};
+        const token = getToken();
+        if (token) {
+          try {
+            const res = await fetch('/api/deals/metadata', {
+              method: 'POST',
+              headers: {
+                'content-type': 'application/json',
+                authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({ dealAddresses: uniqueAddresses }),
+            });
+            if (res.ok) {
+              const json = await res.json();
+              metadataMap = json.metadata || {};
+            }
+          } catch {
+            // Metadata fetch failed or network error; proceed with safe defaults
+          }
+        }
+
+        // 5. Enrich with metadata while preserving authoritative on-chain contract state
+        const enriched = enrichDealsWithMetadata(uniqueAddresses, onChainStates, metadataMap);
+        setDeals(enriched);
+        lastFetchedAddressRef.current = address.toLowerCase();
+      } catch (err: any) {
+        console.error('[DealsPage] Error loading Standard V2 deals:', err);
+        setLoadError(err?.message || 'Failed to query deals from Sepolia RPC.');
+      } finally {
+        isFetchingRef.current = false;
+        setIsLoading(false);
+      }
+    },
+    [address, getToken],
+  );
+
+  useEffect(() => {
+    if (address && address.toLowerCase() !== lastFetchedAddressRef.current) {
+      loadDeals();
+    } else if (!address) {
+      loadDeals();
     }
-    return list;
-  }, [rawDeals]);
+  }, [address, loadDeals]);
 
-  const { statuses, titles } = useDealStatuses(uniqueDealAddresses);
-
+  // Extract counterparties for identity lookup
   const uniqueCounterpartyAddresses = useMemo(() => {
-    if (!rawDeals) return [];
     const set = new Set<string>();
-    for (const d of rawDeals as any[]) {
-      if (d?.buyer) set.add(String(d.buyer));
-      if (d?.seller) set.add(String(d.seller));
+    for (const d of deals) {
+      if (d.client) set.add(d.client.toLowerCase());
+      if (d.freelancer) set.add(d.freelancer.toLowerCase());
     }
     return Array.from(set);
-  }, [rawDeals]);
+  }, [deals]);
 
   const { identitiesMap } = useSynqIdentities(uniqueCounterpartyAddresses);
 
+  // Client-side search and status filter
   const filtered = useMemo(() => {
-    if (!rawDeals) return [];
-    const seen = new Set<string>();
-    const deals = (rawDeals as any[]).filter((d: any) => {
-      if (!d || !d.dealAddress) return false;
-      const key = String(d.dealAddress).toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-
-    return deals.filter((d: any, index: number) => {
-      const key = String(d.dealAddress).toLowerCase();
-      const st = statuses[key];
-      const status = st === undefined ? (d.active ? 1 : 4) : st;
-      const realTitle = titles[key] || `Deal #${index + 1}`;
-
-      const matchesFilter = filter === 'all' || String(status) === filter;
+    return deals.filter((d) => {
+      const matchesFilter = filter === 'all' || String(d.state) === filter;
       const q = search.trim().toLowerCase();
-      const matchesSearch =
-        !q || key.includes(q) || realTitle.toLowerCase().includes(q);
+      const addrMatch = d.dealAddress.toLowerCase().includes(q);
+      const titleMatch = d.title.toLowerCase().includes(q);
+      const matchesSearch = !q || addrMatch || titleMatch;
 
       return matchesFilter && matchesSearch;
     });
-  }, [rawDeals, statuses, titles, filter, search]);
+  }, [deals, filter, search]);
 
   return (
     <div className="space-y-4 pt-0">
-      {/* COMPACT TITLE ROW WITH HOVER/FOCUS TOOLTIP */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-2.5">
-          <h1 className={`${pressStart2P.className} text-xl md:text-2xl font-normal text-white tracking-tight`}>
+      {/* HEADER SECTION */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h1
+            className="text-lg font-bold tracking-tight text-white mb-0.5"
+            style={{ fontFamily: pressStart2P.style.fontFamily }}
+          >
             My Deals
           </h1>
-          <div className="relative group inline-block">
+          <p className="text-xs text-zinc-400">
+            Track, fund, submit work, and manage your milestone escrow agreements.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {address && (
             <button
               type="button"
-              tabIndex={0}
-              aria-label="About My Deals"
-              className="w-5 h-5 rounded-full bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/60 text-zinc-400 hover:text-white text-[11px] font-bold font-mono inline-flex items-center justify-center shrink-0 transition-colors focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+              onClick={() => loadDeals(true)}
+              disabled={isLoading}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-800 bg-zinc-900/60 hover:bg-zinc-800/80 text-zinc-400 hover:text-white text-xs transition-colors disabled:opacity-50"
+              title="Refresh deals from Sepolia RPC"
             >
-              ?
+              <RefreshCw size={13} className={isLoading ? 'animate-spin' : ''} />
+              <span>Refresh</span>
             </button>
-            <div className="absolute left-0 top-full mt-2 w-72 sm:w-80 p-3 rounded-xl bg-zinc-900 border border-zinc-700/80 text-zinc-200 text-xs leading-relaxed shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto transition-all duration-150 z-30">
-              Track and manage all your on-chain deals. Open any deal to manage its escrow, milestones, disputes, and current status.
-            </div>
-          </div>
+          )}
+
+          <Link
+            href="/deal/new"
+            className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-lg shadow-blue-600/20 transition-all hover:scale-[1.02] active:scale-[0.98]"
+          >
+            Create Deal
+          </Link>
         </div>
       </div>
 
       <ChainGuard what="your deals are" />
 
-      {/* COMPACT SEARCH & FILTER ROW */}
-      <div className="flex items-center gap-2 sm:gap-3">
+      {/* ERROR BANNER IF RPC LIMIT OCCURRED */}
+      {loadError && deals.length === 0 && (
+        <Card className="border-red-800/40 bg-red-950/20">
+          <CardContent className="p-5 flex flex-col sm:flex-row items-center justify-between gap-4 text-center sm:text-left">
+            <div className="flex items-center gap-3">
+              <AlertCircle size={20} className="text-red-400 shrink-0" />
+              <div>
+                <p className="text-sm font-semibold text-white">Public RPC Limit or Network Delay</p>
+                <p className="text-xs text-zinc-400">
+                  A public RPC rate limit was encountered while reading Sepolia. Your on-chain deals are safe.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => loadDeals(true)}
+              disabled={isLoading}
+              className="px-3.5 py-1.5 rounded-lg bg-red-900/60 hover:bg-red-800/80 border border-red-700/50 text-white text-xs font-medium transition-colors shrink-0 flex items-center gap-1.5"
+            >
+              <RefreshCw size={12} className={isLoading ? 'animate-spin' : ''} />
+              <span>Retry Discovery</span>
+            </button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* TOOLBAR CONTROLS: SEARCH & FILTER */}
+      <div className="flex items-center gap-2">
         <div className="relative flex-1">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by deal name or address..."
-            className="pl-10 h-10 text-sm bg-zinc-900/80 border-zinc-800"
+            placeholder="Search deals by title or address..."
+            className="pl-9 h-9 text-xs bg-zinc-900/40 border-zinc-800/80 rounded-xl focus:border-zinc-700 focus:bg-zinc-900/80"
           />
         </div>
 
-        {/* COMPACT FILTER DROPDOWN */}
-        <div ref={filterRef} className="relative shrink-0">
+        <div className="relative" ref={filterRef}>
           <button
             type="button"
-            onClick={() => setFilterOpen(!filterOpen)}
-            className={`h-10 px-3.5 rounded-xl border text-xs font-medium flex items-center gap-2 transition-all ${
+            onClick={() => setFilterOpen((o) => !o)}
+            className={`flex items-center gap-2 px-3 h-9 rounded-xl border text-xs font-medium transition-colors ${
               filter !== 'all'
-                ? 'bg-blue-600/15 text-blue-400 border-blue-500/30'
-                : 'bg-zinc-900/80 text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white'
+                ? 'border-blue-500/40 bg-blue-600/10 text-blue-400'
+                : 'border-zinc-800/80 bg-zinc-900/40 text-zinc-300 hover:bg-zinc-800/60 hover:text-white'
             }`}
           >
-            <SlidersHorizontal size={14} />
-            <span>Filter</span>
+            <SlidersHorizontal size={13} className="text-zinc-400" />
+            <span>
+              {filter === 'all'
+                ? 'Filter Status'
+                : filterOptions.find((o) => o.value === filter)?.label || 'Filter'}
+            </span>
             {filter !== 'all' && (
               <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
             )}
@@ -239,41 +315,37 @@ export default function DealsPage() {
             <p className="text-zinc-400">Connect your wallet to view your deals.</p>
           </CardContent>
         </Card>
-      ) : isLoading ? (
+      ) : isLoading && deals.length === 0 ? (
         <div className="flex items-center justify-center py-20">
           <Loader2 size={24} className="animate-spin text-blue-400" />
         </div>
       ) : (
         <div className="grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 pt-1">
-          {filtered.map((deal: any, i: number) => {
-            const key = String(deal.dealAddress).toLowerCase();
-            const st = statuses[key];
-            const statusVal = st === undefined ? (deal.active ? 1 : 4) : st;
-            const realTitle = titles[key] || `Deal #${i + 1}`;
-
+          {filtered.map((deal, i) => {
+            const statusStr = String(deal.state);
             const userAddr = address?.toLowerCase();
-            const buyerAddr = String(deal.buyer || '').toLowerCase();
-            const sellerAddr = String(deal.seller || '').toLowerCase();
+            const clientAddr = deal.client.toLowerCase();
+            const freelancerAddr = deal.freelancer.toLowerCase();
 
-            const buyerIdent = identitiesMap[buyerAddr];
-            const sellerIdent = identitiesMap[sellerAddr];
-            const buyerLabel = buyerIdent?.displayHandle || shortenAddress(deal.buyer);
-            const sellerLabel = sellerIdent?.displayHandle || shortenAddress(deal.seller);
+            const clientIdent = identitiesMap[clientAddr];
+            const freelancerIdent = identitiesMap[freelancerAddr];
+            const clientLabel = clientIdent?.displayHandle || shortenAddress(deal.client);
+            const freelancerLabel = freelancerIdent?.displayHandle || shortenAddress(deal.freelancer);
 
             let counterpartyText = '';
             let counterpartyRole = '';
-            if (userAddr && userAddr === buyerAddr) {
-              counterpartyText = sellerLabel;
+            if (userAddr && userAddr === clientAddr) {
+              counterpartyText = freelancerLabel;
               counterpartyRole = 'Freelancer';
-            } else if (userAddr && userAddr === sellerAddr) {
-              counterpartyText = buyerLabel;
+            } else if (userAddr && userAddr === freelancerAddr) {
+              counterpartyText = clientLabel;
               counterpartyRole = 'Client';
             } else {
-              counterpartyText = `${buyerLabel} → ${sellerLabel}`;
+              counterpartyText = `${clientLabel} → ${freelancerLabel}`;
             }
 
             const createdDate = deal.createdAt
-              ? new Date(Number(deal.createdAt) * 1000).toLocaleDateString()
+              ? new Date(deal.createdAt).toLocaleDateString()
               : undefined;
 
             return (
@@ -291,15 +363,15 @@ export default function DealsPage() {
                         <div className="flex items-start justify-between gap-2">
                           <h3
                             className="text-base font-semibold text-white group-hover:text-blue-400 transition-colors line-clamp-2 leading-snug"
-                            title={realTitle}
+                            title={deal.title}
                           >
-                            {realTitle}
+                            {deal.title}
                           </h3>
                           <Badge
-                            variant={statusBadgeVariant[String(statusVal)] ?? 'secondary'}
+                            variant={V2_STATUS_BADGE_VARIANT[statusStr] ?? 'secondary'}
                             className="text-[10px] shrink-0 font-medium px-2 py-0.5"
                           >
-                            {statusLabels[String(statusVal)] ?? 'Unknown'}
+                            {V2_DEAL_STATE_LABELS[statusStr] ?? 'Unknown'}
                           </Badge>
                         </div>
                         <div className="text-xs font-mono text-zinc-500">
@@ -309,9 +381,9 @@ export default function DealsPage() {
 
                       {/* MAIN VALUE */}
                       <div className="py-2 border-y border-zinc-800/60 flex items-baseline justify-between">
-                        <span className="text-xs text-zinc-400">Total Value</span>
+                        <span className="text-xs text-zinc-400">Total Escrow</span>
                         <span className="text-xl font-bold text-white font-mono">
-                          {formatDealValue(deal)}
+                          {formatUsdcAmount(deal.totalEscrow)}
                         </span>
                       </div>
 
