@@ -433,6 +433,8 @@ export const dealProposals = pgTable('deal_proposals', {
   totalAmount: numeric('total_amount', { precision: 78, scale: 0 }).notNull(),
   milestones: jsonb('milestones').$type<PersistedMilestoneV2[]>().notNull(),
 
+  protectionSelection: text('protection_selection').default('STANDARD').notNull(),
+
   cachedStatus: text('cached_status').default('PENDING').notNull(),
 
   dealAddress: text('deal_address'),
@@ -453,6 +455,7 @@ export const dealProposals = pgTable('deal_proposals', {
   check('chk_deal_proposals_factory_lower', sql`factory_address = LOWER(factory_address)`),
   check('chk_deal_proposals_deal_addr_lower', sql`deal_address IS NULL OR deal_address = LOWER(deal_address)`),
   check('chk_deal_proposals_status_valid', sql`cached_status IN ('PENDING', 'ACCEPTED', 'DECLINED', 'CANCELLED', 'EXPIRED')`),
+  check('chk_deal_proposals_protection_valid', sql`protection_selection IN ('STANDARD', 'PREMIUM')`),
 ]);
 
 export type DealProposalRow = typeof dealProposals.$inferSelect;

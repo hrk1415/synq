@@ -1154,7 +1154,7 @@ function NewDealForm() {
       case 6:
         return form.protectionSelection === 'STANDARD' || form.protectionSelection === 'PREMIUM';
       case 7:
-        return form.protectionSelection === 'STANDARD';
+        return form.protectionSelection === 'STANDARD' || form.protectionSelection === 'PREMIUM';
       default:
         return true;
     }
@@ -1211,11 +1211,6 @@ function NewDealForm() {
 
     if (address.toLowerCase() === form.counterparty.toLowerCase()) {
       setError('Client and freelancer cannot be the same wallet address (self-deal forbidden).');
-      return;
-    }
-
-    if (form.protectionSelection === 'PREMIUM') {
-      setError("Premium Protection activation isn't live yet. Select Standard Protection to submit this proposal.");
       return;
     }
 
@@ -1336,6 +1331,7 @@ function NewDealForm() {
           title: form.type.trim(),
           scope: form.deliverables.trim() || 'Standard Synq Deal',
         },
+        protectionSelection: form.protectionSelection || 'STANDARD',
       };
 
       const res = await fetch('/api/deals/proposals', {
@@ -2555,6 +2551,11 @@ function NewDealForm() {
                       <p className="text-xs text-zinc-400 text-center leading-relaxed px-2">
                         No funds move when you sign. The freelancer must accept the proposal before you fund escrow.
                       </p>
+                      {form.protectionSelection === 'PREMIUM' && (
+                        <p className="text-[11px] text-zinc-400 text-center leading-relaxed px-2">
+                          Premium Protection will be activated when you fund this deal after the freelancer accepts.
+                        </p>
+                      )}
 
                       {/* Action Buttons */}
                       <div className="flex items-center justify-between gap-3 pt-1">
@@ -2569,7 +2570,7 @@ function NewDealForm() {
 
                         <Button
                           onClick={handleSignAndSendProposal}
-                          disabled={signing || !canProceed() || !!isReviewTransitioning || form.protectionSelection === 'PREMIUM'}
+                          disabled={signing || !canProceed() || !!isReviewTransitioning}
                           className="gap-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold shadow-lg shadow-blue-900/30 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {signing ? (

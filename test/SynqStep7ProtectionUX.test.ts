@@ -43,8 +43,7 @@ describe('Synq Create Deal — Step 7 Protection Redesign UX Suite', () => {
   }
 
   function canProceedStep8(form: FormState): boolean {
-    // Step 8 proposal signing is strictly guarded if PREMIUM is selected
-    return form.protectionSelection === 'STANDARD';
+    return form.protectionSelection === 'STANDARD' || form.protectionSelection === 'PREMIUM';
   }
 
   function getReceiptProtectionText(form: FormState): string | null {
@@ -369,10 +368,10 @@ describe('Synq Create Deal — Step 7 Protection Redesign UX Suite', () => {
       assert.strictEqual(canProceedStep8(form), true);
     });
 
-    it('Step 8 guards against broadcasting unsupported Premium proposal', () => {
+    it('Step 8 permits signing when Premium Protection is selected', () => {
       const form = createInitialForm();
       form.protectionSelection = 'PREMIUM';
-      assert.strictEqual(canProceedStep8(form), false);
+      assert.strictEqual(canProceedStep8(form), true);
     });
 
     it('Standard V2 proposal struct preserves zero-protection invariants for both selections', () => {

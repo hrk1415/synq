@@ -31,6 +31,7 @@ import {
 import type {
   DealProposalV2,
   StandardV2MilestoneInit,
+  ProtectionSelection,
 } from '@/types/deal-v2';
 import { SYNQ_V2_SEPOLIA_CONFIG } from '@/lib/contracts/addresses';
 import {
@@ -133,6 +134,21 @@ export function parseStrictSignature(value: unknown, fieldName: string): `0x${st
     throw new ProposalValidationError(`Field '${fieldName}' must be a valid 65-byte hex signature (130 hex chars)`);
   }
   return trimmed as `0x${string}`;
+}
+
+export function parseStrictProtectionSelection(value: unknown): ProtectionSelection {
+  if (value === undefined || value === null || value === '') {
+    // Missing or legacy values safely normalize to STANDARD
+    return 'STANDARD';
+  }
+  if (typeof value !== 'string') {
+    throw new ProposalValidationError("Field 'protectionSelection' must be a string");
+  }
+  const trimmed = value.trim();
+  if (trimmed !== 'STANDARD' && trimmed !== 'PREMIUM') {
+    throw new ProposalValidationError("Field 'protectionSelection' must be 'STANDARD' or 'PREMIUM'");
+  }
+  return trimmed;
 }
 
 export function parseStrictMetadata(metadata: unknown): { title: string; scope: string } {
@@ -285,6 +301,7 @@ export interface VerifiedServerProposal {
   milestonesHash: `0x${string}`;
   proposalId: `0x${string}`;
   totalAmount: bigint;
+  protectionSelection: ProtectionSelection;
   rowToInsert: NewDealProposalRow;
 }
 
@@ -306,6 +323,7 @@ export async function verifyServerProposalSubmission(
   const { milestoneInits, persistedMilestones } = parseStrictMilestones(body.milestones);
   const clientSignature = parseStrictSignature(body.clientSignature, 'clientSignature');
   const metadata = parseStrictMetadata(body.metadata);
+  const protectionSelection = parseStrictProtectionSelection(body.protectionSelection);
 
   // Authenticated caller must equal proposal.client (case-insensitive)
   if (normalizeWallet(authWallet) !== normalizeWallet(proposal.client)) {
@@ -363,6 +381,7 @@ export async function verifyServerProposalSubmission(
     scope: metadata.scope,
     totalAmount: totalAmount.toString(),
     milestones: persistedMilestones,
+    protectionSelection,
     cachedStatus: 'PENDING',
     dealAddress: null,
     acceptedTxHash: null,
@@ -379,6 +398,7 @@ export async function verifyServerProposalSubmission(
     milestonesHash: recomputedMilestonesHash,
     proposalId: recomputedProposalId,
     totalAmount,
+    protectionSelection,
     rowToInsert,
   };
 }
@@ -409,6 +429,7 @@ export function evaluateProposalPersistence(
     const isTotalAmountMatch = existingById.totalAmount === candidate.totalAmount;
     const isTitleMatch = existingById.title === candidate.title;
     const isScopeMatch = existingById.scope === candidate.scope;
+    const isProtectionMatch = (existingById.protectionSelection || 'STANDARD') === (candidate.protectionSelection || 'STANDARD');
 
     if (
       isClientMatch &&
@@ -419,7 +440,8 @@ export function evaluateProposalPersistence(
       isSignatureMatch &&
       isTotalAmountMatch &&
       isTitleMatch &&
-      isScopeMatch
+      isScopeMatch &&
+      isProtectionMatch
     ) {
       return { action: 'IDEMPOTENT_REPLAY', existingRow: existingById };
     }
@@ -468,6 +490,7 @@ export interface SerializedDealProposal {
   scope: string;
   totalAmount: string;
   milestones: PersistedMilestoneV2[];
+  protectionSelection: 'STANDARD' | 'PREMIUM';
   cachedStatus: string;
   dealAddress: string | null;
   acceptedTxHash: string | null;
@@ -499,6 +522,7 @@ export function serializeDealProposal(row: DealProposalRow): SerializedDealPropo
     scope: row.scope,
     totalAmount: row.totalAmount.toString(),
     milestones: row.milestones,
+    protectionSelection: (row.protectionSelection as 'STANDARD' | 'PREMIUM') || 'STANDARD',
     cachedStatus: row.cachedStatus,
     dealAddress: row.dealAddress,
     acceptedTxHash: row.acceptedTxHash,
@@ -521,6 +545,7 @@ export interface IDealProposalRepository {
     clientWallet: string,
     proposalNonce: string,
   ): Promise<DealProposalRow | null>;
+  getByDealAddress(dealAddress: string): Promise<DealProposalRow | null>;
   create(data: NewDealProposalRow): Promise<DealProposalRow>;
   updateStatus(
     proposalId: string,
@@ -565,6 +590,16 @@ export class DrizzleDealProposalRepository implements IDealProposalRepository {
           eq(dealProposals.proposalNonce, proposalNonce),
         ),
       )
+      .limit(1);
+    return row || null;
+  }
+
+  async getByDealAddress(dealAddress: string): Promise<DealProposalRow | null> {
+    const db = getDb();
+    const [row] = await db
+      .select()
+      .from(dealProposals)
+      .where(eq(dealProposals.dealAddress, normalizeWallet(dealAddress)))
       .limit(1);
     return row || null;
   }
@@ -728,10 +763,21 @@ export class InMemoryDealProposalRepository implements IDealProposalRepository {
     return null;
   }
 
+  async getByDealAddress(dealAddress: string): Promise<DealProposalRow | null> {
+    const target = normalizeWallet(dealAddress);
+    for (const record of this.records.values()) {
+      if (record.dealAddress && normalizeWallet(record.dealAddress) === target) {
+        return record;
+      }
+    }
+    return null;
+  }
+
   async create(data: NewDealProposalRow): Promise<DealProposalRow> {
     const now = new Date();
     const record: DealProposalRow = {
       ...data,
+      protectionSelection: data.protectionSelection ?? 'STANDARD',
       dealAddress: data.dealAddress ?? null,
       acceptedTxHash: data.acceptedTxHash ?? null,
       declinedTxHash: data.declinedTxHash ?? null,
@@ -876,6 +922,13 @@ export async function getDealProposalById(
   return repo.getById(proposalId);
 }
 
+export async function getDealProposalByDealAddress(
+  dealAddress: string,
+  repo: IDealProposalRepository = activeRepo,
+): Promise<DealProposalRow | null> {
+  return repo.getByDealAddress(dealAddress);
+}
+
 export async function getDealProposalByClientNonce(
   chainId: number,
   factoryAddress: string,
@@ -944,6 +997,7 @@ export async function createCanonicalDealProposalReceiptMessage(
     milestoneCount: proposal.milestones.length,
     expiry: proposal.expiry,
     cachedStatus: proposal.cachedStatus,
+    protectionSelection: (proposal.protectionSelection as 'STANDARD' | 'PREMIUM') || 'STANDARD',
   };
 
   const validated = validateTrustedMessageData({

@@ -92,6 +92,13 @@
       "when": 1791500000001,
       "tag": "0012_glorious_micromacro",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1791500000002,
+      "tag": "0013_premium_protection_selection",
+      "breakpoints": true
     }
   ]
 }

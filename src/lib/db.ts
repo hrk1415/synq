@@ -1000,6 +1000,7 @@ export {
   createDealProposal,
   createCanonicalDealProposalReceiptMessage,
   getDealProposalById,
+  getDealProposalByDealAddress,
   getDealProposalByClientNonce,
   updateDealProposalStatus,
   serializeDealProposal,

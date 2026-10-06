@@ -219,28 +219,40 @@ describe('Synq Create Deal — Step 8 Final Receipt Polish UX Suite', () => {
       assert.strictEqual(pageSource.includes("Premium Protection activation isn't live yet. Select Standard Protection to submit this proposal.\n"), false);
     });
 
-    it('Premium Sign & Send button remains disabled in Step 8', () => {
-      const standardDisabledCheck = (signing: boolean, canProceedVal: boolean, transitioning: boolean, sel: string) => {
-        return signing || !canProceedVal || transitioning || sel === 'PREMIUM';
+    it('Premium Sign & Send button is no longer disabled solely because it is Premium', () => {
+      // In page.tsx: disabled condition on Sign & Send button no longer includes form.protectionSelection === 'PREMIUM'
+      assert.strictEqual(pageSource.includes("disabled={signing || !canProceed() || !!isReviewTransitioning}"), true);
+      assert.strictEqual(pageSource.includes("disabled={signing || !canProceed() || !!isReviewTransitioning || form.protectionSelection === 'PREMIUM'}"), false);
+
+      const canProceedCheck = (sel: string) => sel === 'STANDARD' || sel === 'PREMIUM';
+      const buttonDisabledCheck = (signing: boolean, canProceedVal: boolean, transitioning: boolean) => {
+        return signing || !canProceedVal || transitioning;
       };
 
-      assert.strictEqual(standardDisabledCheck(false, true, false, 'PREMIUM'), true);
-      assert.strictEqual(standardDisabledCheck(false, true, false, 'STANDARD'), false);
+      assert.strictEqual(buttonDisabledCheck(false, canProceedCheck('PREMIUM'), false), false);
+      assert.strictEqual(buttonDisabledCheck(false, canProceedCheck('STANDARD'), false), false);
     });
 
-    it('handleSignAndSendProposal still blocks Premium programmatic calls', () => {
+    it('handleSignAndSendProposal temporary early action guard for Premium is removed', () => {
       assert.strictEqual(
-        pageSource.includes("if (form.protectionSelection === 'PREMIUM') {\n      setError(\"Premium Protection activation isn't live yet. Select Standard Protection to submit this proposal.\");\n      return;\n    }"),
-        true
+        pageSource.includes("if (form.protectionSelection === 'PREMIUM') {\n      setError(\"Premium Protection activation isn't live yet"),
+        false
       );
     });
 
+    it('Step 8 receipt renders subtle explanatory note for Premium selection', () => {
+      const premiumNotice = 'Premium Protection will be activated when you fund this deal after the freelancer accepts.';
+      assert.strictEqual(pageSource.includes(premiumNotice), true);
+      assert.strictEqual(pageSource.includes("form.protectionSelection === 'PREMIUM' && ("), true);
+    });
+
     it('Standard Sign & Send remains enabled when otherwise valid', () => {
-      const standardDisabledCheck = (signing: boolean, canProceedVal: boolean, transitioning: boolean, sel: string) => {
-        return signing || !canProceedVal || transitioning || sel === 'PREMIUM';
+      const canProceedCheck = (sel: string) => sel === 'STANDARD' || sel === 'PREMIUM';
+      const buttonDisabledCheck = (signing: boolean, canProceedVal: boolean, transitioning: boolean) => {
+        return signing || !canProceedVal || transitioning;
       };
 
-      assert.strictEqual(standardDisabledCheck(false, true, false, 'STANDARD'), false);
+      assert.strictEqual(buttonDisabledCheck(false, canProceedCheck('STANDARD'), false), false);
     });
 
     it('Standard proposal always preserves isProtected=false, ZERO_ADDRESS, ZERO_BYTES32', () => {

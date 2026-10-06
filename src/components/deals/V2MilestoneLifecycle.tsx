@@ -255,10 +255,28 @@ export function V2MilestoneLifecycle({ dealData, refetchDealData }: V2MilestoneL
     currentMilestone.reviewWindow
   );
 
+  const [currentTimestampSeconds, setCurrentTimestampSeconds] = useState<bigint>(() =>
+    BigInt(Math.floor(Date.now() / 1000))
+  );
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTimestampSeconds(BigInt(Math.floor(Date.now() / 1000)));
+    }, 5000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const isMilestoneWorkExpired = useMemo(() => {
+    if (!currentMilestone) return false;
+    const isRefundableStatus =
+      currentMilestone.status === MilestoneStatus.Pending ||
+      currentMilestone.status === MilestoneStatus.InProgress;
+    return isRefundableStatus && currentTimestampSeconds > effectiveDeadline;
+  }, [currentMilestone, currentTimestampSeconds, effectiveDeadline]);
+
   const isSubmissionExpired = useMemo(() => {
-    const now = BigInt(Math.floor(Date.now() / 1000));
-    return now > effectiveDeadline;
-  }, [effectiveDeadline]);
+    return currentTimestampSeconds > effectiveDeadline;
+  }, [effectiveDeadline, currentTimestampSeconds]);
 
   // Expected next submission version (m.version increments in submitWork)
   const nextSubmissionVersion = currentMilestone.version + 1;
@@ -548,6 +566,43 @@ export function V2MilestoneLifecycle({ dealData, refetchDealData }: V2MilestoneL
         setActionError('Milestone start transaction was cancelled in your wallet.');
       } else {
         setActionError(err?.message || 'Failed to start milestone');
+      }
+    } finally {
+      setActionInProgress(false);
+    }
+  };
+
+  // Claim Expired Refund for Client (Standard V2 Lifecycle)
+  const handleClaimExpiredRefund = async () => {
+    if (!address || !isClient) return;
+
+    try {
+      setActionInProgress(true);
+      setActionError(null);
+      await ensureSepolia();
+
+      const txHash = await writeContractAsync({
+        address: dealData.dealAddress as `0x${string}`,
+        abi: synqDealV1ABI,
+        functionName: 'claimExpiredRefund',
+        args: [BigInt(currentIndex)],
+        chainId: SEPOLIA_CHAIN_ID,
+      });
+
+      setLastTxHash(txHash);
+      await sepoliaPublicClient.waitForTransactionReceipt({ hash: txHash });
+
+      try {
+        await refetchDealData();
+      } catch (refreshErr) {
+        console.warn('[V2MilestoneLifecycle] Confirmed expired refund tx, but refresh failed:', refreshErr);
+        setTxConfirmedPendingRefresh(true);
+      }
+    } catch (err: any) {
+      if (isRejected(err)) {
+        setActionError('Claim expired refund transaction was cancelled in your wallet.');
+      } else {
+        setActionError(err?.message || 'Failed to claim expired refund');
       }
     } finally {
       setActionInProgress(false);
@@ -1308,7 +1363,11 @@ export function V2MilestoneLifecycle({ dealData, refetchDealData }: V2MilestoneL
               Milestone {currentIndex + 1} of {dealData.milestones.length} • {formatUsdcAmount(currentMilestone.amount)} USDC
             </CardDescription>
           </div>
-          {isPending ? (
+          {isMilestoneWorkExpired ? (
+            <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-xs text-amber-400 flex items-center gap-1">
+              <AlertTriangle className="h-3 w-3" /> Expired — Refund Available
+            </Badge>
+          ) : isPending ? (
             <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-xs text-amber-400">
               Pending Start
             </Badge>
@@ -1402,8 +1461,44 @@ export function V2MilestoneLifecycle({ dealData, refetchDealData }: V2MilestoneL
           </div>
         )}
 
-        {/* LIFECYCLE STAGE 1: PENDING START */}
-        {isPending ? (
+        {/* LIFECYCLE STAGE 1: EXPIRED WORK OR PENDING START */}
+        {isMilestoneWorkExpired ? (
+          <div className="rounded-xl border border-amber-500/40 bg-amber-950/20 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-amber-300 flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 text-amber-400" /> Expired — Refund Available
+              </span>
+              <Badge variant="outline" className="border-amber-500/40 text-[10px] text-amber-300">
+                claimExpiredRefund({currentIndex})
+              </Badge>
+            </div>
+            {isClient ? (
+              <div className="space-y-3">
+                <p className="text-xs text-zinc-300">
+                  Milestone work deadline elapsed without deliverables. As the client, you can claim a full refund of the {formatUsdcAmount(currentMilestone.amount)} USDC escrow.
+                </p>
+                <Button
+                  size="sm"
+                  className="w-full sm:w-auto h-8 text-xs bg-amber-600 hover:bg-amber-500 text-white font-medium"
+                  disabled={actionInProgress || chainId !== SEPOLIA_CHAIN_ID || txConfirmedPendingRefresh}
+                  onClick={handleClaimExpiredRefund}
+                >
+                  {actionInProgress ? (
+                    <>
+                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Claiming Refund…
+                    </>
+                  ) : (
+                    <>Claim Expired Refund ({formatUsdcAmount(currentMilestone.amount)} USDC)</>
+                  )}
+                </Button>
+              </div>
+            ) : (
+              <p className="text-xs text-zinc-400">
+                Milestone work deadline elapsed without deliverables. Milestone escrow of {formatUsdcAmount(currentMilestone.amount)} USDC is eligible for client refund.
+              </p>
+            )}
+          </div>
+        ) : isPending ? (
           isFreelancer ? (
             <div className="rounded-xl border border-purple-500/30 bg-purple-950/20 p-4 space-y-3">
               <div className="flex items-center justify-between">
@@ -1461,7 +1556,7 @@ export function V2MilestoneLifecycle({ dealData, refetchDealData }: V2MilestoneL
         ) : null}
 
         {/* LIFECYCLE STAGE 2: IN PROGRESS (FREELANCER SUBMISSION FORM) */}
-        {isInProgress ? (
+        {isInProgress && !isMilestoneWorkExpired ? (
           isFreelancer ? (
             <div className="rounded-xl border border-purple-500/30 bg-purple-950/10 p-4 space-y-4">
               <div className="flex items-center justify-between">

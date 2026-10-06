@@ -122,3 +122,9 @@ export enum SettlementTypeV2 {
   ResolverResolution = 5,
   AssessmentSettlement = 6,
 }
+
+/**
+ * Synq Product-level protection choice made by the client during deal proposal flow.
+ * Persisted off-chain as application metadata. Does NOT alter Standard V2 EIP-712 proposal.
+ */
+export type ProtectionSelection = 'STANDARD' | 'PREMIUM';

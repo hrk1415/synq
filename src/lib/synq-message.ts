@@ -73,6 +73,7 @@ export interface SynqDealProposalPayload extends SynqMessagePayload {
   milestoneCount: number;
   expiry: string;
   cachedStatus?: string;
+  protectionSelection?: 'STANDARD' | 'PREMIUM';
 }
 export type LegacyOrderMeta = Record<string, unknown> & {
   type?: string;
@@ -264,6 +265,7 @@ export function validateDealProposalPayload(value: unknown): SynqDealProposalPay
     'milestoneCount',
     'expiry',
     'cachedStatus',
+    'protectionSelection',
   ];
   if (Object.keys(value).some((key) => !allowedKeys.includes(key))) {
     throw new Error('Deal proposal payload contains unsupported fields');
@@ -277,6 +279,7 @@ export function validateDealProposalPayload(value: unknown): SynqDealProposalPay
   const milestoneCount = value.milestoneCount;
   const expiry = typeof value.expiry === 'string' ? value.expiry : '';
   const cachedStatus = typeof value.cachedStatus === 'string' ? value.cachedStatus : undefined;
+  const rawProtection = value.protectionSelection;
 
   if (!TRANSACTION_HASH.test(proposalId)) throw new Error('Invalid proposalId format');
   if (!EVM_ADDRESS.test(clientWallet)) throw new Error('Invalid client wallet address');
@@ -295,6 +298,10 @@ export function validateDealProposalPayload(value: unknown): SynqDealProposalPay
   if (cachedStatus !== undefined && !['PENDING', 'ACCEPTED', 'DECLINED', 'CANCELLED', 'EXPIRED'].includes(cachedStatus)) {
     throw new Error('Invalid proposal cached status');
   }
+  if (rawProtection !== undefined && rawProtection !== 'STANDARD' && rawProtection !== 'PREMIUM') {
+    throw new Error('Invalid proposal protection selection');
+  }
+  const protectionSelection = rawProtection as 'STANDARD' | 'PREMIUM' | undefined;
 
   return {
     proposalId,
@@ -305,6 +312,7 @@ export function validateDealProposalPayload(value: unknown): SynqDealProposalPay
     milestoneCount: milestoneCount as number,
     expiry,
     ...(cachedStatus ? { cachedStatus } : {}),
+    ...(protectionSelection ? { protectionSelection } : {})
   };
 }
 

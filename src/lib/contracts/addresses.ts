@@ -105,3 +105,43 @@ export const SYNQ_V2_SEPOLIA_CONFIG = {
 export const SUPERSEDED_DEAL_IMPLEMENTATION = (sepoliaV2Deployment.contracts as any).supersededDealImplementation as `0x${string}`;
 
 export type SynqV2SepoliaConfig = typeof SYNQ_V2_SEPOLIA_CONFIG;
+
+import { isAddress, getAddress } from 'viem';
+
+function parseOptionalAddress(val: string | undefined): `0x${string}` | null {
+  if (!val) return null;
+  const trimmed = val.trim();
+  if (!isAddress(trimmed) || trimmed.toLowerCase() === '0x0000000000000000000000000000000000000000') {
+    return null;
+  }
+  return getAddress(trimmed);
+}
+
+export interface SynqPremiumProtectionConfig {
+  chainId: 11155111;
+  manager: `0x${string}` | null;
+  pool: `0x${string}` | null;
+  committee: `0x${string}` | null;
+  isConfigured: boolean;
+}
+
+export function getSynqPremiumConfig(): SynqPremiumProtectionConfig {
+  const manager = parseOptionalAddress(process.env.NEXT_PUBLIC_SYNQ_PREMIUM_MANAGER_ADDRESS);
+  const pool = parseOptionalAddress(process.env.NEXT_PUBLIC_SYNQ_PREMIUM_POOL_ADDRESS);
+  const committee = parseOptionalAddress(process.env.NEXT_PUBLIC_SYNQ_PREMIUM_COMMITTEE_ADDRESS);
+  const isConfigured = Boolean(manager && pool);
+
+  return {
+    chainId: 11155111,
+    manager,
+    pool,
+    committee,
+    isConfigured,
+  };
+}
+
+export const isPremiumProtectionConfigured = (
+  config: SynqPremiumProtectionConfig = getSynqPremiumConfig()
+): boolean => {
+  return config.isConfigured && config.manager !== null;
+};
