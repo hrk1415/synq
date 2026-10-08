@@ -157,6 +157,29 @@ function NegotiatorContent() {
     setMounted(true);
   }, []);
 
+  // Smooth emergence from #242424 charcoal when arriving from landing Enter transition (B.11.5 Part C / B.11.6 Fix)
+  const [emergingFromLanding, setEmergingFromLanding] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      const flag = sessionStorage.getItem('synq_enter_transition');
+      if (flag === '1') {
+        sessionStorage.removeItem('synq_enter_transition');
+        const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        return !prefersReduced;
+      }
+    } catch {}
+    return false;
+  });
+
+  // Strict-mode safe auto-unmount fallback for the emergence overlay
+  useEffect(() => {
+    if (!emergingFromLanding) return;
+    const timer = setTimeout(() => {
+      setEmergingFromLanding(false);
+    }, 450);
+    return () => clearTimeout(timer);
+  }, [emergingFromLanding]);
+
   const isAccountRestoring = status === 'connecting' || status === 'reconnecting';
   const effectiveAddress = (mounted && isConnected && !!address && !isAccountRestoring) ? address : undefined;
 
@@ -1472,6 +1495,27 @@ function NegotiatorContent() {
           </motion.div>
         )}
       </AnimatePresence>
+      {/* Landing-to-Negotiator Continuous Emergence Overlay (B.11.5 Part C / B.11.6 Fix) */}
+      {emergingFromLanding && (
+        <>
+          <style>{`
+            @keyframes synq-emergence-fade {
+              0% { opacity: 1; }
+              100% { opacity: 0; }
+            }
+          `}</style>
+          <div
+            data-testid="negotiator-emergence-overlay"
+            onAnimationEnd={() => setEmergingFromLanding(false)}
+            className="fixed inset-0 bg-[#242424] pointer-events-none z-[100]"
+            style={{
+              animation: 'synq-emergence-fade 400ms cubic-bezier(0, 0, 0.2, 1) forwards',
+              willChange: 'opacity',
+            }}
+            aria-hidden="true"
+          />
+        </>
+      )}
     </div>
   );
 }

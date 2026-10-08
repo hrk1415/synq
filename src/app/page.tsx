@@ -2,11 +2,13 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Press_Start_2P } from 'next/font/google';
 import InteractivePixelArtwork from '@/components/landing/InteractivePixelArtwork';
 import { LiquidLensSurface } from '@/components/landing/LiquidLensSurface';
 import { RainbowButton } from '@/components/ui/rainbow-button';
 import WalletStatus from '@/components/layout/WalletStatus';
+import { LANDING_INTRO_TIMING, LANDING_EXIT_TIMING } from '@/components/landing/landing-intro-constants';
 
 const pressStart2P = Press_Start_2P({
   weight: '400',
@@ -15,6 +17,7 @@ const pressStart2P = Press_Start_2P({
 });
 
 export default function FrontPage() {
+  const router = useRouter();
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   // Liquid Lens Position & State
@@ -22,6 +25,91 @@ export default function FrontPage() {
   const [lensPos, setLensPos] = useState({ x: -1000, y: -1000 });
   const [containerRect, setContainerRect] = useState({ width: 1200, height: 700 });
   const [walletDropdownOpen, setWalletDropdownOpen] = useState(false);
+
+  // Entrance Animation Coordination (~2700ms timeline)
+  const [introStartTime] = useState(() => (typeof performance !== 'undefined' ? performance.now() : 0));
+  const [introComplete, setIntroComplete] = useState(false);
+
+  // Exit Animation Coordination (1000ms timeline: 0–500ms hands retreat, 500–1000ms fade into #242424)
+  const [isExiting, setIsExiting] = useState(false);
+  const [exitPhase, setExitPhase] = useState<'idle' | 'retreating' | 'fading'>('idle');
+  const [exitStartTime, setExitStartTime] = useState(0);
+  const exitTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const navTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Cleanup timers on unmount and handle pageshow/bfcache restoration
+  useEffect(() => {
+    const handlePageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) {
+        setIsExiting(false);
+        setExitPhase('idle');
+      }
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('pageshow', handlePageShow);
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('pageshow', handlePageShow);
+      }
+      if (exitTimeoutRef.current) clearTimeout(exitTimeoutRef.current);
+      if (navTimeoutRef.current) clearTimeout(navTimeoutRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    const prefersReduced =
+      typeof window !== 'undefined' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    if (prefersReduced) {
+      setIntroComplete(true);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setIntroComplete(true);
+    }, LANDING_INTRO_TIMING.TOTAL_DURATION_MS);
+
+    return () => clearTimeout(timer);
+  }, []);
+
+  const handleEnterClick = (e: React.MouseEvent<HTMLAnchorElement> | React.KeyboardEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
+    if (isExiting) return;
+
+    const prefersReduced =
+      typeof window !== 'undefined' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    if (prefersReduced) {
+      router.push('/negotiator?new=1');
+      return;
+    }
+
+    setIsExiting(true);
+    setExitPhase('retreating');
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    setExitStartTime(now);
+
+    // Stop liquid lens interaction and deactivate lens immediately
+    targetPosRef.current.active = false;
+    setLensActive(false);
+
+    try {
+      sessionStorage.setItem('synq_enter_transition', '1');
+    } catch {}
+
+    // Phase 2 (500–1000ms): Smoothly fade remaining landing elements into #242424
+    exitTimeoutRef.current = setTimeout(() => {
+      setExitPhase('fading');
+    }, LANDING_EXIT_TIMING.HANDS_RETREAT_DURATION_MS);
+
+    // After 1000ms exit completes, navigate to Negotiator
+    navTimeoutRef.current = setTimeout(() => {
+      router.push('/negotiator?new=1');
+    }, LANDING_EXIT_TIMING.TOTAL_DURATION_MS);
+  };
 
   const targetPosRef = useRef({ x: -1000, y: -1000, active: false });
   const currentPosRef = useRef({ x: -1000, y: -1000 });
@@ -88,6 +176,8 @@ export default function FrontPage() {
   }, [walletDropdownOpen]);
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (isExiting) return;
+    if (!introComplete) return;
     if (walletDropdownOpen) return;
     if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
@@ -227,7 +317,82 @@ export default function FrontPage() {
         .wallet-square-f {
           animation: wallet-square-spin-f 4.9s cubic-bezier(0.4, 0, 0.2, 1) infinite;
         }
+        @keyframes synq-intro-wordmark {
+          0% {
+            opacity: 0;
+            transform: scale(0.30);
+            animation-timing-function: ease-in-out;
+          }
+          9.26% { /* 250ms: genuinely empty charcoal background hold */
+            opacity: 0;
+            transform: scale(0.30);
+            animation-timing-function: ease-in-out;
+          }
+          37.04% { /* 1000ms: gentle emergence from darkness at scale 0.30 */
+            opacity: 1;
+            transform: scale(0.30);
+          }
+          55.56% { /* 1500ms: 500ms pause holding small Synq wordmark at scale 0.30 */
+            opacity: 1;
+            transform: scale(0.30);
+            animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+          }
+          83.33% { /* 2250ms: coordinated expansion from 0.30 to 1.0 */
+            opacity: 1;
+            transform: scale(1);
+          }
+          100% {
+            opacity: 1;
+            transform: scale(1);
+          }
+        }
+        .synq-intro-wordmark {
+          display: inline-block;
+          transform-origin: center center;
+          opacity: 0;
+          animation: synq-intro-wordmark 2.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+          will-change: transform, opacity;
+        }
+
+        @keyframes synq-intro-indicators {
+          0% {
+            opacity: 0;
+          }
+          83.33% { /* 2250ms: hidden throughout Phase A and B */
+            opacity: 0;
+          }
+          100% { /* 2700ms: fully visible */
+            opacity: 1;
+          }
+        }
+        .synq-intro-indicators {
+          opacity: 0;
+          animation: synq-intro-indicators 2.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+          will-change: opacity;
+        }
+
+        .synq-landing-exit-fade {
+          opacity: 1;
+          transition: opacity 0.5s ease-out;
+        }
+        .synq-landing-exit-fade.is-fading {
+          opacity: 0 !important;
+          pointer-events: none !important;
+        }
+
         @media (prefers-reduced-motion: reduce) {
+          .synq-intro-wordmark {
+            animation: none !important;
+            transform: none !important;
+            opacity: 1 !important;
+          }
+          .synq-intro-indicators {
+            animation: none !important;
+            opacity: 1 !important;
+          }
+          .synq-landing-exit-fade {
+            transition: none !important;
+          }
           .cta-square-a,
           .cta-square-b,
           .cta-square-c,
@@ -243,10 +408,13 @@ export default function FrontPage() {
         }
       `}</style>
 
+      {/* Exit Fade Container: Smoothly fades all landing elements into #242424 charcoal during 500-1000ms */}
+      <div className={`w-full h-full relative synq-landing-exit-fade ${exitPhase === 'fading' ? 'is-fading' : ''}`}>
+
       {/* Header UI: Top-right Public Indicator — Six Animated White Squares (□ □ □ □ □ □) */}
       {!walletDropdownOpen && (
         <div
-          className="absolute top-6 right-6 md:top-8 md:right-10 z-20 pointer-events-none select-none h-10 px-4 flex items-center justify-center"
+          className="absolute top-6 right-6 md:top-8 md:right-10 z-20 pointer-events-none select-none h-10 px-4 flex items-center justify-center synq-intro-indicators"
           aria-hidden="true"
         >
           <div className="flex items-center justify-center gap-2">
@@ -311,9 +479,10 @@ export default function FrontPage() {
           aria-hidden="true"
         >
           <span
-            className={`${pressStart2P.className} font-normal`}
+            className={`${pressStart2P.className} font-normal synq-intro-wordmark`}
             style={{
               ...typographyStyle,
+              transformOrigin: 'center center',
               color: '#ffffff',
               textShadow:
                 '0 0 15px rgba(255, 255, 255, 0.95), 0 0 40px rgba(255, 255, 255, 0.6), 0 0 85px rgba(255, 255, 255, 0.35)',
@@ -334,11 +503,15 @@ export default function FrontPage() {
             colorMode="original-color"
             disableLiquid={true}
             enableFlicker={true}
-            lensActive={lensActive}
+            lensActive={lensActive && !isExiting}
             lensX={lensPos.x}
             lensY={lensPos.y}
             lensSize={lensSize}
             lensRadius={lensRadius}
+            enableIntro={true}
+            introStartTime={introStartTime}
+            exitActive={isExiting}
+            exitStartTime={exitStartTime}
           />
         </div>
 
@@ -348,9 +521,10 @@ export default function FrontPage() {
           aria-hidden="true"
         >
           <span
-            className={`${pressStart2P.className} font-normal`}
+            className={`${pressStart2P.className} font-normal synq-intro-wordmark`}
             style={{
               ...typographyStyle,
+              transformOrigin: 'center center',
               color: 'transparent',
               WebkitTextStroke: '0.75px rgba(255, 255, 255, 0.82)',
               textShadow: 'none',
@@ -405,9 +579,10 @@ export default function FrontPage() {
           aria-hidden="true"
         >
           <span
-            className={`${pressStart2P.className} font-normal`}
+            className={`${pressStart2P.className} font-normal synq-intro-wordmark`}
             style={{
               ...typographyStyle,
+              transformOrigin: 'center center',
               color: '#ffffff',
               textShadow:
                 '0 0 15px rgba(255, 255, 255, 0.95), 0 0 40px rgba(255, 255, 255, 0.6), 0 0 85px rgba(255, 255, 255, 0.35)',
@@ -444,7 +619,7 @@ export default function FrontPage() {
 
       {/* Layer 5.5: Normal Public CTA State — Three Small Rotating White Squares (□ □ □) */}
       <div
-        className="absolute bottom-7 md:bottom-9 left-1/2 -translate-x-1/2 w-[160px] h-[44px] flex items-center justify-center pointer-events-none select-none z-20"
+        className="absolute bottom-7 md:bottom-9 left-1/2 -translate-x-1/2 w-[160px] h-[44px] flex items-center justify-center pointer-events-none select-none z-20 synq-intro-indicators"
         aria-hidden="true"
       >
         <div className="flex items-center justify-center gap-2">
@@ -474,7 +649,18 @@ export default function FrontPage() {
         aria-hidden={!lensActive}
       >
         <div className="absolute bottom-7 md:bottom-9 left-1/2 -translate-x-1/2 w-[160px] h-[44px] pointer-events-auto">
-          <Link href="/negotiator?new=1" className="inline-block no-underline">
+          <Link
+            href="/negotiator?new=1"
+            onClick={handleEnterClick}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                handleEnterClick(e);
+              }
+            }}
+            tabIndex={isExiting ? -1 : 0}
+            aria-disabled={isExiting}
+            className={`inline-block no-underline ${isExiting ? 'pointer-events-none cursor-default' : ''}`}
+          >
             <RainbowButton speed={4}>
               <span className={`${pressStart2P.className} text-[11px] leading-none tracking-wider text-[#242424]`}>
                 Enter
@@ -482,6 +668,7 @@ export default function FrontPage() {
             </RainbowButton>
           </Link>
         </div>
+      </div>
       </div>
     </div>
   );

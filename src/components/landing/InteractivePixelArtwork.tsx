@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
+import { LANDING_INTRO_TIMING, LANDING_EXIT_TIMING } from './landing-intro-constants';
 
 interface InteractivePixelArtworkProps {
   className?: string;
@@ -17,6 +18,10 @@ interface InteractivePixelArtworkProps {
   lensY?: number;
   lensSize?: number;
   lensRadius?: number;
+  enableIntro?: boolean;
+  introStartTime?: number;
+  exitActive?: boolean;
+  exitStartTime?: number;
 }
 
 // Master reference image: transparent PNG cutout of Creation of Adam hands
@@ -155,18 +160,26 @@ const SIM_FRAGMENT_SHADER = `
   }
 `;
 
-// Base Artwork Shaders: COMPLETELY STATIC (no pointer displacement, no repulsion)
+// Base Artwork Shaders: Horizontal programmatic separation for intro entrance
 const BASE_VERTEX_SHADER = `
   uniform float uPointSize;
   uniform float uPixelRatio;
+  uniform float uLeftHandOffset;
+  uniform float uRightHandOffset;
 
   varying vec2 vUv;
 
   void main() {
     vUv = uv;
 
-    // Base artwork stays strictly pinned to canonical resting positions (x, y, 0)
-    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    vec3 pos = position;
+    if (uv.x < 0.492) {
+      pos.x += uLeftHandOffset;
+    } else {
+      pos.x += uRightHandOffset;
+    }
+
+    vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
     gl_Position = projectionMatrix * mvPosition;
     gl_PointSize = uPointSize * uPixelRatio;
   }
@@ -178,6 +191,7 @@ const BASE_FRAGMENT_SHADER = `
   uniform float uTextureLoaded;
   uniform float uDebugMode; // 0=normal reveal, 1=show liquid field, 2=full original, 3=full mono
   uniform float uOriginalColor; // 1.0 = direct original RGB output, 0.0 = monochrome + liquid reveal
+  uniform float uTextureFade; // late-loading catch-up fade multiplier (0.0 to 1.0)
 
   uniform float uTime;
   uniform float uEnableFlicker;
@@ -351,7 +365,7 @@ const BASE_FRAGMENT_SHADER = `
         }
       }
 
-      gl_FragColor = vec4(blendedColor, alphaOut);
+      gl_FragColor = vec4(blendedColor, alphaOut * uTextureFade);
       return;
     }
 
@@ -383,7 +397,7 @@ const BASE_FRAGMENT_SHADER = `
       finalColor = monoColor;
     }
 
-    gl_FragColor = vec4(finalColor, texColor.a);
+    gl_FragColor = vec4(finalColor, texColor.a * uTextureFade);
   }
 `;
 
@@ -405,6 +419,10 @@ export default function InteractivePixelArtwork({
   lensY = -9999,
   lensSize = 180,
   lensRadius = 24,
+  enableIntro = false,
+  introStartTime = 0,
+  exitActive = false,
+  exitStartTime = 0,
 }: InteractivePixelArtworkProps) {
   const [instanceId] = useState(() => ++ipaInstanceCounter);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -426,6 +444,14 @@ export default function InteractivePixelArtwork({
   lensSizeRef.current = lensSize;
   const lensRadiusRef = useRef(lensRadius);
   lensRadiusRef.current = lensRadius;
+  const enableIntroRef = useRef(enableIntro);
+  enableIntroRef.current = enableIntro;
+  const introStartTimeRef = useRef(introStartTime);
+  introStartTimeRef.current = introStartTime;
+  const exitActiveRef = useRef(exitActive);
+  exitActiveRef.current = exitActive;
+  const exitStartTimeRef = useRef(exitStartTime);
+  exitStartTimeRef.current = exitStartTime;
 
   const [debugView, setDebugView] = useState<DebugView>('final');
   const [webglError, setWebglError] = useState(false);
@@ -600,12 +626,16 @@ export default function InteractivePixelArtwork({
     );
     placeholderTexture.needsUpdate = true;
 
+    const initialIntroActive = enableIntroRef.current && !reducedMotionQuery.matches;
     const baseMaterial = new THREE.ShaderMaterial({
       vertexShader: BASE_VERTEX_SHADER,
       fragmentShader: BASE_FRAGMENT_SHADER,
       uniforms: {
         uPointSize: { value: DEFAULT_DESKTOP_POINT_SIZE },
         uPixelRatio: { value: 1.0 },
+        uLeftHandOffset: { value: initialIntroActive ? -10000.0 : 0.0 },
+        uRightHandOffset: { value: initialIntroActive ? 10000.0 : 0.0 },
+        uTextureFade: { value: initialIntroActive ? 0.0 : 1.0 },
         uTexture: { value: placeholderTexture },
         uLiquidTexture: { value: rtRead.texture },
         uTextureLoaded: { value: 0.0 },
@@ -629,6 +659,7 @@ export default function InteractivePixelArtwork({
     scene.add(basePointsMesh);
 
     // Load /03.png texture into Three.js
+    let textureLoadedTimestamp = 0;
     const textureLoader = new THREE.TextureLoader();
     textureLoader.load(
       REFERENCE_IMAGE_SRC,
@@ -642,6 +673,7 @@ export default function InteractivePixelArtwork({
         texture.magFilter = THREE.NearestFilter;
         texture.generateMipmaps = false;
 
+        textureLoadedTimestamp = performance.now();
         baseMaterial.uniforms.uTexture.value = texture;
         baseMaterial.uniforms.uTextureLoaded.value = 1.0;
         baseMaterial.needsUpdate = true;
@@ -748,6 +780,15 @@ export default function InteractivePixelArtwork({
 
     const handlePointerMove = (e: PointerEvent) => {
       if (reducedMotionQuery.matches) return;
+      if (exitActiveRef.current) return;
+      if (enableIntroRef.current) {
+        const elapsed = introStartTimeRef.current > 0
+          ? performance.now() - introStartTimeRef.current
+          : localIntroStart > 0
+          ? performance.now() - localIntroStart
+          : 0;
+        if (elapsed < LANDING_INTRO_TIMING.TOTAL_DURATION_MS) return;
+      }
       const rect = canvas.getBoundingClientRect();
       const clientX = e.clientX - rect.left;
       const clientY = e.clientY - rect.top;
@@ -809,6 +850,7 @@ export default function InteractivePixelArtwork({
     }
 
     // Render Loop
+    let localIntroStart = 0;
     let fpsFrames = 0;
     let fpsTimer = performance.now();
     let diagTimer = performance.now();
@@ -822,8 +864,93 @@ export default function InteractivePixelArtwork({
       velocityUvX *= 0.80;
       velocityUvY *= 0.80;
 
-      // Pass 1: Ping-Pong Liquid Simulation (if not reduced motion and not disabled)
-      if (!disableLiquid && !reducedMotionQuery.matches) {
+      const isIntroActive = enableIntroRef.current && !reducedMotionQuery.matches;
+      let introElapsed = 999999;
+      if (isIntroActive) {
+        if (introStartTimeRef.current > 0) {
+          introElapsed = time - introStartTimeRef.current;
+        } else {
+          if (localIntroStart === 0) localIntroStart = time;
+          introElapsed = time - localIntroStart;
+        }
+      }
+
+      const isExitActive = exitActiveRef.current && !reducedMotionQuery.matches;
+      let exitElapsed = 0;
+      if (isExitActive) {
+        if (exitStartTimeRef.current > 0) {
+          exitElapsed = time - exitStartTimeRef.current;
+        }
+      }
+
+      // Compute hand offsets, flicker gating, and texture fade during intro or exit
+      if (isExitActive) {
+        const viewportW = container.clientWidth || window.innerWidth || 1200;
+        const offscreenDist = viewportW * 0.5 + currentArtworkWidth * 0.5 + 100;
+
+        if (exitElapsed < LANDING_EXIT_TIMING.HANDS_RETREAT_DURATION_MS) {
+          // Phase 1 (0–500ms): Both hands retreat offscreen using smootherstep
+          const p = Math.min(1.0, Math.max(0.0, exitElapsed / LANDING_EXIT_TIMING.HANDS_RETREAT_DURATION_MS));
+          // Ken Perlin's smootherstep: 6t^5 - 15t^4 + 10t^3 (visually symmetrical reverse movement)
+          const ease = p * p * p * (p * (p * 6.0 - 15.0) + 10.0);
+          baseMaterial.uniforms.uLeftHandOffset.value = -offscreenDist * ease;
+          baseMaterial.uniforms.uRightHandOffset.value = offscreenDist * ease;
+        } else {
+          // Phase 2 (500–1000ms): Both hands remain completely outside viewport
+          baseMaterial.uniforms.uLeftHandOffset.value = -offscreenDist;
+          baseMaterial.uniforms.uRightHandOffset.value = offscreenDist;
+        }
+
+        baseMaterial.uniforms.uEnableFlicker.value = 0.0;
+        baseMaterial.uniforms.uTextureFade.value = 1.0;
+      } else if (isIntroActive && introElapsed < LANDING_INTRO_TIMING.TOTAL_DURATION_MS) {
+        const viewportW = container.clientWidth || window.innerWidth || 1200;
+        const offscreenDist = viewportW * 0.5 + currentArtworkWidth * 0.5 + 100;
+
+        if (introElapsed < LANDING_INTRO_TIMING.WORDMARK_PAUSE_END_MS) {
+          // 0–1500ms (0–250ms hold, 250–1000ms small wordmark emerge, 1000–1500ms pause): hands held offscreen
+          baseMaterial.uniforms.uLeftHandOffset.value = -offscreenDist;
+          baseMaterial.uniforms.uRightHandOffset.value = offscreenDist;
+        } else if (introElapsed < LANDING_INTRO_TIMING.EXPANSION_HANDS_END_MS) {
+          // Phase (1500–2250ms): simultaneous smootherstep ease-in-out entrance
+          const p = (introElapsed - LANDING_INTRO_TIMING.WORDMARK_PAUSE_END_MS) / LANDING_INTRO_TIMING.HAND_TRAVEL_DURATION_MS;
+          const clampedP = Math.min(1.0, Math.max(0.0, p));
+          // Ken Perlin's smootherstep: 6t^5 - 15t^4 + 10t^3 (zero initial/final velocity, gentle acceleration & deceleration)
+          const ease = clampedP * clampedP * clampedP * (clampedP * (clampedP * 6.0 - 15.0) + 10.0);
+          baseMaterial.uniforms.uLeftHandOffset.value = -offscreenDist * (1.0 - ease);
+          baseMaterial.uniforms.uRightHandOffset.value = offscreenDist * (1.0 - ease);
+        } else {
+          // Phase (2250ms+): strictly settled at canonical resting position
+          baseMaterial.uniforms.uLeftHandOffset.value = 0.0;
+          baseMaterial.uniforms.uRightHandOffset.value = 0.0;
+        }
+
+        // Flicker gating: activate autonomous flicker around 2250ms as hands settle
+        if (introElapsed < LANDING_INTRO_TIMING.EXPANSION_HANDS_END_MS) {
+          baseMaterial.uniforms.uEnableFlicker.value = 0.0;
+        } else {
+          baseMaterial.uniforms.uEnableFlicker.value = enableFlickerRef.current ? 1.0 : 0.0;
+        }
+
+        // Texture fade catch-up for smooth late-loading appearance
+        if (baseMaterial.uniforms.uTextureLoaded.value > 0.5) {
+          if (textureLoadedTimestamp > 0) {
+            const fadeProgress = Math.min(1.0, Math.max(0.0, (time - textureLoadedTimestamp) / 200.0));
+            baseMaterial.uniforms.uTextureFade.value = fadeProgress;
+          } else {
+            baseMaterial.uniforms.uTextureFade.value = 1.0;
+          }
+        }
+      } else {
+        // Animation finished or reduced motion or intro disabled: resting state
+        baseMaterial.uniforms.uLeftHandOffset.value = 0.0;
+        baseMaterial.uniforms.uRightHandOffset.value = 0.0;
+        baseMaterial.uniforms.uTextureFade.value = 1.0;
+        baseMaterial.uniforms.uEnableFlicker.value = (!reducedMotionQuery.matches && enableFlickerRef.current) ? 1.0 : 0.0;
+      }
+
+      // Pass 1: Ping-Pong Liquid Simulation (if not reduced motion and not disabled, gated during intro and exit)
+      if (!disableLiquid && !reducedMotionQuery.matches && !isExitActive && (!isIntroActive || introElapsed >= LANDING_INTRO_TIMING.TOTAL_DURATION_MS)) {
         if (pointerActive > 0.5) {
           if (simPrevPointerUv.x < 0 || simPrevPointerUv.y < 0) {
             simPrevPointerUv.set(pointerUvX, pointerUvY);
@@ -878,8 +1005,7 @@ export default function InteractivePixelArtwork({
       baseMaterial.uniforms.uDebugMode.value = debugViewRef.current;
       baseMaterial.uniforms.uOriginalColor.value = colorMode === 'original-color' ? 1.0 : 0.0;
       baseMaterial.uniforms.uTime.value = reducedMotionQuery.matches ? 0.0 : timeSeconds;
-      baseMaterial.uniforms.uEnableFlicker.value = (!reducedMotionQuery.matches && enableFlickerRef.current) ? 1.0 : 0.0;
-      baseMaterial.uniforms.uLensActive.value = lensActiveRef.current ? 1.0 : 0.0;
+      baseMaterial.uniforms.uLensActive.value = (lensActiveRef.current && !isExitActive && (!isIntroActive || introElapsed >= LANDING_INTRO_TIMING.TOTAL_DURATION_MS)) ? 1.0 : 0.0;
       const cWidth = container.clientWidth || 1;
       const cHeight = container.clientHeight || 1;
       const worldLensX = lensXRef.current - cWidth / 2;
