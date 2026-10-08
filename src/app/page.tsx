@@ -1,547 +1,488 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { Press_Start_2P } from 'next/font/google';
-import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowRight } from 'lucide-react';
-import InteractiveGlassGrid from '@/components/ui/interactive-glass-grid';
+import InteractivePixelArtwork from '@/components/landing/InteractivePixelArtwork';
+import { LiquidLensSurface } from '@/components/landing/LiquidLensSurface';
+import { RainbowButton } from '@/components/ui/rainbow-button';
+import WalletStatus from '@/components/layout/WalletStatus';
 
 const pressStart2P = Press_Start_2P({
-  subsets: ['latin'],
   weight: '400',
+  subsets: ['latin'],
   display: 'swap',
 });
 
-const SYNQ_FLICKER_STYLES = [
-  { stroke: 'rgba(255, 255, 255, 1)', fill: 'rgba(255, 255, 255, 1)', shadow: 'none' },
-  { stroke: 'rgba(255, 255, 255, 1)', fill: 'rgba(255, 255, 255, 1)', shadow: '0 0 6px rgba(255, 255, 255, 0.18)' },
-  { stroke: 'rgba(255, 255, 255, 1)', fill: 'rgba(255, 255, 255, 0.92)', shadow: '0 0 9px rgba(255, 255, 255, 0.24)' },
-  { stroke: 'rgba(255, 255, 255, 0.45)', fill: 'rgba(255, 255, 255, 0.45)', shadow: 'none' },
-  { stroke: 'rgba(255, 255, 255, 0.12)', fill: 'rgba(255, 255, 255, 0.12)', shadow: 'none' },
-] as const;
-
 export default function FrontPage() {
-  const router = useRouter();
-  const landingRef = useRef<HTMLDivElement | null>(null);
-  const backgroundRef = useRef<HTMLImageElement | null>(null);
-  const synqWordRef = useRef<HTMLSpanElement | null>(null);
-  const headlineEntranceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const synqFlickerTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [entering, setEntering] = useState(false);
-  const [show, setShow] = useState(false);
-  const [headlineReconstructing, setHeadlineReconstructing] = useState(true);
-  const [synqFlickerState, setSynqFlickerState] = useState(0);
-  const [synqGlassMetrics, setSynqGlassMetrics] = useState<{
-    left: number;
-    width: number;
-    centerY: number;
-    pitch: number;
-    viewportHeight: number;
-    fontSize: number;
-  } | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
+  // Liquid Lens Position & State
+  const [lensActive, setLensActive] = useState(false);
+  const [lensPos, setLensPos] = useState({ x: -1000, y: -1000 });
+  const [containerRect, setContainerRect] = useState({ width: 1200, height: 700 });
+  const [walletDropdownOpen, setWalletDropdownOpen] = useState(false);
+
+  const targetPosRef = useRef({ x: -1000, y: -1000, active: false });
+  const currentPosRef = useRef({ x: -1000, y: -1000 });
+
+  const lensSize = 180;
+  const lensRadius = 14;
+
+  // Update container dimensions on resize
   useEffect(() => {
-    const t = setTimeout(() => setShow(true), 150);
-    return () => clearTimeout(t);
-  }, []);
+    const el = containerRef.current;
+    if (!el) return;
 
-  useEffect(() => {
-    if (!show) return;
-
-    const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
-    let mounted = true;
-    let rapidStepsRemaining = 0;
-
-    const randomElectricalState = () => {
-      const roll = Math.random();
-      return roll < 0.36 ? 3 : roll < 0.5 ? 4 : roll < 0.78 ? 1 : 2;
+    const updateRect = () => {
+      const rect = el.getBoundingClientRect();
+      setContainerRect({ width: rect.width, height: rect.height });
     };
 
-    const scheduleSynqFlicker = () => {
-      if (!mounted || reducedMotionQuery.matches || synqFlickerTimeoutRef.current !== null) return;
-      const rapid = rapidStepsRemaining > 0;
-      const delay = rapid
-        ? 35 + Math.random() * 85
-        : 250 + Math.random() * 650;
-      synqFlickerTimeoutRef.current = setTimeout(() => {
-        synqFlickerTimeoutRef.current = null;
-        if (!mounted || reducedMotionQuery.matches) return;
+    updateRect();
+    const observer = new ResizeObserver(updateRect);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
-        if (rapidStepsRemaining > 0) {
-          rapidStepsRemaining--;
-          setSynqFlickerState(rapidStepsRemaining === 0 ? 0 : randomElectricalState());
-        } else if (Math.random() < 0.45) {
-          rapidStepsRemaining = 2 + Math.floor(Math.random() * 3);
-          setSynqFlickerState(randomElectricalState());
+  // Perceptual lag smoothing for the liquid lens cursor tracking (~60-80ms lag, bypassed if prefers-reduced-motion)
+  useEffect(() => {
+    let animId: number;
+
+    const updateLensLoop = () => {
+      if (targetPosRef.current.active) {
+        const prefersReduced =
+          typeof window !== 'undefined' &&
+          window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+        if (prefersReduced) {
+          currentPosRef.current.x = targetPosRef.current.x;
+          currentPosRef.current.y = targetPosRef.current.y;
         } else {
-          setSynqFlickerState(Math.random() < 0.15 ? 1 : 0);
+          // Perceptual organic lag (~60-80ms at 60fps with alpha ≈ 0.32)
+          const dx = targetPosRef.current.x - currentPosRef.current.x;
+          const dy = targetPosRef.current.y - currentPosRef.current.y;
+          currentPosRef.current.x += dx * 0.32;
+          currentPosRef.current.y += dy * 0.32;
         }
 
-        scheduleSynqFlicker();
-      }, delay);
-    };
-
-    const updateReducedMotion = () => {
-      if (headlineEntranceTimeoutRef.current !== null) clearTimeout(headlineEntranceTimeoutRef.current);
-      headlineEntranceTimeoutRef.current = null;
-      if (synqFlickerTimeoutRef.current !== null) clearTimeout(synqFlickerTimeoutRef.current);
-      synqFlickerTimeoutRef.current = null;
-      rapidStepsRemaining = 0;
-      setSynqFlickerState(0);
-      if (reducedMotionQuery.matches) {
-        setHeadlineReconstructing(false);
-        return;
+        setLensPos({
+          x: currentPosRef.current.x,
+          y: currentPosRef.current.y,
+        });
       }
 
-      setHeadlineReconstructing(true);
-      headlineEntranceTimeoutRef.current = setTimeout(() => {
-        headlineEntranceTimeoutRef.current = null;
-        if (!mounted || reducedMotionQuery.matches) return;
-        setHeadlineReconstructing(false);
-        setSynqFlickerState(0);
-        scheduleSynqFlicker();
-      }, 860);
-    };
-    updateReducedMotion();
-    reducedMotionQuery.addEventListener('change', updateReducedMotion);
-    return () => {
-      mounted = false;
-      reducedMotionQuery.removeEventListener('change', updateReducedMotion);
-      if (headlineEntranceTimeoutRef.current !== null) clearTimeout(headlineEntranceTimeoutRef.current);
-      headlineEntranceTimeoutRef.current = null;
-      if (synqFlickerTimeoutRef.current !== null) clearTimeout(synqFlickerTimeoutRef.current);
-      synqFlickerTimeoutRef.current = null;
-    };
-  }, [show]);
-
-  useEffect(() => {
-    if (!show || !synqWordRef.current) return;
-    let mounted = true;
-
-    const updateGlassMetrics = () => {
-      const word = synqWordRef.current;
-      if (!mounted || !word) return;
-      const bounds = word.getBoundingClientRect();
-      const fontSize = Number.parseFloat(window.getComputedStyle(word).fontSize);
-      const next = {
-        left: bounds.left + bounds.width / 2,
-        width: bounds.width + 12,
-        centerY: bounds.top + bounds.height / 2,
-        pitch: bounds.height * 0.75,
-        viewportHeight: landingRef.current?.getBoundingClientRect().height ?? window.innerHeight,
-        fontSize,
-      };
-      setSynqGlassMetrics((current) => (
-        current
-          && Math.abs(current.left - next.left) < 0.25
-          && Math.abs(current.width - next.width) < 0.25
-          && Math.abs(current.centerY - next.centerY) < 0.25
-          && Math.abs(current.pitch - next.pitch) < 0.25
-          && Math.abs(current.viewportHeight - next.viewportHeight) < 0.25
-          && Math.abs(current.fontSize - next.fontSize) < 0.25
-          ? current
-          : next
-      ));
+      animId = requestAnimationFrame(updateLensLoop);
     };
 
-    const resizeObserver = new ResizeObserver(updateGlassMetrics);
-    resizeObserver.observe(synqWordRef.current);
-    window.addEventListener('resize', updateGlassMetrics);
-    updateGlassMetrics();
-    void document.fonts.ready.then(updateGlassMetrics);
-
-    return () => {
-      mounted = false;
-      resizeObserver.disconnect();
-      window.removeEventListener('resize', updateGlassMetrics);
-    };
-  }, [show]);
-
-  useEffect(() => {
-    const landing = landingRef.current;
-    const background = backgroundRef.current;
-    if (!landing || !background) return;
-
-    const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const finePointerQuery = window.matchMedia('(hover: hover) and (pointer: fine)');
-    const target = { scale: 1, x: 0, y: 0 };
-    const current = { scale: 1, x: 0, y: 0 };
-    let animationFrame: number | null = null;
-    let previousTimestamp = 0;
-
-    const applyTransform = () => {
-      background.style.transform = `translate3d(${current.x}px, ${current.y}px, 0) scale(${current.scale})`;
-    };
-
-    const animate = (timestamp: number) => {
-      animationFrame = null;
-      const elapsed = previousTimestamp ? Math.min(timestamp - previousTimestamp, 50) : 16.67;
-      const frameScale = elapsed / 16.67;
-      const panEasing = 1 - Math.pow(1 - 0.09, frameScale);
-      const scaleEasing = 1 - Math.pow(1 - 0.07, frameScale);
-
-      current.x += (target.x - current.x) * panEasing;
-      current.y += (target.y - current.y) * panEasing;
-      current.scale += (target.scale - current.scale) * scaleEasing;
-      applyTransform();
-      previousTimestamp = timestamp;
-
-      const unsettled = Math.abs(target.x - current.x) > 0.02
-        || Math.abs(target.y - current.y) > 0.02
-        || Math.abs(target.scale - current.scale) > 0.0001;
-      if (unsettled) {
-        animationFrame = requestAnimationFrame(animate);
-      } else {
-        current.x = target.x;
-        current.y = target.y;
-        current.scale = target.scale;
-        applyTransform();
-        previousTimestamp = 0;
-      }
-    };
-
-    const requestAnimation = () => {
-      if (animationFrame === null) animationFrame = requestAnimationFrame(animate);
-    };
-
-    const resetTarget = () => {
-      target.scale = 1;
-      target.x = 0;
-      target.y = 0;
-      if (reducedMotionQuery.matches || !finePointerQuery.matches) {
-        current.scale = 1;
-        current.x = 0;
-        current.y = 0;
-        applyTransform();
-        return;
-      }
-      requestAnimation();
-    };
-
-    const handlePointer = (event: PointerEvent) => {
-      if (reducedMotionQuery.matches || !finePointerQuery.matches || event.pointerType === 'touch') return;
-      const bounds = landing.getBoundingClientRect();
-      const normalizedX = Math.max(-1, Math.min(1, ((event.clientX - bounds.left) / bounds.width) * 2 - 1));
-      const normalizedY = Math.max(-1, Math.min(1, ((event.clientY - bounds.top) / bounds.height) * 2 - 1));
-      target.scale = 1.065;
-      target.x = normalizedX * 16;
-      target.y = normalizedY * 12;
-      requestAnimation();
-    };
-
-    const updateCapability = () => {
-      if (!reducedMotionQuery.matches && finePointerQuery.matches) return;
-      target.scale = 1;
-      target.x = 0;
-      target.y = 0;
-      current.scale = 1;
-      current.x = 0;
-      current.y = 0;
-      if (animationFrame !== null) cancelAnimationFrame(animationFrame);
-      animationFrame = null;
-      previousTimestamp = 0;
-      applyTransform();
-    };
-
-    applyTransform();
-    landing.addEventListener('pointerenter', handlePointer, { passive: true });
-    landing.addEventListener('pointermove', handlePointer, { passive: true });
-    landing.addEventListener('pointerleave', resetTarget);
-    window.addEventListener('blur', resetTarget);
-    reducedMotionQuery.addEventListener('change', updateCapability);
-    finePointerQuery.addEventListener('change', updateCapability);
-
-    return () => {
-      landing.removeEventListener('pointerenter', handlePointer);
-      landing.removeEventListener('pointermove', handlePointer);
-      landing.removeEventListener('pointerleave', resetTarget);
-      window.removeEventListener('blur', resetTarget);
-      reducedMotionQuery.removeEventListener('change', updateCapability);
-      finePointerQuery.removeEventListener('change', updateCapability);
-      if (animationFrame !== null) cancelAnimationFrame(animationFrame);
-      background.style.transform = '';
-    };
+    animId = requestAnimationFrame(updateLensLoop);
+    return () => cancelAnimationFrame(animId);
   }, []);
 
-  const enter = () => {
-    if (entering) return;
-    setEntering(true);
-    setTimeout(() => router.push('/negotiator?new=1'), 500);
+  // Suspend lens tracking and hide lens while wallet modal or dropdown is active
+  useEffect(() => {
+    if (walletDropdownOpen) {
+      targetPosRef.current.active = false;
+      setLensActive(false);
+    }
+  }, [walletDropdownOpen]);
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (walletDropdownOpen) return;
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    targetPosRef.current = { x, y, active: true };
+    if (!lensActive) {
+      currentPosRef.current = { x, y };
+      setLensPos({ x, y });
+      setLensActive(true);
+    }
   };
 
-  const synqCutoutRows = synqGlassMetrics
-    ? (() => {
-        const above = Math.ceil(synqGlassMetrics.centerY / synqGlassMetrics.pitch);
-        const below = Math.ceil((synqGlassMetrics.viewportHeight - synqGlassMetrics.centerY) / synqGlassMetrics.pitch);
-        return Array.from({ length: above + below }, (_, index) => (
-          index < above ? index - above : index - above + 1
-        ));
-      })()
-    : [];
+  const handlePointerLeave = () => {
+    targetPosRef.current.active = false;
+    setLensActive(false);
+  };
+
+  // Shared typography parameters ensuring 100% exact registration between Layer 1, Layer 3, and Layer 4
+  const typographyStyle: React.CSSProperties = {
+    fontSize: 'clamp(108px, 18vw, 288px)',
+    lineHeight: 1,
+    whiteSpace: 'nowrap',
+    letterSpacing: '-0.02em',
+    userSelect: 'none',
+  };
+
+  const topClip = lensPos.y - lensSize / 2;
+  const rightClip = containerRect.width - (lensPos.x + lensSize / 2);
+  const bottomClip = containerRect.height - (lensPos.y + lensSize / 2);
+  const leftClip = lensPos.x - lensSize / 2;
 
   return (
-    <div ref={landingRef} className="fixed inset-0 z-50 overflow-hidden bg-zinc-950">
+    <div
+      ref={containerRef}
+      onPointerMove={handlePointerMove}
+      onPointerLeave={handlePointerLeave}
+      className="fixed inset-0 overflow-hidden bg-[#242424] flex items-center justify-center cursor-crosshair select-none z-0"
+    >
+      {/* CSS Keyframes for Experiment B.8: Independent Pseudo-Random Square Timelines with Hold Ranges */}
       <style>{`
-        @keyframes light-sweep {
-          0%   { transform: translateX(-100%); }
-          100% { transform: translateX(100%); }
+        @keyframes cta-square-spin-a {
+          0% { transform: rotate(0deg); }
+          22% { transform: rotate(90deg); }
+          42% { transform: rotate(90deg); }
+          72% { transform: rotate(270deg); }
+          86% { transform: rotate(270deg); }
+          100% { transform: rotate(360deg); }
         }
-        @keyframes headline-word-reconstruct {
-          0%   { opacity: 0; clip-path: inset(44% 0 44% 0); transform: translateX(var(--slice-offset)); }
-          18%  { opacity: 0.72; clip-path: inset(8% 0 58% 0); transform: translateX(var(--slice-offset)); }
-          38%  { opacity: 0.38; clip-path: inset(52% 0 12% 0); transform: translateX(-3px); }
-          58%  { opacity: 1; clip-path: inset(20% 0 18% 0); transform: translateX(2px); }
-          78%  { opacity: 0.82; clip-path: inset(0 0 0 0); transform: translateX(-1px); }
-          100% { opacity: 1; clip-path: inset(0 0 0 0); transform: translateX(0); }
+        @keyframes cta-square-spin-b {
+          0% { transform: rotate(0deg); }
+          26% { transform: rotate(0deg); }
+          50% { transform: rotate(180deg); }
+          78% { transform: rotate(180deg); }
+          100% { transform: rotate(360deg); }
         }
-        @keyframes headline-slice-top {
-          0%, 8% { opacity: 0; transform: translateX(0); }
-          20%    { opacity: 0.72; transform: translateX(var(--slice-offset)); }
-          48%    { opacity: 0.42; transform: translateX(-3px); }
-          72%    { opacity: 0.22; transform: translateX(1px); }
-          100%   { opacity: 0; transform: translateX(0); }
+        @keyframes cta-square-spin-c {
+          0% { transform: rotate(0deg); }
+          30% { transform: rotate(90deg); }
+          46% { transform: rotate(90deg); }
+          74% { transform: rotate(270deg); }
+          88% { transform: rotate(270deg); }
+          100% { transform: rotate(360deg); }
         }
-        @keyframes headline-slice-bottom {
-          0%, 14% { opacity: 0; transform: translateX(0); }
-          28%     { opacity: 0.58; transform: translateX(-4px); }
-          55%     { opacity: 0.34; transform: translateX(var(--slice-offset)); }
-          76%     { opacity: 0.16; transform: translateX(-1px); }
-          100%    { opacity: 0; transform: translateX(0); }
+        .cta-square-a {
+          animation: cta-square-spin-a 4.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
         }
-        @keyframes synq-electrical-ignition {
-          0%   { opacity: 0.38; text-shadow: none; }
-          24%  { opacity: 1; text-shadow: 0 0 7px rgba(255,255,255,0.2); }
-          42%  { opacity: 0.16; text-shadow: none; }
-          62%  { opacity: 1; text-shadow: 0 0 10px rgba(255,255,255,0.3); }
-          78%  { opacity: 0.55; text-shadow: none; }
-          100% { opacity: 1; text-shadow: none; }
+        .cta-square-b {
+          animation: cta-square-spin-b 6.1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
         }
-        .headline-word {
-          --word-delay: 0ms;
-          --slice-offset: 6px;
+        .cta-square-c {
+          animation: cta-square-spin-c 5.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
         }
-        .headline-word:nth-child(2) { --word-delay: 45ms; --slice-offset: -5px; }
-        .headline-word:nth-child(3) { --word-delay: 90ms; --slice-offset: 4px; }
-        .headline-word:nth-child(4) { --word-delay: 135ms; --slice-offset: -6px; }
-        .headline-word:nth-child(5) { --word-delay: 180ms; --slice-offset: 5px; }
-        .headline-word-piece {
-          position: relative;
-          display: block;
+        @keyframes wallet-square-spin-a {
+          0% { transform: rotate(0deg); }
+          20% { transform: rotate(90deg); }
+          40% { transform: rotate(90deg); }
+          70% { transform: rotate(270deg); }
+          85% { transform: rotate(270deg); }
+          100% { transform: rotate(360deg); }
         }
-        .synq-glass {
-          position: absolute;
-          top: 0;
-          bottom: 0;
-          z-index: 0;
-          overflow: hidden;
-          transform: translateX(-50%);
-          pointer-events: none;
+        @keyframes wallet-square-spin-b {
+          0% { transform: rotate(0deg); }
+          25% { transform: rotate(0deg); }
+          52% { transform: rotate(180deg); }
+          76% { transform: rotate(180deg); }
+          100% { transform: rotate(360deg); }
         }
-        .synq-glass-surface {
-          height: 100%;
-          width: 100%;
-          border-left: 1px solid rgba(255, 255, 255, 0.13);
-          border-right: 1px solid rgba(255, 255, 255, 0.13);
-          background:
-            radial-gradient(ellipse 100% 70% at 0% 0%, rgba(7, 14, 25, 0.025) 0%, rgba(7, 14, 25, 0.012) 42%, transparent 76%),
-            radial-gradient(ellipse 100% 70% at 100% 0%, rgba(18, 10, 28, 0.025) 0%, rgba(18, 10, 28, 0.012) 42%, transparent 76%),
-            linear-gradient(180deg, rgba(17, 13, 24, 0.22) 0%, rgba(17, 13, 24, 0.18) 25%, rgba(17, 13, 24, 0.10) 50%, rgba(17, 13, 24, 0.025) 75%, transparent 95%),
-            linear-gradient(90deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.025));
-          backdrop-filter: blur(20px) saturate(1.08);
-          -webkit-backdrop-filter: blur(20px) saturate(1.08);
-          box-shadow: 0 10px 32px rgba(0, 0, 0, 0.12), inset 1px 0 0 rgba(255, 255, 255, 0.08), inset -1px 0 0 rgba(255, 255, 255, 0.025);
+        @keyframes wallet-square-spin-c {
+          0% { transform: rotate(0deg); }
+          32% { transform: rotate(90deg); }
+          48% { transform: rotate(90deg); }
+          75% { transform: rotate(270deg); }
+          88% { transform: rotate(270deg); }
+          100% { transform: rotate(360deg); }
         }
-        .synq-electric {
-          position: relative;
-          z-index: 2;
+        @keyframes wallet-square-spin-d {
+          0% { transform: rotate(0deg); }
+          18% { transform: rotate(180deg); }
+          45% { transform: rotate(180deg); }
+          68% { transform: rotate(270deg); }
+          82% { transform: rotate(270deg); }
+          100% { transform: rotate(360deg); }
         }
-        .headline-word-piece::before,
-        .headline-word-piece::after {
-          content: attr(data-text);
-          position: absolute;
-          inset: 0;
-          opacity: 0;
-          pointer-events: none;
+        @keyframes wallet-square-spin-e {
+          0% { transform: rotate(0deg); }
+          28% { transform: rotate(90deg); }
+          50% { transform: rotate(90deg); }
+          72% { transform: rotate(180deg); }
+          86% { transform: rotate(180deg); }
+          100% { transform: rotate(360deg); }
         }
-        .headline-word-piece::before { clip-path: inset(0 0 66% 0); }
-        .headline-word-piece::after { clip-path: inset(66% 0 0 0); }
-        .headline-reconstructing .headline-word-piece {
-          animation: headline-word-reconstruct 560ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-          animation-delay: var(--word-delay);
+        @keyframes wallet-square-spin-f {
+          0% { transform: rotate(0deg); }
+          15% { transform: rotate(0deg); }
+          42% { transform: rotate(180deg); }
+          64% { transform: rotate(180deg); }
+          84% { transform: rotate(270deg); }
+          100% { transform: rotate(360deg); }
         }
-        .headline-reconstructing .headline-word-piece::before {
-          animation: headline-slice-top 560ms steps(2, end) both;
-          animation-delay: var(--word-delay);
+        .wallet-square-a {
+          animation: wallet-square-spin-a 5.1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
         }
-        .headline-reconstructing .headline-word-piece::after {
-          animation: headline-slice-bottom 560ms steps(2, end) both;
-          animation-delay: var(--word-delay);
+        .wallet-square-b {
+          animation: wallet-square-spin-b 6.7s cubic-bezier(0.4, 0, 0.2, 1) infinite;
         }
-        .headline-reconstructing .synq-electric {
-          animation: synq-electrical-ignition 240ms steps(1, end) 620ms forwards;
+        .wallet-square-c {
+          animation: wallet-square-spin-c 4.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
         }
-        .light-sweep {
-          position: absolute; inset: 0;
-          background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent);
-          animation: light-sweep 8s ease-in-out infinite;
-          pointer-events: none;
+        .wallet-square-d {
+          animation: wallet-square-spin-d 5.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+        }
+        .wallet-square-e {
+          animation: wallet-square-spin-e 6.3s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+        }
+        .wallet-square-f {
+          animation: wallet-square-spin-f 4.9s cubic-bezier(0.4, 0, 0.2, 1) infinite;
         }
         @media (prefers-reduced-motion: reduce) {
-          .headline-reconstructing .headline-word-piece,
-          .headline-reconstructing .headline-word-piece::before,
-          .headline-reconstructing .headline-word-piece::after,
-          .headline-reconstructing .synq-electric {
+          .cta-square-a,
+          .cta-square-b,
+          .cta-square-c,
+          .wallet-square-a,
+          .wallet-square-b,
+          .wallet-square-c,
+          .wallet-square-d,
+          .wallet-square-e,
+          .wallet-square-f {
             animation: none !important;
+            transform: none !important;
           }
         }
       `}</style>
-      <img ref={backgroundRef} src="/01.jpg" alt="" aria-hidden className="absolute inset-0 w-full h-full object-cover [will-change:transform]" />
-      <div className="light-sweep" />
 
-      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-zinc-950/40 to-zinc-950 pointer-events-none" />
+      {/* Header UI: Top-right Public Indicator — Six Animated White Squares (□ □ □ □ □ □) */}
+      {!walletDropdownOpen && (
+        <div
+          className="absolute top-6 right-6 md:top-8 md:right-10 z-20 pointer-events-none select-none h-10 px-4 flex items-center justify-center"
+          aria-hidden="true"
+        >
+          <div className="flex items-center justify-center gap-2">
+            <div
+              className="wallet-square-a w-[10px] h-[10px] rounded-[3px] bg-white will-change-transform"
+              title="Wallet indicator"
+            />
+            <div
+              className="wallet-square-b w-[10px] h-[10px] rounded-[3px] bg-white will-change-transform"
+              title="Wallet indicator"
+            />
+            <div
+              className="wallet-square-c w-[10px] h-[10px] rounded-[3px] bg-white will-change-transform"
+              title="Wallet indicator"
+            />
+            <div
+              className="wallet-square-d w-[10px] h-[10px] rounded-[3px] bg-white will-change-transform"
+              title="Wallet indicator"
+            />
+            <div
+              className="wallet-square-e w-[10px] h-[10px] rounded-[3px] bg-white will-change-transform"
+              title="Wallet indicator"
+            />
+            <div
+              className="wallet-square-f w-[10px] h-[10px] rounded-[3px] bg-white will-change-transform"
+              title="Wallet indicator"
+            />
+          </div>
+        </div>
+      )}
 
-      <div className="absolute inset-0 pointer-events-none overflow-hidden" aria-hidden>
-        <div className="absolute top-[20%] left-[15%] w-[500px] h-[500px] bg-blue-600/20 rounded-full blur-[120px] animate-pulse" />
-        <div className="absolute bottom-[20%] right-[15%] w-[400px] h-[400px] bg-violet-600/15 rounded-full blur-[100px] animate-pulse" style={{ animationDelay: '1s' }} />
+      {/* Header UI: Top-right Real Wallet Capsule (Secret Layer revealed through Liquid Lens, or fully suspended when dropdown open) */}
+      <div
+        className="absolute inset-0 pointer-events-none select-none z-50"
+        style={{
+          clipPath: walletDropdownOpen
+            ? 'none'
+            : lensActive
+            ? `inset(${topClip}px ${rightClip}px ${bottomClip}px ${leftClip}px round ${lensRadius}px)`
+            : 'inset(100%)',
+        }}
+        aria-hidden={!walletDropdownOpen && !lensActive}
+      >
+        <div className="absolute top-6 right-6 md:top-8 md:right-10 pointer-events-auto flex items-center gap-2">
+          <WalletStatus onOpenChange={setWalletDropdownOpen} />
+        </div>
       </div>
 
-      <InteractiveGlassGrid />
+      {/* Layer 0: Subtle centered neutral backlight for background depth */}
+      <div
+        className="absolute inset-0 pointer-events-none flex items-center justify-center"
+        aria-hidden="true"
+      >
+        <div className="w-[50vw] max-w-[700px] h-[260px] rounded-full bg-white/[0.03] blur-[90px]" />
+      </div>
 
-      <AnimatePresence>
-        {show && (
-          <motion.div
-            key="landing-brand"
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-            className="absolute top-6 left-6 md:top-8 md:left-10 z-10"
+      {/* Shared Coordinate Shell for Exact Typography Alignment */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
+        {/* Layer 1: Solid Glowing Synq Typography (Behind Hands) */}
+        <div
+          className="absolute inset-0 flex items-center justify-center pointer-events-none select-none z-10"
+          aria-hidden="true"
+        >
+          <span
+            className={`${pressStart2P.className} font-normal`}
+            style={{
+              ...typographyStyle,
+              color: '#ffffff',
+              textShadow:
+                '0 0 15px rgba(255, 255, 255, 0.95), 0 0 40px rgba(255, 255, 255, 0.6), 0 0 85px rgba(255, 255, 255, 0.35)',
+            }}
           >
-            <div className="w-[46px] h-[46px] md:w-[52px] md:h-[52px] rounded-full overflow-hidden shadow-xl ring-2 ring-white/70 bg-white">
-              <img src="/logo.jpg" alt="Synq logo" className="w-full h-full object-cover" />
-            </div>
-          </motion.div>
-        )}
+            Synq
+          </span>
+        </div>
 
-        {show && (
-          <div
-            key="landing-hero"
-            className="absolute inset-0 text-center"
+        {/* Layer 2: Colored Three.js Pixel Hands (Sandwiched Between Back and Front Typography) */}
+        <div className="absolute inset-0 z-20 pointer-events-none">
+          <InteractivePixelArtwork
+            className="w-full h-full"
+            debug={false}
+            artworkScale={1.60}
+            preservePixelSize={true}
+            transparentBackground={true}
+            colorMode="original-color"
+            disableLiquid={true}
+            enableFlicker={true}
+            lensActive={lensActive}
+            lensX={lensPos.x}
+            lensY={lensPos.y}
+            lensSize={lensSize}
+            lensRadius={lensRadius}
+          />
+        </div>
+
+        {/* Layer 3: Crisp Outline Synq Typography (Over Hands) */}
+        <div
+          className="absolute inset-0 flex items-center justify-center pointer-events-none select-none z-30"
+          aria-hidden="true"
+        >
+          <span
+            className={`${pressStart2P.className} font-normal`}
+            style={{
+              ...typographyStyle,
+              color: 'transparent',
+              WebkitTextStroke: '0.75px rgba(255, 255, 255, 0.82)',
+              textShadow: 'none',
+            }}
           >
-            {synqGlassMetrics && (
-              <>
-                <svg
-                  aria-hidden="true"
-                  className="absolute h-0 w-0 pointer-events-none"
-                  width="0"
-                  height="0"
-                >
-                  <defs>
-                    <mask
-                      id="synq-glass-cutout-mask"
-                      maskUnits="userSpaceOnUse"
-                      maskContentUnits="userSpaceOnUse"
-                      x="0"
-                      y="0"
-                      width={synqGlassMetrics.width}
-                      height={synqGlassMetrics.viewportHeight}
-                    >
-                      <rect
-                        width={synqGlassMetrics.width}
-                        height={synqGlassMetrics.viewportHeight}
-                        fill="white"
-                      />
-                      <g
-                        className={pressStart2P.className}
-                        fill="black"
-                        fontSize={synqGlassMetrics.fontSize}
-                        fontWeight="400"
-                        textAnchor="middle"
-                        dominantBaseline="central"
-                      >
-                        {synqCutoutRows.map((row) => (
-                          <text
-                            key={row}
-                            x={synqGlassMetrics.width / 2}
-                            y={synqGlassMetrics.centerY + row * synqGlassMetrics.pitch}
-                          >
-                            Synq
-                          </text>
-                        ))}
-                      </g>
-                    </mask>
-                  </defs>
-                </svg>
-                <div
-                  aria-hidden="true"
-                  className="synq-glass synq-glass-surface"
-                  style={{
-                    left: synqGlassMetrics.left,
-                    width: synqGlassMetrics.width,
-                    mask: 'url(#synq-glass-cutout-mask)',
-                    WebkitMask: 'url(#synq-glass-cutout-mask)',
-                  }}
-                />
-              </>
-            )}
-            <h1
-              className={`${pressStart2P.className} ${headlineReconstructing ? 'headline-reconstructing' : ''} absolute left-1/2 top-1/2 z-[1] flex w-fit max-w-[calc(100%_-_3rem)] flex-wrap items-baseline justify-center gap-[16px] -translate-x-1/2 -translate-y-1/2 text-[clamp(30px,4vw,56px)] font-normal leading-relaxed text-white md:max-w-[94vw] md:flex-nowrap md:whitespace-nowrap`}
-            >
-              <span className="headline-word">
-                <span className="headline-word-piece" data-text="let" style={{ color: 'transparent', WebkitTextStroke: '2px rgba(255, 255, 255, 0.88)' }}>let</span>
-              </span>
-              <span ref={synqWordRef} className="headline-word">
-                <span className="headline-word-piece" data-text="Synq">
-                  <span
-                    className="synq-electric"
-                    style={{
-                      color: SYNQ_FLICKER_STYLES[synqFlickerState].fill,
-                      WebkitTextStroke: `0.5px ${SYNQ_FLICKER_STYLES[synqFlickerState].stroke}`,
-                      textShadow: SYNQ_FLICKER_STYLES[synqFlickerState].shadow,
-                    }}
-                  >
-                    Synq
-                  </span>
-                </span>
-              </span>
-              <span className="headline-word">
-                <span className="headline-word-piece" data-text="handle" style={{ color: 'transparent', WebkitTextStroke: '2px rgba(255, 255, 255, 0.88)' }}>handle</span>
-              </span>
-              <span className="headline-word" style={{ transform: 'translateX(-4px)' }}>
-                <span className="headline-word-piece" data-text="the" style={{ color: 'transparent', WebkitTextStroke: '2px rgba(255, 255, 255, 0.88)' }}>the</span>
-              </span>
-              <span className="headline-word">
-                <span className="headline-word-piece" data-text="deal" style={{ color: 'transparent', WebkitTextStroke: '2px rgba(255, 255, 255, 0.88)' }}>deal</span>
-              </span>
-            </h1>
+            Synq
+          </span>
+        </div>
 
-            <div className="absolute left-1/2 top-3/4 -translate-x-1/2 -translate-y-1/2">
-              <motion.button
-                onClick={enter}
-                whileHover={{ scale: 1.07 }}
-                whileTap={{ scale: 0.95 }}
-                transition={{ type: 'spring', stiffness: 300 }}
-                className="group relative flex items-center gap-3 px-10 py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-violet-600 text-white shadow-xl shadow-blue-600/40 hover:shadow-[0_0_50px_rgba(59,130,246,0.6)] hover:shadow-blue-500/50 hover:brightness-110 hover:scale-[1.03] transition-all duration-300 overflow-hidden"
+        {/* SVG Liquid Refraction Filter Definition */}
+        <svg
+          className="absolute w-0 h-0 pointer-events-none opacity-0 overflow-hidden"
+          aria-hidden="true"
+        >
+          <defs>
+            <filter id="synq-liquid-displacement" x="-20%" y="-20%" width="140%" height="140%">
+              <feTurbulence
+                type="fractalNoise"
+                baseFrequency="0.013 0.016"
+                numOctaves="2"
+                seed="5"
+                result="noise"
               >
-                <span className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-                <span className={`${pressStart2P.className} text-[15px] font-normal leading-7`}>Enter</span>
-                <ArrowRight size={20} className="group-hover:translate-x-2 transition-transform duration-300 relative z-10" />
-              </motion.button>
-            </div>
+                <animate
+                  attributeName="baseFrequency"
+                  dur="14s"
+                  values="0.013 0.016; 0.016 0.012; 0.012 0.018; 0.013 0.016"
+                  repeatCount="indefinite"
+                />
+              </feTurbulence>
+              <feDisplacementMap
+                in="SourceGraphic"
+                in2="noise"
+                scale="6.5"
+                xChannelSelector="R"
+                yChannelSelector="G"
+              />
+            </filter>
+          </defs>
+        </svg>
 
+        {/* Layer 4: Foreground Glowing Solid Synq Typography (Revealed Exclusively Inside the Liquid Lens Bounds with Refraction Displacement) */}
+        <div
+          className="absolute inset-0 flex items-center justify-center pointer-events-none select-none z-35"
+          style={{
+            clipPath: lensActive
+              ? `inset(${topClip}px ${rightClip}px ${bottomClip}px ${leftClip}px round ${lensRadius}px)`
+              : 'inset(100%)',
+            opacity: lensActive ? 1 : 0,
+            transition: 'opacity 0.12s ease-out',
+          }}
+          aria-hidden="true"
+        >
+          <span
+            className={`${pressStart2P.className} font-normal`}
+            style={{
+              ...typographyStyle,
+              color: '#ffffff',
+              textShadow:
+                '0 0 15px rgba(255, 255, 255, 0.95), 0 0 40px rgba(255, 255, 255, 0.6), 0 0 85px rgba(255, 255, 255, 0.35)',
+              filter: lensActive ? 'url(#synq-liquid-displacement)' : 'none',
+            }}
+          >
+            Synq
+          </span>
+        </div>
+
+        {/* Layer 5: Screen-Surface Liquid Membrane (Clean surface embedded into screen plane) */}
+        {lensActive && (
+          <div
+            className="absolute pointer-events-none select-none z-40 rounded-[14px] overflow-hidden"
+            style={{
+              width: `${lensSize}px`,
+              height: `${lensSize}px`,
+              left: `${lensPos.x}px`,
+              top: `${lensPos.y}px`,
+              transform: 'translate(-50%, -50%)',
+              backgroundColor: 'transparent',
+              boxShadow:
+                'inset 1px 1.5px 3.5px 0px rgba(255, 255, 255, 0.14), inset 0 0 2.5px 0px rgba(255, 255, 255, 0.09)',
+            }}
+          >
+            <LiquidLensSurface
+              size={lensSize}
+              radius={lensRadius}
+              active={lensActive}
+            />
           </div>
         )}
-      </AnimatePresence>
+      </div>
 
-      {entering && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="fixed inset-0 z-[9999] bg-black pointer-events-none"
-          transition={{ duration: 0.3 }}
-        />
-      )}
+      {/* Layer 5.5: Normal Public CTA State — Three Small Rotating White Squares (□ □ □) */}
+      <div
+        className="absolute bottom-7 md:bottom-9 left-1/2 -translate-x-1/2 w-[160px] h-[44px] flex items-center justify-center pointer-events-none select-none z-20"
+        aria-hidden="true"
+      >
+        <div className="flex items-center justify-center gap-2">
+          <div
+            className="cta-square-a w-[10px] h-[10px] rounded-[3px] bg-white will-change-transform"
+            title="Interactive indicator"
+          />
+          <div
+            className="cta-square-b w-[10px] h-[10px] rounded-[3px] bg-white will-change-transform"
+            title="Interactive indicator"
+          />
+          <div
+            className="cta-square-c w-[10px] h-[10px] rounded-[3px] bg-white will-change-transform"
+            title="Interactive indicator"
+          />
+        </div>
+      </div>
+
+      {/* Layer 6: Secret Layer — Rainbow Enter Button Revealed Spatially Through Liquid Lens Window */}
+      <div
+        className="absolute inset-0 pointer-events-none select-none z-30"
+        style={{
+          clipPath: lensActive
+            ? `inset(${topClip}px ${rightClip}px ${bottomClip}px ${leftClip}px round ${lensRadius}px)`
+            : 'inset(100%)',
+        }}
+        aria-hidden={!lensActive}
+      >
+        <div className="absolute bottom-7 md:bottom-9 left-1/2 -translate-x-1/2 w-[160px] h-[44px] pointer-events-auto">
+          <Link href="/negotiator?new=1" className="inline-block no-underline">
+            <RainbowButton speed={4}>
+              <span className={`${pressStart2P.className} text-[11px] leading-none tracking-wider text-[#242424]`}>
+                Enter
+              </span>
+            </RainbowButton>
+          </Link>
+        </div>
+      </div>
     </div>
   );
 }

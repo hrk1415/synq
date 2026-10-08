@@ -527,4 +527,53 @@ describe('SYNQ Standard V2 /deals Listing Architecture Suite', () => {
       assert.strictEqual(sepoliaPublicClient.transport.type, 'fallback');
     });
   });
+
+  // Requirement Z: My Deals Header UI Cleanup
+  describe('Z. My Deals Header UI Cleanup', () => {
+    const dealsPagePath = path.join(process.cwd(), 'src', 'app', 'deals', 'page.tsx');
+    const content = fs.readFileSync(dealsPagePath, 'utf8');
+
+    it('Z1: My Deals heading remains with Press_Start_2P styling', () => {
+      assert.match(content, /My Deals\s*<\/h1>/);
+      assert.match(content, /style=\{\{\s*fontFamily:\s*pressStart2P\.style\.fontFamily\s*\}\}/);
+    });
+
+    it('Z2: Permanent subtitle is removed from normal page flow', () => {
+      assert.strictEqual(
+        content.includes('<p className="text-xs text-zinc-400">\n            Track, fund'),
+        false,
+        'Permanent subtitle paragraph must be removed'
+      );
+    });
+
+    it('Z3: About/help control contains original explanatory copy', () => {
+      assert.strictEqual(content.includes('aria-label="About My Deals"'), true);
+      assert.strictEqual(
+        content.includes('Track, fund, submit work, and manage your milestone escrow agreements.'),
+        true
+      );
+    });
+
+    it('Z4: Normal header Refresh button is removed', () => {
+      assert.strictEqual(content.includes('title="Refresh deals from Sepolia RPC"'), false);
+      assert.strictEqual(content.includes('<span>Refresh</span>'), false);
+    });
+
+    it('Z5: Normal header Create Deal button is removed', () => {
+      assert.strictEqual(content.includes('Create Deal'), false);
+      assert.strictEqual(content.includes('href="/deal/new"'), false);
+    });
+
+    it('Z6: RPC error-state Retry Discovery behavior remains intact', () => {
+      assert.strictEqual(content.includes('Retry Discovery'), true);
+      assert.match(content, /onClick=\{\(\)\s*=>\s*loadDeals\(true\)\}[^>]*>\s*<RefreshCw/);
+    });
+
+    it('Z7: Automatic deal discovery, search, filter, and Factory V2 architecture remain intact', () => {
+      assert.match(content, /useEffect\(\(\)\s*=>\s*\{[\s\S]*loadDeals\(\)/);
+      assert.strictEqual(content.includes('fetchUserDealAddressesFromFactory'), true);
+      assert.strictEqual(content.includes('value={search}'), true);
+      assert.strictEqual(content.includes('filterOptions'), true);
+    });
+  });
 });

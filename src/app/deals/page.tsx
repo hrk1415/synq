@@ -187,39 +187,25 @@ export default function DealsPage() {
   return (
     <div className="space-y-4 pt-0">
       {/* HEADER SECTION */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1
-            className="text-lg font-bold tracking-tight text-white mb-0.5"
-            style={{ fontFamily: pressStart2P.style.fontFamily }}
+      <div className="flex items-center gap-2.5">
+        <h1
+          className="text-lg font-bold tracking-tight text-white mb-0.5"
+          style={{ fontFamily: pressStart2P.style.fontFamily }}
+        >
+          My Deals
+        </h1>
+        <div className="relative group inline-block">
+          <button
+            type="button"
+            tabIndex={0}
+            aria-label="About My Deals"
+            className="w-5 h-5 rounded-full bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/60 text-zinc-400 hover:text-white text-[11px] font-bold font-mono inline-flex items-center justify-center shrink-0 transition-colors focus:outline-none focus:ring-1 focus:ring-blue-500/50"
           >
-            My Deals
-          </h1>
-          <p className="text-xs text-zinc-400">
+            ?
+          </button>
+          <div className="absolute left-0 top-full mt-2 w-72 sm:w-80 p-3 rounded-xl bg-zinc-900 border border-zinc-700/80 text-zinc-200 text-xs leading-relaxed shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto transition-all duration-150 z-30">
             Track, fund, submit work, and manage your milestone escrow agreements.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {address && (
-            <button
-              type="button"
-              onClick={() => loadDeals(true)}
-              disabled={isLoading}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-800 bg-zinc-900/60 hover:bg-zinc-800/80 text-zinc-400 hover:text-white text-xs transition-colors disabled:opacity-50"
-              title="Refresh deals from Sepolia RPC"
-            >
-              <RefreshCw size={13} className={isLoading ? 'animate-spin' : ''} />
-              <span>Refresh</span>
-            </button>
-          )}
-
-          <Link
-            href="/deal/new"
-            className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-lg shadow-blue-600/20 transition-all hover:scale-[1.02] active:scale-[0.98]"
-          >
-            Create Deal
-          </Link>
+          </div>
         </div>
       </div>
 

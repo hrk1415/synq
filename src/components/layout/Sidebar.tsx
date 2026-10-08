@@ -16,28 +16,54 @@ import {
   Menu,
   X,
   Store,
-  ArrowLeftRight,
+  LayoutGrid,
   Settings,
   Info,
-  Zap,
 } from 'lucide-react';
+import { Press_Start_2P } from 'next/font/google';
+
+const pressStart2P = Press_Start_2P({
+  subsets: ['latin'],
+  weight: '400',
+  display: 'swap',
+});
 
 import { useSidebar } from '@/context/SidebarContext';
 import { useAccount } from 'wagmi';
 import { useSynqIdentity } from '@/hooks/useSynqIdentity';
 import { Avatar } from '@/components/shared/Avatar';
 
-const navItems = [
-  { icon: Brain, label: 'AI Negotiator', href: '/negotiator' },
+export interface NavItem {
+  icon: React.ComponentType<{ size?: number; className?: string }>;
+  label: string;
+  href: string;
+}
+
+export const navItems: NavItem[] = [
+  { icon: Brain, label: 'Negotiator', href: '/negotiator' },
   { icon: Store, label: 'Deal Port', href: '/marketplace' },
   { icon: FileCheck, label: 'My Deals', href: '/deals' },
   // Living Protection (/protection) is intentionally not in the nav: the pool
   // deployed on Sepolia holds no ETH, so no claim it accepts can pay out. The
   // page still works if navigated to directly.
   { icon: MessageSquare, label: 'SynqChat', href: '/messages' },
-  { icon: Zap, label: 'Agent Controller', href: '/agent-controller' },
-  { icon: ArrowLeftRight, label: 'Swap', href: '/swap' },
+  { icon: LayoutGrid, label: 'Hub', href: '/hub' },
 ];
+
+export function isNavItemActive(itemHref: string, currentPathname: string | null | undefined): boolean {
+  if (!currentPathname) return false;
+  if (itemHref === '/hub') {
+    return (
+      currentPathname === '/hub' ||
+      currentPathname.startsWith('/hub/') ||
+      currentPathname === '/agent-controller' ||
+      currentPathname.startsWith('/agent-controller/') ||
+      currentPathname === '/swap' ||
+      currentPathname.startsWith('/swap/')
+    );
+  }
+  return currentPathname === itemHref;
+}
 
 function getScopedDisplayName(walletAddress?: string): string {
   if (typeof window === 'undefined' || !walletAddress) return '';
@@ -182,7 +208,11 @@ export default function Sidebar() {
         <div className={cn("flex items-center h-16 border-b border-zinc-800/50 relative", collapsed ? "justify-center px-0" : "px-6")}>
           <Link href="/" className="flex items-center gap-3 outline-none">
             <img src="/synq-logo.png" alt="Synq" className="w-8 h-8 rounded-lg object-contain mix-blend-lighten" />
-            {!collapsed && <span className="text-lg font-bold text-white tracking-tight">Synq</span>}
+            {!collapsed && (
+              <span className={cn(pressStart2P.className, "text-base font-normal text-white tracking-tight")}>
+                Synq
+              </span>
+            )}
           </Link>
           
           <button
@@ -195,7 +225,7 @@ export default function Sidebar() {
 
         <nav className="flex-1 px-2 py-4 space-y-1 overflow-y-auto">
           {navItems.map((item) => {
-            const isActive = pathname === item.href;
+            const isActive = isNavItemActive(item.href, pathname);
             return (
               <Link
                 key={item.href}
@@ -210,13 +240,23 @@ export default function Sidebar() {
                 )}
               >
                 <item.icon
-                  size={18}
+                  size={20}
                   className={cn(
                     'shrink-0',
                     isActive ? 'text-white drop-shadow' : 'text-zinc-500 group-hover:text-blue-400 group-hover:drop-shadow'
                   )}
                 />
-                {!collapsed && <span className={cn('truncate', isActive && 'drop-shadow-sm')}>{item.label}</span>}
+                {!collapsed && (
+                  <span
+                    className={cn(
+                      'truncate text-[11px] font-normal tracking-tight',
+                      pressStart2P.className,
+                      isActive && 'drop-shadow-sm'
+                    )}
+                  >
+                    {item.label}
+                  </span>
+                )}
               </Link>
             );
           })}
