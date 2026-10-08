@@ -5,8 +5,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   classifyConnectors,
+  buildGridWalletItems,
   isSafeIconUri,
   getWalletDisplayName,
+  getCompactWalletName,
   KNOWN_WALLETS_BY_RDNS,
 } from '../src/lib/wallet/discovery';
 import type { Connector } from 'wagmi';
@@ -223,26 +225,20 @@ describe('SYNQ — B.10.3 Dynamic Wallet Discovery Suite (Option C)', () => {
     );
   });
 
-  it('10. WalletStatus component integration: direct connector dispatch and two-section layout', () => {
-    // Replaced hardcoded idMap string routing with direct connector dispatch
-    assert.ok(!walletStatusContent.includes("idMap['metaMask'] = 'injected'"));
-    assert.ok(!walletStatusContent.includes("const idMap: Record<string, string>"));
+  it('10. WalletStatus component integration: direct connector dispatch and compact icon grid layout', () => {
+    // Direct connector dispatch
     assert.match(walletStatusContent, /handleConnect\s*=\s*async\s*\(\s*targetConnector:\s*Connector\s*\)/);
     assert.match(walletStatusContent, /await\s+connectAsync\(\{\s*connector:\s*targetConnector\s*\}\)/);
 
-    // Section 1: Detected Wallets
-    assert.match(walletStatusContent, /Detected Wallets/);
-    assert.match(walletStatusContent, /Installed/);
-    assert.match(walletStatusContent, /No browser wallet detected/);
+    // Build compact grid items from connectors
+    assert.match(walletStatusContent, /buildGridWalletItems\(connectors\)/);
 
-    // Section 2: Other Connection Methods
-    assert.match(walletStatusContent, /Other Connection Methods/);
-
-    // Bounded scrolling for wallet list
+    // Bounded scrolling for wallet grid
     assert.match(walletStatusContent, /overflow-y-auto/);
 
-    // Safe icon rendering via WalletItemIcon
+    // Safe icon rendering via WalletItemIcon inside smooth white tile
     assert.match(walletStatusContent, /<WalletItemIcon/);
+    assert.match(walletStatusContent, /bg-white/);
   });
 
   it('11. Stacking and portal preservation from B.10.1', () => {
@@ -274,5 +270,218 @@ describe('SYNQ — B.10.3 Dynamic Wallet Discovery Suite (Option C)', () => {
     // Internal pages AppLayout has no cubes
     assert.ok(!appLayoutContent.includes('wallet-square'));
     assert.match(appLayoutContent, /<WalletStatus\s*\/>/);
+  });
+
+  it('13. B.10.4 UI Redesign: Five-column desktop grid and responsive three-column mobile grid', () => {
+    // Modal shell visual styles
+    assert.match(walletStatusContent, /bg-\[#303030\]/);
+    assert.match(walletStatusContent, /rounded-3xl/);
+    assert.match(walletStatusContent, /border-\[#444444\]/);
+
+    // Desktop 5-column, tablet 4-column, mobile 3-column
+    assert.match(walletStatusContent, /grid-cols-3/);
+    assert.match(walletStatusContent, /md:grid-cols-5/);
+
+    // White rounded-square tiles with centered icons and name underneath
+    assert.match(walletStatusContent, /rounded-2xl bg-white/);
+    assert.match(walletStatusContent, /truncate/);
+  });
+
+  it('14. B.10.4 UI Redesign: Exact heading, subtitle, and local word-spacing reduction', () => {
+    // Exact heading and subtitle
+    assert.match(walletStatusContent, /Synq your wallet\.\.\./);
+    assert.match(walletStatusContent, /Choose a wallet to connect and continue\./);
+
+    // Pixel font applied to heading
+    assert.match(walletStatusContent, /pressStart2P\.className/);
+
+    // Local word-spacing reduction on heading without touching letter-spacing
+    assert.match(walletStatusContent, /wordSpacing:\s*'-0\.35em'/);
+
+    // Thin horizontal divider separating header from grid
+    assert.match(walletStatusContent, /border-b border-\[#404040\]/);
+  });
+
+  it('15. B.10.4 UI Redesign: Dynamic grid rendering with >10 detected wallets', () => {
+    // Test with 15 discovered EIP-6963 wallets
+    const manyWallets = Array.from({ length: 15 }, (_, i) =>
+      makeMockConnector({
+        id: `wallet.provider.${i}`,
+        name: `Wallet Provider ${i}`,
+        type: 'injected',
+        rdns: `org.wallet.${i}`,
+      })
+    );
+
+    const items = buildGridWalletItems(manyWallets);
+    // All 15 wallets rendered without arbitrary capping
+    assert.equal(items.length, 15);
+    assert.equal(items[0].name, 'Wallet Provider 0');
+    assert.equal(items[14].name, 'Wallet Provider 14');
+  });
+
+  it('16. B.10.4 UI Redesign: WalletConnect presence when configured and omission when unconfigured', () => {
+    const wcConnector = makeMockConnector({
+      id: 'walletConnect',
+      name: 'WalletConnect',
+      type: 'walletConnect',
+    });
+
+    // When configured: present as a grid item
+    const configuredItems = buildGridWalletItems([wcConnector]);
+    const wcItem = configuredItems.find((i) => i.name === 'WalletConnect');
+    assert.ok(wcItem, 'WalletConnect must be included in grid items when configured');
+    assert.equal(wcItem.iconSrc, '/wallets/walletconnect.png');
+
+    // When unconfigured: omitted from grid items (no fake placeholder)
+    const unconfiguredItems = buildGridWalletItems([]);
+    const unconfiguredWc = unconfiguredItems.find((i) => i.name === 'WalletConnect');
+    assert.equal(unconfiguredWc, undefined, 'WalletConnect must NOT be displayed when unconfigured');
+  });
+
+  it('17. B.10.4 UI Redesign: Fixed header and footer with bounded scrollable grid', () => {
+    // Fixed header with shrink-0
+    assert.match(walletStatusContent, /border-b border-\[#404040\][\s\S]*?shrink-0/);
+
+    // Scrollable grid area with max-h and overflow-y-auto
+    assert.match(walletStatusContent, /overflow-y-auto[\s\S]*?max-h-\[380px\]/);
+
+    // Fixed footer with shrink-0
+    assert.match(walletStatusContent, /border-t border-\[#404040\] shrink-0/);
+  });
+
+  it('18. B.10.4 UI Redesign: Terms of Service footer text preservation', () => {
+    assert.match(walletStatusContent, /By connecting, you agree to Synq(?:'|&apos;)s Terms of Service/);
+  });
+
+  it('19. B.10.5 Visual Refinement: Press_Start_2P applied across subtitle, wallet names, and footer', () => {
+    // Subtitle uses pressStart2P at 9-10px
+    assert.match(walletStatusContent, /pressStart2P\.className[\s\S]*?text-\[9px\]/);
+    assert.match(walletStatusContent, /Choose a wallet to connect and continue\./);
+
+    // Wallet names use pressStart2P at 8-8.5px with controlled two-line wrapping
+    assert.match(walletStatusContent, /pressStart2P\.className[\s\S]*?text-\[8px\][\s\S]*?line-clamp-2/);
+    assert.match(walletStatusContent, /break-words/);
+
+    // Footer uses pressStart2P at 8px
+    assert.match(walletStatusContent, /pressStart2P\.className[\s\S]*?text-\[8px\][\s\S]*?By connecting, you agree to Synq/);
+  });
+
+  it('20. B.10.5 Visual Refinement: Per-wallet icon sizing and smooth rounding rules', () => {
+    // MetaMask scaled to match perceived size
+    assert.match(walletStatusContent, /'io\.metamask'[\s\S]*?scale-\[1\.85\]/);
+
+    // Coinbase scaled to compensate for canvas transparent margins
+    assert.match(walletStatusContent, /'com\.coinbase\.wallet'[\s\S]*?scale-\[2\.35\]/);
+
+    // Rabby solid JPEG has smooth rounded corners
+    assert.match(walletStatusContent, /'io\.rabby'[\s\S]*?rounded-xl/);
+
+    // Phantom solid square badge has smooth rounded corners
+    assert.match(walletStatusContent, /'app\.phantom'[\s\S]*?rounded-xl/);
+
+    // White tiles maintain overflow-hidden to clip scaled icons seamlessly
+    assert.match(walletStatusContent, /rounded-2xl bg-white[\s\S]*?overflow-hidden/);
+  });
+
+  it('21. B.10.6 Compact Names: Formatter extracts first word safely across name variants', () => {
+    // Multiword wallet names -> first word only
+    assert.equal(getCompactWalletName('Bitget Wallet'), 'Bitget');
+    assert.equal(getCompactWalletName('Trust Wallet'), 'Trust');
+    assert.equal(getCompactWalletName('Coinbase Wallet'), 'Coinbase');
+    assert.equal(getCompactWalletName('Rainbow Wallet'), 'Rainbow');
+    assert.equal(getCompactWalletName('Brave Wallet'), 'Brave');
+
+    // Single-word wallet names -> unchanged
+    assert.equal(getCompactWalletName('Phantom'), 'Phantom');
+    assert.equal(getCompactWalletName('MetaMask'), 'MetaMask');
+    assert.equal(getCompactWalletName('WalletConnect'), 'WalletConnect');
+    assert.equal(getCompactWalletName('Zerion'), 'Zerion');
+
+    // Unknown multi-word wallet names
+    assert.equal(getCompactWalletName('Some Random Extension Wallet'), 'Some');
+    assert.equal(getCompactWalletName('Exodus Web3'), 'Exodus');
+
+    // Safe handling of empty, whitespace, malformed, or unusual inputs
+    assert.equal(getCompactWalletName(''), 'Browser');
+    assert.equal(getCompactWalletName('   '), 'Browser');
+    assert.equal(getCompactWalletName(undefined), 'Browser');
+    assert.equal(getCompactWalletName(null), 'Browser');
+    assert.equal(getCompactWalletName({} as any), 'Browser');
+    assert.equal(getCompactWalletName('SuperLongSingleWordWalletNameThatIsExtremelyLong'), 'SuperLongSingleWordWalletNameThatIsExtre');
+  });
+
+  it('22. B.10.6 Grid Items: Compact label used for display while preserving full name in metadata', () => {
+    const bitget = makeMockConnector({
+      id: 'com.bitget.web3',
+      name: 'Bitget Wallet',
+      type: 'injected',
+      rdns: 'com.bitget.web3',
+    });
+    const coinbase = makeMockConnector({
+      id: 'com.coinbase.wallet',
+      name: 'Coinbase Wallet',
+      type: 'injected',
+      rdns: 'com.coinbase.wallet',
+    });
+    const phantom = makeMockConnector({
+      id: 'app.phantom',
+      name: 'Phantom',
+      type: 'injected',
+      rdns: 'app.phantom',
+    });
+
+    const items = buildGridWalletItems([bitget, coinbase, phantom]);
+
+    // Bitget: full name preserved, compact name has first word
+    const bitgetItem = items.find((i) => i.rdns === 'com.bitget.web3');
+    assert.ok(bitgetItem);
+    assert.equal(bitgetItem.name, 'Bitget Wallet');
+    assert.equal(bitgetItem.compactName, 'Bitget');
+    assert.equal(bitgetItem.connector, bitget, 'Connector object identity must remain intact');
+
+    // Coinbase: full name preserved, compact name has first word
+    const coinbaseItem = items.find((i) => i.rdns === 'com.coinbase.wallet');
+    assert.ok(coinbaseItem);
+    assert.equal(coinbaseItem.name, 'Coinbase Wallet');
+    assert.equal(coinbaseItem.compactName, 'Coinbase');
+    assert.equal(coinbaseItem.connector, coinbase, 'Connector object identity must remain intact');
+
+    // Phantom: single word remains identical
+    const phantomItem = items.find((i) => i.rdns === 'app.phantom');
+    assert.ok(phantomItem);
+    assert.equal(phantomItem.name, 'Phantom');
+    assert.equal(phantomItem.compactName, 'Phantom');
+    assert.equal(phantomItem.connector, phantom, 'Connector object identity must remain intact');
+  });
+
+  it('23. B.10.6 Modal Accessibility: Full accessible name preserved and exact-provider dispatch maintained', () => {
+    // Accessible button label retains full connector name
+    assert.match(
+      walletStatusContent,
+      /aria-label=\{`Connect with \$\{item\.name\}`\}/,
+      'Full wallet name must be retained in aria-label'
+    );
+
+    // Tooltip retains full connector name
+    assert.match(
+      walletStatusContent,
+      /title=\{item\.name\}/,
+      'Full wallet name must be retained in title tooltip'
+    );
+
+    // Visual button label renders compact name
+    assert.match(
+      walletStatusContent,
+      /\{item\.compactName\}/,
+      'Visual label must render item.compactName'
+    );
+
+    // Exact-provider dispatch passes unchanged targetConnector
+    assert.match(
+      walletStatusContent,
+      /onClick=\{\(\) => handleConnect\(item\.connector\)\}/,
+      'Direct dispatch of item.connector to handleConnect must remain unchanged'
+    );
   });
 });

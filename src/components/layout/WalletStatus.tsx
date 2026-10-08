@@ -2,21 +2,31 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { useAccount, useConnect, useDisconnect, useBalance, useConnectors, type Connector } from 'wagmi';
+import { useAccount, useConnect, useDisconnect, useBalance, useReadContract, useConnectors, type Connector } from 'wagmi';
 import Link from 'next/link';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Wallet, ChevronDown, ChevronRight, LogOut, Copy, Check, ExternalLink, X, Loader2, AlertTriangle, ArrowRightLeft } from 'lucide-react';
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
+import { Wallet, ChevronDown, ChevronRight, LogOut, Copy, Check, X, Loader2, AlertTriangle, ArrowRightLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSynqIdentity } from '@/hooks/useSynqIdentity';
-import { Avatar } from '@/components/shared/Avatar';
 import { useSepoliaNetwork } from '@/hooks/useSepoliaNetwork';
-import { SEPOLIA_CHAIN_ID } from '@/lib/contracts/addresses';
+import { SEPOLIA_CHAIN_ID, SYNQ_V2_SEPOLIA_CONFIG } from '@/lib/contracts/addresses';
+import { erc20ABI } from '@/lib/contracts/abis';
+import { formatUnits } from 'viem';
+import { Press_Start_2P } from 'next/font/google';
 import {
   classifyConnectors,
+  buildGridWalletItems,
   KNOWN_WALLETS_BY_RDNS,
   isSafeIconUri,
   getWalletDisplayName,
+  type GridWalletItem,
 } from '@/lib/wallet/discovery';
+
+const pressStart2P = Press_Start_2P({
+  subsets: ['latin'],
+  weight: '400',
+  display: 'swap',
+});
 
 declare global {
   interface Window {
@@ -24,56 +34,134 @@ declare global {
   }
 }
 
-function WalletItemIcon({ connector, fallbackSrc }: { connector?: Connector; fallbackSrc?: string }) {
+interface WalletIconStyle {
+  scale?: string;
+  imgRounded?: string;
+}
+
+const WALLET_ICON_STYLES: Record<string, WalletIconStyle> = {
+  // MetaMask: Fox head is 117x108 on 263x199 canvas (~44% width, 54% height with baked white padding).
+  // Scale up to 1.85x so the fox visual mass matches the 32-34px size of other wallets.
+  'io.metamask': {
+    scale: 'scale-[1.85]',
+  },
+  // Coinbase: Circle logo is 314x313 on 863x566 canvas (~36% width with huge transparent margins).
+  // Scale up to 2.35x so the circle mark matches the 32-34px size of other wallets.
+  'com.coinbase.wallet': {
+    scale: 'scale-[2.35]',
+  },
+  'coinbase': {
+    scale: 'scale-[2.35]',
+  },
+  'coinbaseWalletSDK': {
+    scale: 'scale-[2.35]',
+  },
+  // Rabby: 447x447 solid JPEG badge; round corners so it does not look like a sharp square in the tile.
+  'io.rabby': {
+    imgRounded: 'rounded-xl',
+  },
+  // Phantom: 400x400 solid purple badge; round corners for smooth tile harmony.
+  'app.phantom': {
+    imgRounded: 'rounded-xl',
+  },
+  // WalletConnect: ~72% fill; subtle 1.15x scale for visual equilibrium.
+  'walletConnect': {
+    scale: 'scale-[1.15]',
+  },
+};
+
+function getWalletIconStyle(item?: GridWalletItem, connector?: Connector): WalletIconStyle {
+  const rdns = (item?.rdns || (typeof connector?.rdns === 'string' ? connector.rdns : ''))?.toLowerCase();
+  const id = (item?.connector?.id || connector?.id || item?.key || '')?.toLowerCase();
+  const name = (item?.name || '')?.toLowerCase();
+
+  if (rdns === 'io.metamask' || id.includes('metamask') || name === 'metamask') {
+    return WALLET_ICON_STYLES['io.metamask'];
+  }
+  if (rdns === 'com.coinbase.wallet' || id.includes('coinbase') || name.includes('coinbase')) {
+    return WALLET_ICON_STYLES['com.coinbase.wallet'];
+  }
+  if (rdns === 'io.rabby' || id.includes('rabby') || name.includes('rabby')) {
+    return WALLET_ICON_STYLES['io.rabby'];
+  }
+  if (rdns === 'app.phantom' || id.includes('phantom') || name.includes('phantom')) {
+    return WALLET_ICON_STYLES['app.phantom'];
+  }
+  if (id.includes('walletconnect') || name.includes('walletconnect')) {
+    return WALLET_ICON_STYLES['walletConnect'];
+  }
+
+  return { imgRounded: 'rounded-lg' };
+}
+
+function WalletItemIcon({
+  connector,
+  fallbackSrc,
+  item,
+}: {
+  connector?: Connector;
+  fallbackSrc?: string;
+  item?: GridWalletItem;
+}) {
   const [imgError, setImgError] = useState(false);
+  const iconStyle = getWalletIconStyle(item, connector);
 
-  if (fallbackSrc) {
+  const src = item?.iconSrc || fallbackSrc;
+  if (src && !imgError) {
     return (
-      <div className="w-10 h-10 rounded-xl bg-zinc-800 overflow-hidden flex items-center justify-center shrink-0">
-        <img src={fallbackSrc} alt="" className="w-full h-full object-cover" />
-      </div>
+      <img
+        src={src}
+        alt={item?.name || ''}
+        className={cn(
+          "w-8 h-8 sm:w-9 sm:h-9 object-contain select-none pointer-events-none transition-transform duration-150",
+          iconStyle.scale,
+          iconStyle.imgRounded
+        )}
+        onError={() => setImgError(true)}
+      />
     );
   }
 
-  if (!connector) {
-    return (
-      <div className="w-10 h-10 rounded-xl bg-zinc-800 overflow-hidden flex items-center justify-center shrink-0 text-zinc-400">
-        <Wallet size={20} />
-      </div>
-    );
-  }
-
-  const rdns = typeof connector.rdns === 'string'
-    ? connector.rdns.toLowerCase()
-    : (Array.isArray(connector.rdns) ? connector.rdns[0]?.toLowerCase() : '') || connector.id.toLowerCase();
-
-  const curated = KNOWN_WALLETS_BY_RDNS[rdns];
-  if (curated) {
-    return (
-      <div className="w-10 h-10 rounded-xl bg-zinc-800 overflow-hidden flex items-center justify-center shrink-0">
-        <img src={curated.src} alt="" className="w-full h-full object-cover" />
-      </div>
-    );
-  }
-
-  const rawIcon = connector.icon;
-  if (!imgError && isSafeIconUri(rawIcon)) {
-    return (
-      <div className="w-10 h-10 rounded-xl bg-zinc-800 overflow-hidden flex items-center justify-center shrink-0 p-1">
+  const targetConnector = item?.connector || connector;
+  if (targetConnector) {
+    const rdns = typeof targetConnector.rdns === 'string'
+      ? targetConnector.rdns.toLowerCase()
+      : (Array.isArray(targetConnector.rdns) ? targetConnector.rdns[0]?.toLowerCase() : '') || targetConnector.id.toLowerCase();
+    const curated = KNOWN_WALLETS_BY_RDNS[rdns];
+    if (curated && !imgError) {
+      return (
         <img
-          src={rawIcon}
-          alt=""
-          className="w-full h-full object-contain"
+          src={curated.src}
+          alt={item?.name || ''}
+          className={cn(
+            "w-8 h-8 sm:w-9 sm:h-9 object-contain select-none pointer-events-none transition-transform duration-150",
+            iconStyle.scale,
+            iconStyle.imgRounded
+          )}
           onError={() => setImgError(true)}
         />
-      </div>
-    );
+      );
+    }
+
+    const rawIcon = targetConnector.icon;
+    if (!imgError && isSafeIconUri(rawIcon)) {
+      return (
+        <img
+          src={rawIcon}
+          alt={item?.name || ''}
+          className={cn(
+            "w-8 h-8 sm:w-9 sm:h-9 object-contain select-none pointer-events-none transition-transform duration-150",
+            iconStyle.scale,
+            iconStyle.imgRounded
+          )}
+          onError={() => setImgError(true)}
+        />
+      );
+    }
   }
 
   return (
-    <div className="w-10 h-10 rounded-xl bg-zinc-800 overflow-hidden flex items-center justify-center shrink-0 text-zinc-400">
-      <Wallet size={20} />
-    </div>
+    <Wallet size={24} className="text-zinc-600 select-none" />
   );
 }
 
@@ -83,6 +171,21 @@ function getScopedDisplayName(walletAddress?: string): string {
     const raw = window.localStorage.getItem(`settings:username:${walletAddress.toLowerCase()}`);
     return raw !== null && raw !== undefined ? (JSON.parse(raw) as string) : '';
   } catch { return ''; }
+}
+
+function BalanceRow({
+  value,
+  symbol,
+}: {
+  value: string;
+  symbol: string;
+}) {
+  return (
+    <div className="flex items-center justify-between text-[10px] sm:text-[10.5px] text-white font-normal tracking-tight">
+      <span className="truncate mr-2 min-w-0">{value}</span>
+      <span className="text-zinc-400 text-[8.5px] shrink-0 font-normal select-none">{symbol}</span>
+    </div>
+  );
 }
 
 export interface WalletStatusProps {
@@ -95,9 +198,6 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
   const { address, isConnected, connector } = useAccount();
   const { connectAsync } = useConnect();
   const { disconnect } = useDisconnect();
-  const { data: balance } = useBalance({ address, chainId: SEPOLIA_CHAIN_ID });
-  const connectors = useConnectors();
-  const identity = useSynqIdentity(address);
   const {
     networkReady,
     isWrongNetwork,
@@ -108,6 +208,21 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
   } = useSepoliaNetwork();
   const autoSwitchSessionRef = useRef<string | null>(null);
 
+  const { data: balance } = useBalance({ address, chainId: SEPOLIA_CHAIN_ID });
+  const { data: usdcRawBalance, isLoading: isUsdcLoading } = useReadContract({
+    address: SYNQ_V2_SEPOLIA_CONFIG.canonicalUsdc,
+    abi: erc20ABI,
+    functionName: 'balanceOf',
+    args: address ? [address] : undefined,
+    chainId: SEPOLIA_CHAIN_ID,
+    query: {
+      enabled: Boolean(address && networkReady),
+    },
+  });
+  const shouldReduceMotion = useReducedMotion();
+  const connectors = useConnectors();
+  const identity = useSynqIdentity(address);
+
   const [open, setOpen] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [connecting, setConnecting] = useState<string | null>(null);
@@ -115,14 +230,17 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
 
   const [connectionError, setConnectionError] = useState('');
   const buttonRef = useRef<HTMLButtonElement | null>(null);
-  const [dropdownPos, setDropdownPos] = useState<{ top: number; right: number }>({ top: 0, right: 0 });
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: 0 });
 
   const updateDropdownPos = useCallback(() => {
     if (!buttonRef.current) return;
     const rect = buttonRef.current.getBoundingClientRect();
+    const width = Math.round(rect.width);
+    const left = Math.round(Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)));
     setDropdownPos({
-      top: rect.bottom + 8,
-      right: Math.max(16, window.innerWidth - rect.right),
+      top: Math.round(rect.bottom + 6),
+      left,
+      width,
     });
   }, []);
 
@@ -146,9 +264,19 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
     updateDropdownPos();
     window.addEventListener('resize', updateDropdownPos);
     window.addEventListener('scroll', updateDropdownPos, true);
+
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && buttonRef.current) {
+      observer = new ResizeObserver(() => {
+        updateDropdownPos();
+      });
+      observer.observe(buttonRef.current);
+    }
+
     return () => {
       window.removeEventListener('resize', updateDropdownPos);
       window.removeEventListener('scroll', updateDropdownPos, true);
+      observer?.disconnect();
     };
   }, [open, updateDropdownPos]);
 
@@ -268,6 +396,33 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
   const formatBalance = (bal: { decimals: number; symbol: string; value: bigint }) =>
     `${(Number(bal.value) / 10 ** bal.decimals).toFixed(4)} ${bal.symbol}`;
 
+  const formatUsdcValue = (raw?: bigint | null): string => {
+    if (raw === undefined || raw === null) return '...';
+    try {
+      const decimals = SYNQ_V2_SEPOLIA_CONFIG.usdcDecimals;
+      const formatted = formatUnits(raw, decimals);
+      const [intPart, fracPart = ''] = formatted.split('.');
+      const formattedInt = Number(intPart).toLocaleString();
+      const frac = fracPart.slice(0, 2).padEnd(2, '0');
+      return `${formattedInt}.${frac}`;
+    } catch {
+      return (Number(raw) / 10 ** SYNQ_V2_SEPOLIA_CONFIG.usdcDecimals).toFixed(2);
+    }
+  };
+
+  const formatEthValue = (bal?: { decimals: number; symbol: string; value: bigint } | null): string => {
+    if (!bal) return '...';
+    try {
+      const formatted = formatUnits(bal.value, bal.decimals);
+      const [intPart, fracPart = ''] = formatted.split('.');
+      const formattedInt = Number(intPart).toLocaleString();
+      const frac = fracPart.slice(0, 4).padEnd(4, '0');
+      return `${formattedInt}.${frac}`;
+    } catch {
+      return (Number(bal.value) / 10 ** bal.decimals).toFixed(4);
+    }
+  };
+
   const copyAddress = async () => {
     if (address) {
       await navigator.clipboard.writeText(address);
@@ -284,6 +439,9 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
     walletConnect,
     genericInjected,
   } = React.useMemo(() => classifyConnectors(connectors), [connectors]);
+
+  const gridItems = React.useMemo(() => buildGridWalletItems(connectors), [connectors]);
+
 
   const handleConnect = async (targetConnector: Connector) => {
     setConnecting(targetConnector.uid || targetConnector.id);
@@ -313,9 +471,12 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
     refreshDisplayName();
     if (!open && buttonRef.current) {
       const rect = buttonRef.current.getBoundingClientRect();
+      const width = Math.round(rect.width);
+      const left = Math.round(Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)));
       setDropdownPos({
-        top: rect.bottom + 8,
-        right: Math.max(16, window.innerWidth - rect.right),
+        top: Math.round(rect.bottom + 6),
+        left,
+        width,
       });
     }
     const next = !open;
@@ -330,7 +491,7 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
           ref={buttonRef}
           onClick={handleToggleOpen}
           className={cn(
-            'flex items-center gap-2.5 sm:gap-3 h-10 px-4 rounded-xl border text-sm font-medium transition-all shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#242424]/20 select-none bg-[#FFFFFF] border-zinc-200/90 text-[#242424] hover:bg-zinc-50 hover:border-zinc-300 hover:shadow',
+            'flex items-center gap-2.5 sm:gap-3 h-10 px-4 rounded-xl border text-sm font-medium transition-all shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#242424]/20 select-none bg-[#FFFFFF] border-zinc-200/90 text-[#242424] hover:bg-zinc-50 hover:border-zinc-300 hover:shadow min-w-[210px]',
             className
           )}
         >
@@ -355,7 +516,7 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
           <ChevronDown
             size={15}
             className={cn(
-              'shrink-0 transition-transform duration-200 text-[#242424]/70',
+              'shrink-0 transition-transform duration-200 text-[#242424]/70 ml-auto',
               open && 'rotate-180'
             )}
           />
@@ -373,101 +534,131 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
                 />
                 <motion.div
                   key="wallet-dropdown-panel"
-                initial={{ opacity: 0, y: -8, scale: 0.96 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: -8, scale: 0.96 }}
-                transition={{ duration: 0.15, ease: 'easeOut' }}
-                style={{
-                  position: 'fixed',
-                  top: dropdownPos.top,
-                  right: dropdownPos.right,
-                }}
-                className="w-72 p-4 rounded-xl border border-zinc-700/50 bg-zinc-900 shadow-2xl z-[101]"
-              >
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-sm font-medium text-white">
-                    {displayName ? (
-                      <>
-                        {displayName}
-                        {identity.displayHandle && <span className="text-zinc-500"> {identity.displayHandle}</span>}
-                      </>
-                    ) : (
-                      identity.displayHandle || 'Wallet'
-                    )}
-                  </span>
-                  <div className={cn('flex items-center gap-1 text-xs', networkReady ? 'text-zinc-500' : 'text-amber-400')}><div className={cn('w-1.5 h-1.5 rounded-full', networkReady ? 'bg-green-400' : 'bg-amber-400')} /> {networkReady ? 'Sepolia Ready' : isNetworkUnverified ? 'Network Not Verified' : 'Wrong Network'}</div>
-                </div>
-                {!networkReady && (
-                  <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/25 mb-3 space-y-2">
-                    <div className="flex items-start gap-2 text-xs text-amber-300">
-                      <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                      <span>{isWrongNetwork ? 'Wrong Network.' : 'The wallet network could not be verified.'} Required: Ethereum Sepolia.</span>
+                  initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
+                  animate={shouldReduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
+                  exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
+                  transition={{
+                    duration: shouldReduceMotion ? 0.15 : 0.28,
+                    ease: [0.16, 1, 0.3, 1],
+                  }}
+                  style={{
+                    position: 'fixed',
+                    top: dropdownPos.top,
+                    left: dropdownPos.left,
+                    width: dropdownPos.width || (buttonRef.current?.getBoundingClientRect().width ?? 210),
+                  }}
+                  className={cn(
+                    pressStart2P.className,
+                    "p-4 rounded-2xl border border-[#444444] bg-[#303030] shadow-2xl z-[101] overflow-hidden flex flex-col gap-3.5 text-white box-border"
+                  )}
+                >
+                  {/* Wrong network alert banner (if network is not verified / wrong network) */}
+                  {!networkReady && (
+                    <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25 space-y-2">
+                      <div className="flex items-center gap-1.5 text-[7.5px] text-amber-300 leading-tight">
+                        <AlertTriangle size={12} className="shrink-0 text-amber-400" />
+                        <span className="truncate">{isWrongNetwork ? 'Wrong Network' : 'Network Unverified'}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleSwitchToSepolia}
+                        disabled={isSwitching}
+                        className="w-full flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg bg-amber-500/20 text-[7.5px] text-amber-200 hover:bg-amber-500/30 disabled:opacity-50 transition-colors"
+                      >
+                        {isSwitching ? <Loader2 size={11} className="animate-spin" /> : <ArrowRightLeft size={11} />}
+                        <span>{isSwitching ? 'Switching...' : 'Switch Sepolia'}</span>
+                      </button>
+                      {(connectionError || networkError) && (
+                        <p className="text-[7px] text-red-300 truncate">{connectionError || networkError?.message}</p>
+                      )}
                     </div>
-                    <button onClick={handleSwitchToSepolia} disabled={isSwitching} className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-amber-500/15 text-xs text-amber-200 hover:bg-amber-500/25 disabled:opacity-50 transition-colors">
-                      {isSwitching ? <Loader2 size={14} className="animate-spin" /> : <ArrowRightLeft size={14} />}
-                      {isSwitching ? 'Switching...' : 'Switch to Sepolia'}
-                    </button>
-                    {(connectionError || networkError) && <p className="text-[11px] text-red-300">{connectionError || networkError?.message}</p>}
+                  )}
+
+                  {/* Header: Display Name, Username, Network Status */}
+                  <div className="flex items-start justify-between gap-2 pb-3 border-b border-[#404040]">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[10px] text-white font-normal truncate tracking-tight">
+                        {displayName || identity.displayHandle || (address ? truncateAddress(address) : 'Connected')}
+                      </div>
+                      {displayName && identity.displayHandle && (
+                        <div className="text-[8px] text-zinc-400 truncate mt-1 tracking-tight font-mono">
+                          {identity.displayHandle}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0 text-[7.5px] text-zinc-400 pt-0.5 select-none">
+                      <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', networkReady ? 'bg-green-400' : 'bg-amber-400')} />
+                      <span>{networkReady ? 'Sepolia' : 'Wrong Net'}</span>
+                    </div>
                   </div>
-                )}
-                <div className="p-3 rounded-lg bg-zinc-800/50 mb-3">
-                  <div className="text-xs text-zinc-500 mb-1">Address</div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-white font-mono">{truncateAddress(address!)}</span>
-                    <button onClick={copyAddress} className="p-1 rounded hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors">
+
+                  {/* Two Equally Prominent Balance Rows: USDC & ETH */}
+                  <div className="pb-3 border-b border-[#404040] flex flex-col gap-2.5">
+                    <BalanceRow
+                      value={!networkReady ? '--' : isUsdcLoading ? '...' : formatUsdcValue(usdcRawBalance)}
+                      symbol="USDC"
+                    />
+                    <BalanceRow
+                      value={!networkReady ? '--' : !balance ? '...' : formatEthValue(balance)}
+                      symbol="ETH"
+                    />
+                  </div>
+
+                  {/* Address with Full Address Copy */}
+                  <div className="pb-3 border-b border-[#404040] flex items-center justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[7px] text-zinc-400 uppercase tracking-tight mb-1 select-none">
+                        Address
+                      </div>
+                      <span className="text-[10px] sm:text-[10.5px] text-zinc-200 tracking-tight truncate block">
+                        {address ? truncateAddress(address) : ''}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={copyAddress}
+                      className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/50"
+                      title="Copy full address"
+                      aria-label="Copy full wallet address"
+                    >
                       {copied ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
                     </button>
                   </div>
-                </div>
-                {identity.hasHandle ? (
-                  <div className="p-3 rounded-lg bg-zinc-800/50 mb-3">
-                    <div className="text-xs text-zinc-500 mb-1">Username</div>
-                    <div className="text-sm text-blue-400">{identity.displayHandle}</div>
+
+                  {/* Actions: Swap & Disconnect in 35:65 Ratio Grid */}
+                  <div
+                    className="grid grid-cols-[minmax(0,35fr)_minmax(0,65fr)] gap-2 w-full pt-1"
+                    style={{ gridTemplateColumns: 'minmax(0, 35fr) minmax(0, 65fr)' }}
+                  >
+                    <Link
+                      href="/swap"
+                      onClick={handleClose}
+                      className="w-full flex items-center justify-center gap-1 sm:gap-1.5 h-9 px-1.5 sm:px-2 rounded-xl bg-white text-[#242424] hover:bg-zinc-100 transition-colors text-[8px] sm:text-[8.5px] font-normal tracking-tight select-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white whitespace-nowrap overflow-hidden"
+                    >
+                      <ArrowRightLeft size={11} className="shrink-0 text-[#242424]" />
+                      <span>Swap</span>
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        disconnect();
+                        handleClose();
+                      }}
+                      className="w-full flex items-center justify-center gap-1 sm:gap-1.5 h-9 px-1.5 sm:px-2 rounded-xl bg-white text-[#242424] hover:bg-zinc-100 transition-colors text-[8px] sm:text-[8.5px] font-normal tracking-tight select-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white whitespace-nowrap overflow-hidden"
+                    >
+                      <LogOut size={11} className="shrink-0 text-[#242424]" />
+                      <span>Disconnect</span>
+                    </button>
                   </div>
-                ) : (
-                  networkReady && !identity.isLoading && (
-                    <div className="p-3 rounded-lg bg-zinc-800/50 border border-zinc-700/50 mb-3">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-medium text-amber-400/90">No Synq handle</span>
-                        <Link
-                          href="/settings"
-                          onClick={handleClose}
-                          className="text-xs text-blue-400 hover:text-blue-300 transition-colors font-medium flex items-center gap-0.5"
-                        >
-                          Profile &rarr;
-                        </Link>
-                      </div>
-                      <p className="text-xs text-zinc-400">Set up your @username in Profile</p>
-                    </div>
-                  )
-                )}
-                {displayName && (
-                  <div className="p-3 rounded-lg bg-zinc-800/50 mb-3">
-                    <div className="text-xs text-zinc-500 mb-1">Display Name</div>
-                    <div className="text-sm text-white">{displayName}</div>
-                  </div>
-                )}
-                <div className="p-3 rounded-lg bg-zinc-800/50 mb-3">
-                  <div className="text-xs text-zinc-500 mb-1">Balance</div>
-                  <div className="text-sm text-white">{balance ? formatBalance(balance) : '...'}</div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => { navigator.clipboard.writeText(address!); }} className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-zinc-800 text-xs text-zinc-300 hover:bg-zinc-700 transition-colors">
-                    <ExternalLink size={14} /> Explorer
-                  </button>
-                  <button onClick={() => { disconnect(); handleClose(); }} className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-600/10 text-xs text-red-400 hover:bg-red-600/20 transition-colors">
-                    <LogOut size={14} /> Disconnect
-                  </button>
-                </div>
-              </motion.div>
-            </div>
-          )}
-        </AnimatePresence>,
-        document.body
-      )}
-    </div>
-  );
-}
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>,
+          document.body
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="relative">
@@ -514,212 +705,103 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
               />
               <motion.div
                 key="wallet-modal-panel"
-                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                initial={{ opacity: 0, scale: 0.95, y: 16 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                exit={{ opacity: 0, scale: 0.95, y: 16 }}
                 transition={{ duration: 0.15, ease: 'easeOut' }}
                 className="fixed inset-0 z-[101] flex items-center justify-center p-4 pointer-events-none"
               >
-                <div className="w-full max-w-md rounded-2xl border border-zinc-700/50 bg-zinc-900 shadow-2xl overflow-hidden pointer-events-auto">
-                  <div className="flex items-center justify-between p-5 border-b border-zinc-800">
-                    <div>
-                      <h2 className="text-lg font-semibold text-white">Connect Wallet</h2>
-                      <p className="text-sm text-zinc-400 mt-0.5">Choose a connection method</p>
-                    </div>
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="wallet-modal-title"
+                  className="w-full max-w-[500px] rounded-3xl bg-[#303030] border border-[#444444] shadow-2xl overflow-hidden pointer-events-auto flex flex-col max-h-[85vh]"
+                >
+                  {/* Header */}
+                  <div className="p-6 pb-4 border-b border-[#404040] relative shrink-0">
                     <button
+                      type="button"
                       onClick={handleCloseModal}
-                      className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
+                      className="absolute right-5 top-5 p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/5 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/50"
                       aria-label="Close modal"
                     >
                       <X size={18} />
                     </button>
+                    <h2
+                      id="wallet-modal-title"
+                      className={cn(pressStart2P.className, "text-[14px] sm:text-[15px] text-white tracking-normal leading-relaxed")}
+                      style={{ wordSpacing: '-0.35em' }}
+                    >
+                      Synq your wallet...
+                    </h2>
+                    <p className={cn(pressStart2P.className, "text-[9px] sm:text-[10px] text-zinc-400 mt-2.5 leading-relaxed tracking-tight")}>
+                      Choose a wallet to connect and continue.
+                    </p>
                   </div>
-                  <div className="p-5 max-h-[70vh] sm:max-h-[460px] overflow-y-auto space-y-4">
-                    {/* Section 1: Detected Wallets */}
-                    <div>
-                      <div className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider px-0.5 mb-2 flex items-center justify-between">
-                        <span>Detected Wallets</span>
-                        {detectedWallets.length > 0 && (
-                          <span className="text-[10px] text-zinc-500 font-normal">
-                            {detectedWallets.length} available
-                          </span>
-                        )}
-                      </div>
 
-                      {detectedWallets.length > 0 ? (
-                        <div className="grid gap-2">
-                          {detectedWallets.map((wallet) => {
-                            const key = wallet.uid || wallet.id;
-                            const rdns = typeof wallet.rdns === 'string'
-                              ? wallet.rdns.toLowerCase()
-                              : (Array.isArray(wallet.rdns) ? wallet.rdns[0]?.toLowerCase() : '') || wallet.id.toLowerCase();
-                            const curated = KNOWN_WALLETS_BY_RDNS[rdns];
-                            const isConnectingThis = connecting === key;
-
-                            return (
-                              <button
-                                key={key}
-                                onClick={() => handleConnect(wallet)}
-                                disabled={connecting !== null}
-                                className={cn(
-                                  'flex items-center gap-3 w-full p-3 rounded-xl border text-left transition-all group border-zinc-700/40 bg-zinc-800/30',
-                                  curated?.bg,
-                                  isConnectingThis
-                                    ? 'opacity-70 cursor-wait'
-                                    : 'hover:bg-zinc-800/70 hover:border-zinc-600/60'
-                                )}
-                              >
-                                <WalletItemIcon connector={wallet} />
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-sm font-medium text-white group-hover:text-blue-400 transition-colors truncate">
-                                      {getWalletDisplayName(wallet.name)}
-                                    </span>
-                                    {isConnectingThis ? (
-                                      <Loader2 size={12} className="animate-spin text-blue-400 shrink-0" />
-                                    ) : (
-                                      <span className="text-[10px] font-medium tracking-wide uppercase px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
-                                        Installed
-                                      </span>
-                                    )}
-                                  </div>
-                                  <p className="text-xs text-zinc-500 truncate">
-                                    {curated?.description || 'Browser extension'}
-                                  </p>
-                                </div>
-                                <ChevronRight size={16} className="text-zinc-600 group-hover:text-zinc-400 transition-colors shrink-0" />
-                              </button>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <div className="p-3.5 rounded-xl border border-dashed border-zinc-800 bg-zinc-900/40 text-center">
-                          <p className="text-xs font-medium text-zinc-400">No browser wallet detected</p>
-                          <p className="text-[11px] text-zinc-500 mt-1">
-                            Install an extension or connect via mobile wallet below:
-                          </p>
-                          <div className="flex items-center justify-center gap-2.5 mt-2">
-                            <a
-                              href="https://metamask.io/download/"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-xs text-orange-400 hover:text-orange-300 transition-colors font-medium flex items-center gap-0.5"
-                            >
-                              MetaMask <ExternalLink size={10} />
-                            </a>
-                            <span className="text-zinc-700">&bull;</span>
-                            <a
-                              href="https://rabby.io/"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-xs text-violet-400 hover:text-violet-300 transition-colors font-medium flex items-center gap-0.5"
-                            >
-                              Rabby <ExternalLink size={10} />
-                            </a>
-                            <span className="text-zinc-700">&bull;</span>
-                            <a
-                              href="https://phantom.app/download"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-xs text-purple-400 hover:text-purple-300 transition-colors font-medium flex items-center gap-0.5"
-                            >
-                              Phantom <ExternalLink size={10} />
-                            </a>
-                          </div>
-                        </div>
-                      )}
+                  {/* Connection error display */}
+                  {connectionError && (
+                    <div className="mx-6 mt-4 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-300 flex items-center justify-between shrink-0">
+                      <span className="truncate">{connectionError}</span>
+                      <button
+                        type="button"
+                        onClick={() => setConnectionError('')}
+                        className="text-red-400 hover:text-red-200 ml-2 shrink-0"
+                        aria-label="Dismiss error"
+                      >
+                        <X size={14} />
+                      </button>
                     </div>
+                  )}
 
-                    {/* Section 2: Other Connection Methods */}
-                    {(walletConnect || coinbaseSdk || (genericInjected && detectedWallets.length === 0)) && (
-                      <div>
-                        <div className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider px-0.5 mb-2">
-                          Other Connection Methods
-                        </div>
-                        <div className="grid gap-2">
-                          {walletConnect && (
+                  {/* Wallet Grid - Bounded scrollable area */}
+                  <div className="p-6 py-5 overflow-y-auto flex-1 max-h-[380px]">
+                    {gridItems.length > 0 ? (
+                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-y-5 gap-x-3 sm:gap-x-4 place-items-center">
+                        {gridItems.map((item) => {
+                          const isConnectingThis = connecting === item.key;
+                          return (
                             <button
-                              key={walletConnect.uid || walletConnect.id}
-                              onClick={() => handleConnect(walletConnect)}
+                              key={item.key}
+                              type="button"
+                              onClick={() => handleConnect(item.connector)}
                               disabled={connecting !== null}
-                              className={cn(
-                                'flex items-center gap-3 w-full p-3 rounded-xl border text-left transition-all group border-blue-500/20 bg-blue-500/10',
-                                connecting === (walletConnect.uid || walletConnect.id) ? 'opacity-70 cursor-wait' : 'hover:bg-blue-500/15'
-                              )}
+                              className="group flex flex-col items-center focus-visible:outline-none w-full max-w-[80px]"
+                              aria-label={`Connect with ${item.name}`}
                             >
-                              <WalletItemIcon fallbackSrc="/wallets/walletconnect.png" />
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-sm font-medium text-white group-hover:text-blue-400 transition-colors">
-                                    WalletConnect
-                                  </span>
-                                  {connecting === (walletConnect.uid || walletConnect.id) && (
-                                    <Loader2 size={12} className="animate-spin text-blue-400 shrink-0" />
-                                  )}
-                                </div>
-                                <p className="text-xs text-zinc-500 truncate">Connect via mobile wallet or QR code</p>
+                              <div className="relative w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-white shadow-sm flex items-center justify-center p-2.5 shrink-0 transition-transform duration-150 group-hover:scale-105 group-focus-visible:ring-2 group-focus-visible:ring-white group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-[#303030] overflow-hidden">
+                                {isConnectingThis ? (
+                                  <Loader2 size={24} className="animate-spin text-zinc-700" />
+                                ) : (
+                                  <WalletItemIcon item={item} connector={item.connector} />
+                                )}
                               </div>
-                              <ChevronRight size={16} className="text-zinc-600 group-hover:text-zinc-400 transition-colors shrink-0" />
+                              <span
+                                className={cn(
+                                  pressStart2P.className,
+                                  "mt-2 text-[8px] sm:text-[8.5px] text-zinc-300 font-normal text-center leading-snug line-clamp-2 w-full max-w-[76px] sm:max-w-[82px] break-words group-hover:text-white transition-colors select-none min-h-[22px] flex items-center justify-center tracking-tight"
+                                )}
+                                title={item.name}
+                              >
+                                {item.compactName}
+                              </span>
                             </button>
-                          )}
-
-                          {coinbaseSdk && (
-                            <button
-                              key={coinbaseSdk.uid || coinbaseSdk.id}
-                              onClick={() => handleConnect(coinbaseSdk)}
-                              disabled={connecting !== null}
-                              className={cn(
-                                'flex items-center gap-3 w-full p-3 rounded-xl border text-left transition-all group border-blue-500/20 bg-blue-500/10',
-                                connecting === (coinbaseSdk.uid || coinbaseSdk.id) ? 'opacity-70 cursor-wait' : 'hover:bg-blue-500/15'
-                              )}
-                            >
-                              <WalletItemIcon fallbackSrc="/wallets/coinbase.png" />
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-sm font-medium text-white group-hover:text-blue-400 transition-colors">
-                                    Coinbase Wallet
-                                  </span>
-                                  {connecting === (coinbaseSdk.uid || coinbaseSdk.id) && (
-                                    <Loader2 size={12} className="animate-spin text-blue-400 shrink-0" />
-                                  )}
-                                </div>
-                                <p className="text-xs text-zinc-500 truncate">Smart Wallet or mobile app</p>
-                              </div>
-                              <ChevronRight size={16} className="text-zinc-600 group-hover:text-zinc-400 transition-colors shrink-0" />
-                            </button>
-                          )}
-
-                          {genericInjected && detectedWallets.length === 0 && (
-                            <button
-                              key={genericInjected.uid || genericInjected.id}
-                              onClick={() => handleConnect(genericInjected)}
-                              disabled={connecting !== null}
-                              className={cn(
-                                'flex items-center gap-3 w-full p-3 rounded-xl border text-left transition-all group border-zinc-700/40 bg-zinc-800/30',
-                                connecting === (genericInjected.uid || genericInjected.id) ? 'opacity-70 cursor-wait' : 'hover:bg-zinc-800/70'
-                              )}
-                            >
-                              <WalletItemIcon />
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-sm font-medium text-white group-hover:text-blue-400 transition-colors">
-                                    Browser Wallet
-                                  </span>
-                                  {connecting === (genericInjected.uid || genericInjected.id) && (
-                                    <Loader2 size={12} className="animate-spin text-blue-400 shrink-0" />
-                                  )}
-                                </div>
-                                <p className="text-xs text-zinc-500 truncate">Default window.ethereum provider</p>
-                              </div>
-                              <ChevronRight size={16} className="text-zinc-600 group-hover:text-zinc-400 transition-colors shrink-0" />
-                            </button>
-                          )}
-                        </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="py-8 text-center">
+                        <p className={cn(pressStart2P.className, "text-[9px] text-zinc-400")}>No Web3 wallet extensions found</p>
+                        <p className="text-[11px] text-zinc-500 mt-2">Please install a supported browser wallet to continue.</p>
                       </div>
                     )}
                   </div>
-                  <div className="px-5 py-3 bg-zinc-800/30 border-t border-zinc-800">
-                    <p className="text-xs text-zinc-500 text-center">By connecting, you agree to Synq&apos;s Terms of Service</p>
+
+                  {/* Footer */}
+                  <div className="px-6 py-3.5 border-t border-[#404040] shrink-0">
+                    <p className={cn(pressStart2P.className, "text-[8px] text-zinc-400 text-center leading-relaxed tracking-tight select-none")}>
+                      By connecting, you agree to Synq&apos;s Terms of Service
+                    </p>
                   </div>
                 </div>
               </motion.div>

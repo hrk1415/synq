@@ -80,6 +80,19 @@ export function getWalletDisplayName(rawName?: unknown): string {
   return cleaned.slice(0, 40);
 }
 
+/**
+ * Shortens a wallet display name to its first word for compact grid display.
+ * E.g.: "Bitget Wallet" -> "Bitget", "Coinbase Wallet" -> "Coinbase", "Trust Wallet" -> "Trust".
+ * Single-word names ("MetaMask", "Phantom", "WalletConnect") remain unchanged.
+ * Preserves metadata sanitization and safely handles empty or non-string inputs.
+ */
+export function getCompactWalletName(fullName?: unknown): string {
+  const sanitized = getWalletDisplayName(fullName);
+  const parts = sanitized.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return 'Browser';
+  return parts[0];
+}
+
 export interface ClassifiedConnectors {
   detectedWallets: Connector[];
   coinbaseSdk?: Connector;
@@ -136,4 +149,100 @@ export function classifyConnectors(connectors: readonly Connector[]): Classified
     walletConnect,
     genericInjected,
   };
+}
+
+export interface GridWalletItem {
+  key: string;
+  name: string;
+  compactName: string;
+  iconSrc?: string;
+  connector: Connector;
+  isInstalled: boolean;
+  rdns?: string;
+}
+
+/**
+ * Builds the compact icon grid items for the B.10.4 wallet connection modal.
+ * Preserves all distinct EIP-6963 detected wallets and supported fallbacks.
+ * WalletConnect is included whenever configured.
+ * Generic injected fallback is included when no EIP-6963 wallets are detected.
+ * Coinbase SDK is included as fallback if no Coinbase extension was detected.
+ */
+export function buildGridWalletItems(connectors: readonly Connector[]): GridWalletItem[] {
+  const { detectedWallets, coinbaseSdk, walletConnect, genericInjected } = classifyConnectors(connectors);
+  const items: GridWalletItem[] = [];
+
+  let hasCoinbaseDetected = false;
+
+  for (const wallet of detectedWallets) {
+    const key = wallet.uid || wallet.id;
+    const rdns = typeof wallet.rdns === 'string'
+      ? wallet.rdns.toLowerCase()
+      : (Array.isArray(wallet.rdns) ? wallet.rdns[0]?.toLowerCase() : '') || wallet.id.toLowerCase();
+
+    if (rdns === 'com.coinbase.wallet') {
+      hasCoinbaseDetected = true;
+    }
+
+    const curated = KNOWN_WALLETS_BY_RDNS[rdns];
+    const iconSrc = curated?.src || (isSafeIconUri(wallet.icon) ? wallet.icon : undefined);
+
+    let fullName = getWalletDisplayName(wallet.name);
+    if (curated) {
+      if (rdns === 'io.metamask') fullName = 'MetaMask';
+      else if (rdns === 'io.rabby') fullName = 'Rabby Wallet';
+      else if (rdns === 'app.phantom') fullName = 'Phantom';
+      else if (rdns === 'com.coinbase.wallet') fullName = 'Coinbase Wallet';
+    }
+
+    const compactName = getCompactWalletName(fullName);
+
+    items.push({
+      key,
+      name: fullName,
+      compactName,
+      iconSrc,
+      connector: wallet,
+      isInstalled: true,
+      rdns,
+    });
+  }
+
+  // Coinbase SDK fallback (if Coinbase extension was not detected)
+  if (coinbaseSdk && !hasCoinbaseDetected) {
+    items.push({
+      key: coinbaseSdk.uid || coinbaseSdk.id,
+      name: 'Coinbase Wallet',
+      compactName: 'Coinbase',
+      iconSrc: '/wallets/coinbase.png',
+      connector: coinbaseSdk,
+      isInstalled: false,
+    });
+  }
+
+  // WalletConnect bridge (always included when configured)
+  if (walletConnect) {
+    items.push({
+      key: walletConnect.uid || walletConnect.id,
+      name: 'WalletConnect',
+      compactName: 'WalletConnect',
+      iconSrc: '/wallets/walletconnect.png',
+      connector: walletConnect,
+      isInstalled: false,
+    });
+  }
+
+  // Generic injected fallback (only if no EIP-6963 browser extensions were detected)
+  if (genericInjected && detectedWallets.length === 0) {
+    items.push({
+      key: genericInjected.uid || genericInjected.id,
+      name: 'Browser Wallet',
+      compactName: 'Browser',
+      iconSrc: undefined,
+      connector: genericInjected,
+      isInstalled: false,
+    });
+  }
+
+  return items;
 }
