@@ -225,6 +225,10 @@ export default function AgentControllerPage() {
         </p>
       </div>
 
+      <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+        Agent Controller backend is temporarily unavailable while this feature is being upgraded. Do not enter live provider credentials at this time.
+      </div>
+
       <div className="grid lg:grid-cols-3 gap-6">
         {/* Main Deploy Form */}
         <Card className="lg:col-span-2 border-zinc-800/80 bg-zinc-900/40">

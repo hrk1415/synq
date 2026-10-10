@@ -30,8 +30,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files (real environment files stay local; the sanitized template is tracked)
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -40,5 +41,9 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# local runtime data (users, email log) - never commit
+# local runtime data (users, email log, scratch) - never commit
 /data
+/scratch
+
+# compiler transient build dumps
+src/lib/contracts/artifacts/build-info/

@@ -1,15 +1,17 @@
 import { NextRequest } from 'next/server';
-import { getById, update, create } from '@/lib/db';
+import { getById, update, createSynqMessage } from '@/lib/db';
 import { notifyBuyerOrderConfirmed } from '@/lib/notify';
+import { getAuthenticatedWallet, unauthorized } from '@/lib/auth';
+import { isConversationParticipant } from '@/lib/conversation-pair';
 
 /**
  * Seller confirms an order received in the Messages thread.
  *
- *   POST { conversationId, sellerWallet }
+ *   POST { conversationId, sellerWallet? }
  *     → marks conversation.orderMeta.confirmed = true
  *     → emails the buyer a confirmation
  *
- * Wallet passed in the body (same unauthenticated model as /api/messages).
+ * The verified bearer wallet must be the conversation's current seller.
  */
 
 const isWallet = (w: unknown): w is string => typeof w === 'string' && /^0x[0-9a-fA-F]{40}$/.test(w);
@@ -17,12 +19,17 @@ const lc = (w: string) => w.toLowerCase();
 
 export async function POST(req: NextRequest) {
   try {
+    const authenticatedWallet = getAuthenticatedWallet(req);
+    if (!authenticatedWallet) return unauthorized();
     const body = await req.json();
     const conversationId = String(body.conversationId ?? '');
-    const sellerWallet = String(body.sellerWallet ?? '');
+    const suppliedSellerWallet = body.sellerWallet ? String(body.sellerWallet) : '';
 
-    if (!conversationId || !isWallet(sellerWallet)) {
-      return Response.json({ error: 'conversationId and a valid sellerWallet are required' }, { status: 400 });
+    if (!conversationId) {
+      return Response.json({ error: 'conversationId is required' }, { status: 400 });
+    }
+    if (suppliedSellerWallet && (!isWallet(suppliedSellerWallet) || lc(suppliedSellerWallet) !== authenticatedWallet)) {
+      return Response.json({ error: 'Seller does not match authenticated wallet' }, { status: 403 });
     }
 
     const conversation = await getById('conversations', conversationId);
@@ -30,8 +37,12 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: 'Conversation not found' }, { status: 404 });
     }
 
+    if (!isConversationParticipant(conversation, authenticatedWallet)) {
+      return Response.json({ error: 'Not a participant in this conversation' }, { status: 403 });
+    }
+
     // Only the seller may confirm the order.
-    if (lc(String(conversation.sellerWallet || '')) !== lc(sellerWallet)) {
+    if (lc(String(conversation.sellerWallet || '')) !== authenticatedWallet) {
       return Response.json({ error: 'Only the seller can confirm this order' }, { status: 403 });
     }
 
@@ -45,18 +56,19 @@ export async function POST(req: NextRequest) {
         ...orderMeta,
         confirmed: true,
         confirmedAt: new Date().toISOString(),
-        confirmedBy: lc(sellerWallet),
+        confirmedBy: authenticatedWallet,
       },
     });
 
     // Append a confirm message so both sides see it in the chat thread.
-    await create('messages', {
+    await createSynqMessage({
       conversationId: conversation.id,
-      fromWallet: lc(sellerWallet),
+      fromWallet: authenticatedWallet,
       toWallet: lc(String(conversation.buyerWallet || '')),
       fromName: conversation.sellerName || undefined,
       body: 'I confirm this order. Let\'s proceed.',
       kind: 'confirm',
+      payload: null,
       createdAt: new Date().toISOString(),
     });
 

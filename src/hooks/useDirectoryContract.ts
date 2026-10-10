@@ -1,24 +1,21 @@
 'use client';
 
-import { useReadContract, useWriteContract, useWaitForTransactionReceipt, useChainId } from 'wagmi';
+import { useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { nexotiqDirectoryABI } from '@/lib/contracts/abis';
-import { CONTRACT_ADDRESSES, isSupportedChain } from '@/lib/contracts/addresses';
-
-const DIRECTORY_BY_CHAIN: Record<number, string> = {
-  31337: CONTRACT_ADDRESSES.hardhat.NexotiqDirectory,
-  11155111: CONTRACT_ADDRESSES.sepolia.NexotiqDirectory,
-};
+import { CONTRACT_ADDRESSES, SEPOLIA_CHAIN_ID } from '@/lib/contracts/addresses';
+import { useSepoliaNetwork } from '@/hooks/useSepoliaNetwork';
 
 /** undefined on chains with no deployment — see getFactoryAddress for why. */
 export function getDirectoryAddress(chainId: number): `0x${string}` | undefined {
-  return DIRECTORY_BY_CHAIN[chainId] as `0x${string}` | undefined;
+  return chainId === SEPOLIA_CHAIN_ID
+    ? CONTRACT_ADDRESSES.sepolia.NexotiqDirectory as `0x${string}`
+    : undefined;
 }
 
 export function useDirectoryContract(userAddress: `0x${string}` | undefined) {
-  const chainId = useChainId();
-  const directoryAddress = getDirectoryAddress(chainId);
-  const onSupportedChain = isSupportedChain(chainId) && !!directoryAddress;
-  const config = { address: directoryAddress, abi: nexotiqDirectoryABI } as const;
+  const directoryAddress = CONTRACT_ADDRESSES.sepolia.NexotiqDirectory as `0x${string}`;
+  const onSupportedChain = true;
+  const config = { address: directoryAddress, abi: nexotiqDirectoryABI, chainId: SEPOLIA_CHAIN_ID } as const;
 
   const { data: profiles, refetch: refetchProfiles, isLoading } = useReadContract({
     ...config,
@@ -38,16 +35,22 @@ export function useDirectoryContract(userAddress: `0x${string}` | undefined) {
     query: { enabled: !!userAddress && onSupportedChain },
   });
 
+  const { ensureSepolia, networkReady, isSwitching, error: networkError } = useSepoliaNetwork();
   const write = useWriteContract();
-  const { data: txHash, writeContract, isPending, error: writeError } = write;
-  const txReceipt = useWaitForTransactionReceipt({ hash: txHash });
+  const { data: txHash, writeContractAsync, isPending, error: writeError } = write;
+  const txReceipt = useWaitForTransactionReceipt({ hash: txHash, chainId: SEPOLIA_CHAIN_ID });
 
   const refetchAll = () => { refetchProfiles(); refetchMyProfile(); };
 
-  const guardWrite = <A extends unknown[]>(fn: (...args: A) => void) => (...args: A) => {
-    if (!onSupportedChain) return;
-    fn(...args);
+  const guardWrite = <A extends unknown[]>(fn: (...args: A) => Promise<unknown>) => async (...args: A) => {
+    try {
+      await ensureSepolia();
+      return await fn(...args);
+    } catch {
+      return undefined;
+    }
   };
+  const writeAddress = CONTRACT_ADDRESSES.sepolia.NexotiqDirectory as `0x${string}`;
 
   return {
     directoryAddress,
@@ -57,18 +60,20 @@ export function useDirectoryContract(userAddress: `0x${string}` | undefined) {
     myProfile: (myProfile as any) || undefined,
     myRegistered: !!myRegistered,
     isLoading,
-    writeContract,
-    isPending: isPending || txReceipt.isLoading,
+    networkReady,
+    isSwitching,
+    isPending: isPending || txReceipt.isLoading || isSwitching,
     txReceipt,
-    writeError,
+    writeError: networkError ?? writeError,
+    networkError,
     refetchProfiles,
     refetchMyProfile,
     refetchAll,
     registerProfile: guardWrite((name: string, category: string, skills: string[], rate: bigint, bio: string) =>
-      writeContract({ ...config, address: directoryAddress!, functionName: 'registerProfile', args: [name, category, skills, rate, bio] })),
+      writeContractAsync({ ...config, address: writeAddress, functionName: 'registerProfile', args: [name, category, skills, rate, bio] })),
     updateProfile: guardWrite((name: string, category: string, skills: string[], rate: bigint, bio: string) =>
-      writeContract({ ...config, address: directoryAddress!, functionName: 'updateProfile', args: [name, category, skills, rate, bio] })),
+      writeContractAsync({ ...config, address: writeAddress, functionName: 'updateProfile', args: [name, category, skills, rate, bio] })),
     setAvailable: guardWrite((available: boolean) =>
-      writeContract({ ...config, address: directoryAddress!, functionName: 'setAvailable', args: [available] })),
+      writeContractAsync({ ...config, address: writeAddress, functionName: 'setAvailable', args: [available] })),
   };
 }

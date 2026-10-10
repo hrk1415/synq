@@ -1,12 +1,15 @@
 import { NextRequest } from 'next/server';
-import { getAll, getById, create, update, query } from '@/lib/db';
+import { getAll, getById, update, query, getOrCreateCanonicalConversation, createSynqMessage } from '@/lib/db';
 import { notifySellerOrderInquiry, notifyNewChatMessage } from '@/lib/notify';
+import { getAuthenticatedWallet, unauthorized } from '@/lib/auth';
+import { canonicalizeConversationPair, isConversationParticipant } from '@/lib/conversation-pair';
+import { deriveConversationPreview, validatePublicMessageInput } from '@/lib/synq-message';
 
 /**
- * Buyer↔seller chat backend for the Messages page (/messages).
+ * Neutral wallet↔wallet chat backend for the Messages page (/messages).
  *
- * Unauthenticated, wallet passed in the query/body (same model as /api/notify).
- * There is no WebSocket on this serverless host, so the client polls GET.
+ * The verified bearer wallet is the sole sender/membership authority. There is
+ * no WebSocket on this serverless host, so the client polls GET.
  *
  *   GET  ?conversationId=&wallet=[&since=ISO]  → messages asc; marks incoming read
  *   POST { fromWallet, toWallet, body, kind?, orderMeta?, fromName? }
@@ -16,33 +19,31 @@ import { notifySellerOrderInquiry, notifyNewChatMessage } from '@/lib/notify';
 const isWallet = (w: unknown): w is string => typeof w === 'string' && /^0x[0-9a-fA-F]{40}$/.test(w);
 const lc = (w: string) => w.toLowerCase();
 
-const previewOf = (s: string) => {
-  const flat = String(s).replace(/\s+/g, ' ').trim();
-  return flat.length > 140 ? `${flat.slice(0, 137)}...` : flat;
-};
-
 async function nameForWallet(users: any[], wallet: string, fallback?: string): Promise<string> {
   const u = users.find((x: any) => x.walletAddress && lc(String(x.walletAddress)) === lc(wallet));
   return (u?.name && String(u.name)) || fallback || `${wallet.slice(0, 6)}…${wallet.slice(-4)}`;
 }
 
 export async function GET(req: NextRequest) {
+  const authenticatedWallet = getAuthenticatedWallet(req);
+  if (!authenticatedWallet) return unauthorized();
   const url = new URL(req.url);
   const conversationId = url.searchParams.get('conversationId');
   const wallet = url.searchParams.get('wallet');
   const since = url.searchParams.get('since');
-  if (!conversationId || !isWallet(wallet)) {
-    return Response.json({ error: 'conversationId and a valid wallet are required' }, { status: 400 });
+  if (!conversationId) {
+    return Response.json({ error: 'conversationId is required' }, { status: 400 });
+  }
+  if (wallet && (!isWallet(wallet) || lc(wallet) !== authenticatedWallet)) {
+    return Response.json({ error: 'Requested wallet does not match authenticated wallet' }, { status: 403 });
   }
 
   const conversation = await getById('conversations', conversationId);
   if (!conversation) {
     return Response.json({ error: 'Conversation not found' }, { status: 404 });
   }
-  const me = lc(wallet);
-  const isParticipant =
-    lc(String(conversation.buyerWallet || '')) === me || lc(String(conversation.sellerWallet || '')) === me;
-  if (!isParticipant) {
+  const me = authenticatedWallet;
+  if (!isConversationParticipant(conversation, me)) {
     return Response.json({ error: 'Not a participant in this conversation' }, { status: 403 });
   }
 
@@ -63,62 +64,59 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    const authenticatedWallet = getAuthenticatedWallet(req);
+    if (!authenticatedWallet) return unauthorized();
     const body = await req.json();
-    const { fromWallet, toWallet, kind } = body;
-    const text = String(body.body ?? '').trim();
-    if (!isWallet(fromWallet) || !isWallet(toWallet)) {
-      return Response.json({ error: 'Valid fromWallet and toWallet are required' }, { status: 400 });
+    if (Object.prototype.hasOwnProperty.call(body, 'dealAddress')) {
+      return Response.json(
+        { error: 'Legacy dealAddress is not accepted by this endpoint' },
+        { status: 400 },
+      );
+    }
+    const { toWallet } = body;
+    const fromWallet = authenticatedWallet;
+    if (body.fromWallet && (!isWallet(body.fromWallet) || lc(body.fromWallet) !== authenticatedWallet)) {
+      return Response.json({ error: 'Sender does not match authenticated wallet' }, { status: 403 });
+    }
+    if (!isWallet(toWallet)) {
+      return Response.json({ error: 'Valid toWallet is required' }, { status: 400 });
     }
     if (lc(fromWallet) === lc(toWallet)) {
       return Response.json({ error: 'You cannot message yourself' }, { status: 400 });
     }
-    if (!text) {
-      return Response.json({ error: 'Message body is required' }, { status: 400 });
-    }
-    if (text.length > 4000) {
-      return Response.json({ error: 'Message is too long (max 4000 characters)' }, { status: 400 });
-    }
-    const messageKind = kind === 'order' ? 'order' : 'text';
-    const orderMeta = body.orderMeta && typeof body.orderMeta === 'object' ? body.orderMeta : undefined;
+    const validated = validatePublicMessageInput(body);
+    if (!validated.ok) return Response.json({ error: validated.error }, { status: 400 });
+    const text = validated.body;
+    const messageKind = validated.kind;
+    const orderMeta = validated.orderMeta;
 
     const users = await getAll('users');
-    const fromName = await nameForWallet(users, fromWallet, body.fromName);
+    const fromName = await nameForWallet(users, fromWallet);
     const toName = await nameForWallet(users, toWallet);
 
-    // One thread per buyer↔seller pair, regardless of who is sending now.
-    const pair = await query(
-      'conversations',
-      (c: any) => {
-        const a = lc(String(c.buyerWallet || ''));
-        const b = lc(String(c.sellerWallet || ''));
-        return (a === lc(fromWallet) && b === lc(toWallet)) || (a === lc(toWallet) && b === lc(fromWallet));
-      },
-    );
-    let conversation = pair[0] || null;
+    const canonicalPair = canonicalizeConversationPair(fromWallet, toWallet);
     const now = new Date().toISOString();
-    const preview = previewOf(text);
+    const preview = deriveConversationPreview(messageKind, text);
 
-    const dealAddress = body.dealAddress && typeof body.dealAddress === 'string' ? body.dealAddress.trim() : '';
+    // Legacy roles remain compatibility metadata: for a brand-new row only,
+    // the initiator is stored as buyer and recipient as seller. Canonical
+    // participant ordering is the generic chat identity and never implies role.
+    const result = await getOrCreateCanonicalConversation({
+      ...canonicalPair,
+      buyerWallet: fromWallet,
+      sellerWallet: toWallet,
+      buyerName: fromName,
+      sellerName: toName,
+      subject: orderMeta?.type || body.subject || undefined,
+      orderMeta: orderMeta || undefined,
+      lastMessageAt: now,
+      lastMessagePreview: preview,
+      lastMessageFrom: fromWallet,
+      createdAt: now,
+    });
+    let conversation = result.conversation;
 
-    if (!conversation) {
-      // First message opens the thread. The initiator is the buyer, the
-      // recipient the seller — matches the "buyer orders a freelancer" flow.
-      // If an on-chain deal already exists for this pair (the buyer created it
-      // before chatting), stamp its address so the thread can link to it.
-      conversation = await create('conversations', {
-        buyerWallet: lc(fromWallet),
-        sellerWallet: lc(toWallet),
-        buyerName: fromName,
-        sellerName: toName,
-        subject: orderMeta?.type || body.subject || undefined,
-        orderMeta: orderMeta || undefined,
-        dealAddress: dealAddress || undefined,
-        lastMessageAt: now,
-        lastMessagePreview: preview,
-        lastMessageFrom: lc(fromWallet),
-        createdAt: now,
-      });
-    } else {
+    if (!result.created) {
       const patch: Record<string, unknown> = {
         lastMessageAt: now,
         lastMessagePreview: preview,
@@ -130,18 +128,17 @@ export async function POST(req: NextRequest) {
       if (!conversation.buyerName && lc(String(conversation.buyerWallet)) === lc(toWallet)) patch.buyerName = toName;
       if (!conversation.sellerName && lc(String(conversation.sellerWallet)) === lc(toWallet)) patch.sellerName = toName;
       if (orderMeta && !conversation.orderMeta) { patch.orderMeta = orderMeta; patch.subject = conversation.subject || orderMeta.type; }
-      // Link the on-chain deal if the client passes it and we don't have one yet.
-      if (dealAddress && !conversation.dealAddress) patch.dealAddress = dealAddress;
       conversation = (await update('conversations', conversation.id, patch)) || conversation;
     }
 
-    const message = await create('messages', {
+    const message = await createSynqMessage({
       conversationId: conversation.id,
       fromWallet: lc(fromWallet),
       toWallet: lc(toWallet),
       fromName,
       body: text,
       kind: messageKind,
+      payload: null,
       orderMeta: orderMeta || undefined,
       createdAt: now,
     });

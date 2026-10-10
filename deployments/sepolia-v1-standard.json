@@ -1,0 +1,46 @@
+{
+  "network": "sepolia",
+  "chainId": 11155111,
+  "version": "synq-deal-v1-standard",
+  "status": "standard-ready",
+  "deployedAt": "2026-10-03T01:48:04.634Z",
+  "deployer": "0xD2D4d415a4730b1490c9Ce27944529B83ff76319",
+  "contracts": {
+    "dealImplementation": "0x2a3C8A880398FF6DD8e6F9976c8BE6C8aBef2435",
+    "factory": "0x7482c3439Aa6065066c7759b87eeD25a403CbB03",
+    "primaryResolver": "0x50Ee032d382B49A687EBDa08c5192fb7c5b9e392",
+    "emergencyResolver": "0x9F45E79288f1766553E88C45CD5B254CD4662854"
+  },
+  "assets": {
+    "canonicalUsdc": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+    "usdcDecimals": 6
+  },
+  "governance": {
+    "factoryOwner": "0xD2D4d415a4730b1490c9Ce27944529B83ff76319",
+    "primaryCommittee": {
+      "address": "0x50Ee032d382B49A687EBDa08c5192fb7c5b9e392",
+      "signers": [
+        "0x6F270E8c6DE66fB53A97e59E3e89E2A02290e7Fa",
+        "0x17Cd3B3B214191805EB92BaA31518c7Ea76078b3",
+        "0x0491C59AdC81774dEeaB0777dC9eCEB1ea882f34"
+      ],
+      "threshold": 2,
+      "epoch": 0
+    },
+    "emergencyCommittee": {
+      "address": "0x9F45E79288f1766553E88C45CD5B254CD4662854",
+      "signers": [
+        "0x90d2b8EB2ec109880D7f29474f1E323e156cc659",
+        "0xd0098BD613753d6d591fCc172108CE4bF314bCf7",
+        "0x8acB20e0a0E2c8a8327C8fCf8bc482C9BAa9772E"
+      ],
+      "threshold": 2,
+      "epoch": 0
+    }
+  },
+  "protection": {
+    "enabled": false,
+    "module": null,
+    "policyId": null
+  }
+}

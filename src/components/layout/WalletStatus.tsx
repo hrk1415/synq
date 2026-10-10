@@ -1,12 +1,32 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { useAccount, useConnect, useDisconnect, useBalance, useConnectors, useReadContract, useChainId } from 'wagmi';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Wallet, ChevronDown, ChevronRight, LogOut, Copy, Check, ExternalLink, X, Loader2, User, Sparkles } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
+import { useAccount, useConnect, useDisconnect, useBalance, useReadContract, useConnectors, type Connector } from 'wagmi';
+import Link from 'next/link';
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
+import { Wallet, ChevronDown, ChevronRight, LogOut, Copy, Check, X, Loader2, AlertTriangle, ArrowRightLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useRegistry } from '@/hooks/useRegistryContract';
-import { Avatar } from '@/components/shared/Avatar';
+import { useSynqIdentity } from '@/hooks/useSynqIdentity';
+import { useSepoliaNetwork } from '@/hooks/useSepoliaNetwork';
+import { SEPOLIA_CHAIN_ID, SYNQ_V2_SEPOLIA_CONFIG } from '@/lib/contracts/addresses';
+import { erc20ABI } from '@/lib/contracts/abis';
+import { formatUnits } from 'viem';
+import { Press_Start_2P } from 'next/font/google';
+import {
+  classifyConnectors,
+  buildGridWalletItems,
+  KNOWN_WALLETS_BY_RDNS,
+  isSafeIconUri,
+  getWalletDisplayName,
+  type GridWalletItem,
+} from '@/lib/wallet/discovery';
+
+const pressStart2P = Press_Start_2P({
+  subsets: ['latin'],
+  weight: '400',
+  display: 'swap',
+});
 
 declare global {
   interface Window {
@@ -14,131 +34,394 @@ declare global {
   }
 }
 
-const walletOptions = [
-  { id: 'metaMask', name: 'MetaMask', src: '/wallets/metamask.png', color: '#f6851b', bg: 'bg-orange-500/10 border-orange-500/20', textColor: 'text-orange-400', description: 'Popular browser extension wallet' },
-  { id: 'rabby', name: 'Rabby', src: '/wallets/rabby.jpg', color: '#7c3aed', bg: 'bg-violet-500/10 border-violet-500/20', textColor: 'text-violet-400', description: 'Smart contract wallet for power users' },
-  { id: 'phantom', name: 'Phantom', src: '/wallets/phantom.png', color: '#ab9ff2', bg: 'bg-purple-500/10 border-purple-500/20', textColor: 'text-purple-400', description: 'Multi-chain wallet (EVM + Solana)' },
-  { id: 'coinbaseWallet', name: 'Coinbase', src: '/wallets/coinbase.png', color: '#0052ff', bg: 'bg-blue-500/10 border-blue-500/20', textColor: 'text-blue-400', description: 'Coinbase self-custody wallet' },
-  { id: 'walletConnect', name: 'WalletConnect', src: '/wallets/walletconnect.png', color: '#3b99fc', bg: 'bg-blue-400/10 border-blue-400/20', textColor: 'text-blue-400', description: 'Connect via mobile wallet' },
-];
+interface WalletIconStyle {
+  scale?: string;
+  imgRounded?: string;
+}
 
-function WalletIcon({ src, name }: { src: string; name: string }) {
+const WALLET_ICON_STYLES: Record<string, WalletIconStyle> = {
+  // MetaMask: Fox head is 117x108 on 263x199 canvas (~44% width, 54% height with baked white padding).
+  // Scale up to 1.85x so the fox visual mass matches the 32-34px size of other wallets.
+  'io.metamask': {
+    scale: 'scale-[1.85]',
+  },
+  // Coinbase: Circle logo is 314x313 on 863x566 canvas (~36% width with huge transparent margins).
+  // Scale up to 2.35x so the circle mark matches the 32-34px size of other wallets.
+  'com.coinbase.wallet': {
+    scale: 'scale-[2.35]',
+  },
+  'coinbase': {
+    scale: 'scale-[2.35]',
+  },
+  'coinbaseWalletSDK': {
+    scale: 'scale-[2.35]',
+  },
+  // Rabby: 447x447 solid JPEG badge; round corners so it does not look like a sharp square in the tile.
+  'io.rabby': {
+    imgRounded: 'rounded-xl',
+  },
+  // Phantom: 400x400 solid purple badge; round corners for smooth tile harmony.
+  'app.phantom': {
+    imgRounded: 'rounded-xl',
+  },
+  // WalletConnect: ~72% fill; subtle 1.15x scale for visual equilibrium.
+  'walletConnect': {
+    scale: 'scale-[1.15]',
+  },
+};
+
+function getWalletIconStyle(item?: GridWalletItem, connector?: Connector): WalletIconStyle {
+  const rdns = (item?.rdns || (typeof connector?.rdns === 'string' ? connector.rdns : ''))?.toLowerCase();
+  const id = (item?.connector?.id || connector?.id || item?.key || '')?.toLowerCase();
+  const name = (item?.name || '')?.toLowerCase();
+
+  if (rdns === 'io.metamask' || id.includes('metamask') || name === 'metamask') {
+    return WALLET_ICON_STYLES['io.metamask'];
+  }
+  if (rdns === 'com.coinbase.wallet' || id.includes('coinbase') || name.includes('coinbase')) {
+    return WALLET_ICON_STYLES['com.coinbase.wallet'];
+  }
+  if (rdns === 'io.rabby' || id.includes('rabby') || name.includes('rabby')) {
+    return WALLET_ICON_STYLES['io.rabby'];
+  }
+  if (rdns === 'app.phantom' || id.includes('phantom') || name.includes('phantom')) {
+    return WALLET_ICON_STYLES['app.phantom'];
+  }
+  if (id.includes('walletconnect') || name.includes('walletconnect')) {
+    return WALLET_ICON_STYLES['walletConnect'];
+  }
+
+  return { imgRounded: 'rounded-lg' };
+}
+
+function WalletItemIcon({
+  connector,
+  fallbackSrc,
+  item,
+}: {
+  connector?: Connector;
+  fallbackSrc?: string;
+  item?: GridWalletItem;
+}) {
+  const [imgError, setImgError] = useState(false);
+  const iconStyle = getWalletIconStyle(item, connector);
+
+  const src = item?.iconSrc || fallbackSrc;
+  if (src && !imgError) {
+    return (
+      <img
+        src={src}
+        alt={item?.name || ''}
+        className={cn(
+          "w-8 h-8 sm:w-9 sm:h-9 object-contain select-none pointer-events-none transition-transform duration-150",
+          iconStyle.scale,
+          iconStyle.imgRounded
+        )}
+        onError={() => setImgError(true)}
+      />
+    );
+  }
+
+  const targetConnector = item?.connector || connector;
+  if (targetConnector) {
+    const rdns = typeof targetConnector.rdns === 'string'
+      ? targetConnector.rdns.toLowerCase()
+      : (Array.isArray(targetConnector.rdns) ? targetConnector.rdns[0]?.toLowerCase() : '') || targetConnector.id.toLowerCase();
+    const curated = KNOWN_WALLETS_BY_RDNS[rdns];
+    if (curated && !imgError) {
+      return (
+        <img
+          src={curated.src}
+          alt={item?.name || ''}
+          className={cn(
+            "w-8 h-8 sm:w-9 sm:h-9 object-contain select-none pointer-events-none transition-transform duration-150",
+            iconStyle.scale,
+            iconStyle.imgRounded
+          )}
+          onError={() => setImgError(true)}
+        />
+      );
+    }
+
+    const rawIcon = targetConnector.icon;
+    if (!imgError && isSafeIconUri(rawIcon)) {
+      return (
+        <img
+          src={rawIcon}
+          alt={item?.name || ''}
+          className={cn(
+            "w-8 h-8 sm:w-9 sm:h-9 object-contain select-none pointer-events-none transition-transform duration-150",
+            iconStyle.scale,
+            iconStyle.imgRounded
+          )}
+          onError={() => setImgError(true)}
+        />
+      );
+    }
+  }
+
   return (
-    <div className="w-10 h-10 rounded-xl bg-zinc-800 overflow-hidden flex items-center justify-center">
-      <img src={src} alt={name} className="w-full h-full object-cover" />
+    <Wallet size={24} className="text-zinc-600 select-none" />
+  );
+}
+
+function getScopedDisplayName(walletAddress?: string): string {
+  if (typeof window === 'undefined' || !walletAddress) return '';
+  try {
+    const raw = window.localStorage.getItem(`settings:username:${walletAddress.toLowerCase()}`);
+    return raw !== null && raw !== undefined ? (JSON.parse(raw) as string) : '';
+  } catch { return ''; }
+}
+
+function BalanceRow({
+  value,
+  symbol,
+}: {
+  value: string;
+  symbol: string;
+}) {
+  return (
+    <div className="flex items-center justify-between text-[10px] sm:text-[10.5px] text-white font-normal tracking-tight">
+      <span className="truncate mr-2 min-w-0">{value}</span>
+      <span className="text-zinc-400 text-[8.5px] shrink-0 font-normal select-none">{symbol}</span>
     </div>
   );
 }
 
-export default function WalletStatus() {
-  const { address, isConnected } = useAccount();
-  const chainId = useChainId();
-  const { connect } = useConnect();
+export interface WalletStatusProps {
+  onOpenChange?: (open: boolean) => void;
+  className?: string;
+}
+
+export default function WalletStatus({ onOpenChange, className }: WalletStatusProps = {}) {
+  const [mounted, setMounted] = useState(false);
+  const { address, isConnected, connector } = useAccount();
+  const { connectAsync } = useConnect();
   const { disconnect } = useDisconnect();
-  const { data: balance } = useBalance({ address });
+  const {
+    networkReady,
+    isWrongNetwork,
+    isNetworkUnverified,
+    isSwitching,
+    error: networkError,
+    requestSepolia,
+  } = useSepoliaNetwork();
+  const autoSwitchSessionRef = useRef<string | null>(null);
+
+  const { data: balance } = useBalance({ address, chainId: SEPOLIA_CHAIN_ID });
+  const { data: usdcRawBalance, isLoading: isUsdcLoading } = useReadContract({
+    address: SYNQ_V2_SEPOLIA_CONFIG.canonicalUsdc,
+    abi: erc20ABI,
+    functionName: 'balanceOf',
+    args: address ? [address] : undefined,
+    chainId: SEPOLIA_CHAIN_ID,
+    query: {
+      enabled: Boolean(address && networkReady),
+    },
+  });
+  const shouldReduceMotion = useReducedMotion();
   const connectors = useConnectors();
-  const registry = useRegistry(address);
+  const identity = useSynqIdentity(address);
 
   const [open, setOpen] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [connecting, setConnecting] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const [usernameInput, setUsernameInput] = useState('');
-  const [usernameError, setUsernameError] = useState('');
-  const [txError, setTxError] = useState('');
+  const [connectionError, setConnectionError] = useState('');
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: 0 });
 
-  const [displayName, setDisplayName] = useState<string>(() => {
-    if (typeof window === 'undefined') return '';
-    try {
-      const raw = window.localStorage.getItem('settings:username');
-      return raw !== null && raw !== undefined ? (JSON.parse(raw) as string) : '';
-    } catch { return ''; }
-  });
-
-  const refreshDisplayName = () => {
-    if (typeof window === 'undefined') return;
-    try {
-      const raw = window.localStorage.getItem('settings:username');
-      const v = raw !== null && raw !== undefined ? JSON.parse(raw) : '';
-      setDisplayName(typeof v === 'string' ? v : '');
-    } catch { /* ignore */ }
-  };
-
-  useEffect(() => {
-    const onName = (e: Event) => {
-      const detail = (e as CustomEvent<string>).detail;
-      if (detail !== undefined && detail !== null) setDisplayName(detail);
-    };
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === 'settings:username') refreshDisplayName();
-    };
-    window.addEventListener('synq:displayname', onName);
-    window.addEventListener('storage', onStorage);
-    window.addEventListener('focus', refreshDisplayName);
-    return () => {
-      window.removeEventListener('synq:displayname', onName);
-      window.removeEventListener('storage', onStorage);
-      window.removeEventListener('focus', refreshDisplayName);
-    };
+  const updateDropdownPos = useCallback(() => {
+    if (!buttonRef.current) return;
+    const rect = buttonRef.current.getBoundingClientRect();
+    const width = Math.round(rect.width);
+    const left = Math.round(Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)));
+    setDropdownPos({
+      top: Math.round(rect.bottom + 6),
+      left,
+      width,
+    });
   }, []);
 
-  // Profile photo for the top bar. Refetched on focus and whenever the display
-  // name is saved (Profile page dispatches synq:displayname on save).
-  const [avatarSrc, setAvatarSrc] = useState<string | null>(null);
+  const handleClose = useCallback(() => {
+    setOpen(false);
+    onOpenChange?.(false);
+  }, [onOpenChange]);
+
+  const handleOpenModal = useCallback(() => {
+    setShowModal(true);
+    onOpenChange?.(true);
+  }, [onOpenChange]);
+
+  const handleCloseModal = useCallback(() => {
+    setShowModal(false);
+    onOpenChange?.(false);
+  }, [onOpenChange]);
+
   useEffect(() => {
-    if (!address) { setAvatarSrc(null); return; }
+    if (!open) return;
+    updateDropdownPos();
+    window.addEventListener('resize', updateDropdownPos);
+    window.addEventListener('scroll', updateDropdownPos, true);
+
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && buttonRef.current) {
+      observer = new ResizeObserver(() => {
+        updateDropdownPos();
+      });
+      observer.observe(buttonRef.current);
+    }
+
+    return () => {
+      window.removeEventListener('resize', updateDropdownPos);
+      window.removeEventListener('scroll', updateDropdownPos, true);
+      observer?.disconnect();
+    };
+  }, [open, updateDropdownPos]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') handleClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [open, handleClose]);
+
+  useEffect(() => {
+    if (!showModal) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') handleCloseModal();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showModal, handleCloseModal]);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // One automatic Sepolia request per established account/connector session.
+  // Mark ready sessions too, so a later manual chain change never opens a prompt.
+  useEffect(() => {
+    if (!isConnected || !address || !connector) {
+      autoSwitchSessionRef.current = null;
+      return;
+    }
+    const sessionKey = `${connector.uid}:${address.toLowerCase()}`;
+    if (autoSwitchSessionRef.current === sessionKey) return;
+    autoSwitchSessionRef.current = sessionKey;
+    if (!networkReady) void requestSepolia().catch(() => {});
+  }, [address, connector, isConnected, networkReady, requestSepolia]);
+
+  const [displayName, setDisplayName] = useState<string>('');
+  const [avatarSrc, setAvatarSrc] = useState<string | null>(null);
+
+  const refreshDisplayName = useCallback(() => {
+    if (!address) { setDisplayName(''); return; }
+    setDisplayName(getScopedDisplayName(address));
+  }, [address]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try { window.localStorage.removeItem('settings:username'); } catch { /* ignore */ }
+    }
+    if (!address) {
+      setDisplayName('');
+      setAvatarSrc(null);
+      return;
+    }
+
     let cancelled = false;
-    const load = () =>
-      fetch(`/api/profile?wallet=${address}`)
+    setDisplayName(getScopedDisplayName(address));
+
+    const load = () => {
+      fetch('/api/profile/public', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wallets: [address] }),
+      })
         .then((r) => r.json())
-        .then((d) => { if (!cancelled) setAvatarSrc(d?.avatar || null); })
-        .catch(() => { /* keep initials */ });
+        .then((d) => {
+          if (cancelled) return;
+          const profile = Array.isArray(d?.profiles) ? d.profiles[0] : null;
+          if (profile?.avatar !== undefined) setAvatarSrc(profile.avatar || null);
+          if (profile?.name !== undefined && profile.name !== null) {
+            setDisplayName(profile.name);
+            if (typeof window !== 'undefined') {
+              try {
+                window.localStorage.setItem(`settings:username:${address.toLowerCase()}`, JSON.stringify(profile.name));
+              } catch { /* ignore */ }
+            }
+          }
+        })
+        .catch(() => {});
+    };
+
     load();
+
+    const onName = (e: Event) => {
+      const detail = (e as CustomEvent<any>).detail;
+      if (!address) return;
+      if (typeof detail === 'object' && detail !== null) {
+        if (detail.wallet && detail.wallet.toLowerCase() === address.toLowerCase()) {
+          setDisplayName(detail.name || '');
+        }
+      } else if (typeof detail === 'string') {
+        setDisplayName(detail);
+      }
+    };
+
+    const onStorage = (e: StorageEvent) => {
+      if (!address) return;
+      const scopedKey = `settings:username:${address.toLowerCase()}`;
+      if (e.key === scopedKey) {
+        setDisplayName(getScopedDisplayName(address));
+      }
+    };
+
+    window.addEventListener('synq:displayname', onName);
+    window.addEventListener('storage', onStorage);
     window.addEventListener('focus', load);
-    window.addEventListener('synq:displayname', load);
+
     return () => {
       cancelled = true;
+      window.removeEventListener('synq:displayname', onName);
+      window.removeEventListener('storage', onStorage);
       window.removeEventListener('focus', load);
-      window.removeEventListener('synq:displayname', load);
     };
   }, [address]);
 
-  // Live uniqueness check — the username becomes the user's on-chain digital identity
-  const trimmedName = usernameInput.trim();
-  const { data: isTaken } = useReadContract({
-    ...registry.config,
-    functionName: 'isUsernameTaken',
-    args: trimmedName.length >= 3 ? [trimmedName] : undefined,
-    query: { enabled: trimmedName.length >= 3 },
-  });
-
-  // Connected but no username → show registration modal (computed inline, no effect timing issues)
-  const needsRegistration = isConnected && !!address && !registry.isLoading &&
-    (registry.username === undefined || registry.username.length === 0);
-
-  // After successful registration → refetch
-  useEffect(() => {
-    if (registry.txReceipt.isSuccess) {
-      registry.refetchUsername();
-    }
-  }, [registry.txReceipt.isSuccess]);
-
-  // Surface on-chain failure (e.g. username already taken)
-  useEffect(() => {
-    if (registry.error) {
-      const msg = registry.error.message || '';
-      if (msg.toLowerCase().includes('taken') || msg.toLowerCase().includes('exists')) {
-        setTxError('This username is already taken on-chain — pick another one');
-      } else {
-        setTxError('Transaction failed. ' + (msg.includes('rejected') || msg.includes('denied') ? 'Signature was rejected.' : 'You can try again.'));
-      }
-      registry.refetchUsername();
-    }
-  }, [registry.error]);
-
   const formatBalance = (bal: { decimals: number; symbol: string; value: bigint }) =>
     `${(Number(bal.value) / 10 ** bal.decimals).toFixed(4)} ${bal.symbol}`;
+
+  const formatUsdcValue = (raw?: bigint | null): string => {
+    if (raw === undefined || raw === null) return '...';
+    try {
+      const decimals = SYNQ_V2_SEPOLIA_CONFIG.usdcDecimals;
+      const formatted = formatUnits(raw, decimals);
+      const [intPart, fracPart = ''] = formatted.split('.');
+      const formattedInt = Number(intPart).toLocaleString();
+      const frac = fracPart.slice(0, 2).padEnd(2, '0');
+      return `${formattedInt}.${frac}`;
+    } catch {
+      return (Number(raw) / 10 ** SYNQ_V2_SEPOLIA_CONFIG.usdcDecimals).toFixed(2);
+    }
+  };
+
+  const formatEthValue = (bal?: { decimals: number; symbol: string; value: bigint } | null): string => {
+    if (!bal) return '...';
+    try {
+      const formatted = formatUnits(bal.value, bal.decimals);
+      const [intPart, fracPart = ''] = formatted.split('.');
+      const formattedInt = Number(intPart).toLocaleString();
+      const frac = fracPart.slice(0, 4).padEnd(4, '0');
+      return `${formattedInt}.${frac}`;
+    } catch {
+      return (Number(bal.value) / 10 ** bal.decimals).toFixed(4);
+    }
+  };
 
   const copyAddress = async () => {
     if (address) {
@@ -150,240 +433,383 @@ export default function WalletStatus() {
 
   const truncateAddress = (addr: string) => `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 
-  const handleConnect = async (option: typeof walletOptions[0]) => {
-    setConnecting(option.id);
-    const idMap: Record<string, string> = {
-      metaMask: 'injected', rabby: 'injected', phantom: 'injected',
-      coinbaseWallet: 'coinbaseWalletSDK', walletConnect: 'walletConnect',
-    };
-    const targetId = idMap[option.id] || option.id;
-    const connector = connectors.find((c) => c.id === targetId);
-    if (!connector) {
-      alert(`Wallet connector not found. Make sure ${option.name} is installed.`);
-      setConnecting(null); setShowModal(false); return;
+  const {
+    detectedWallets,
+    coinbaseSdk,
+    walletConnect,
+    genericInjected,
+  } = React.useMemo(() => classifyConnectors(connectors), [connectors]);
+
+  const gridItems = React.useMemo(() => buildGridWalletItems(connectors), [connectors]);
+
+
+  const handleConnect = async (targetConnector: Connector) => {
+    setConnecting(targetConnector.uid || targetConnector.id);
+    setConnectionError('');
+    try {
+      await connectAsync({ connector: targetConnector });
+      handleCloseModal();
+    } catch (e: any) {
+      if (!(e?.message?.includes('rejected') || e?.code === 4001)) {
+        setConnectionError(`Connection failed: ${e?.message || 'Unknown error'}`);
+      }
+    } finally {
+      setConnecting(null);
     }
-    try { await connect({ connector }); }
-    catch (e: any) {
-      if (!(e?.message?.includes('rejected') || e?.code === 4001)) alert(`Connection failed: ${e?.message || 'Unknown error'}`);
-    }
-    setConnecting(null); setShowModal(false);
   };
 
-  const handleRegisterUsername = () => {
-    const name = usernameInput.trim();
-    if (name.length < 3 || name.length > 32) { setUsernameError('3-32 characters required'); return; }
-    if (!/^[a-zA-Z0-9_]+$/.test(name)) { setUsernameError('Only letters, numbers, and underscores'); return; }
-    if (isTaken) { setUsernameError('This username is already taken — pick another one'); return; }
-    setUsernameError('');
-    setTxError('');
-    registry.register(name);
+  const handleSwitchToSepolia = async () => {
+    setConnectionError('');
+    try {
+      await requestSepolia();
+    } catch (error) {
+      setConnectionError(error instanceof Error ? error.message : 'Unable to switch to Ethereum Sepolia.');
+    }
   };
 
-  if (isConnected) {
+  const handleToggleOpen = () => {
+    refreshDisplayName();
+    if (!open && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      const width = Math.round(rect.width);
+      const left = Math.round(Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)));
+      setDropdownPos({
+        top: Math.round(rect.bottom + 6),
+        left,
+        width,
+      });
+    }
+    const next = !open;
+    setOpen(next);
+    onOpenChange?.(next);
+  };
+
+  if (mounted && isConnected) {
     return (
       <div className="relative">
-        <button onClick={() => { refreshDisplayName(); setOpen(!open); }} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-zinc-700 bg-zinc-800/50 text-sm text-zinc-300 hover:bg-zinc-700 hover:text-white transition-all">
-          <Avatar name={displayName || registry.username || ''} src={avatarSrc} size={22} className="rounded-md" />
-          <div className="w-2 h-2 rounded-full bg-green-400" />
-          <span className="hidden sm:inline">
-            {/* Top-bar shows the display name only — the @username is redundant
-                clutter here (still available in the dropdown's Username card). */}
-            {displayName ? (
-              <span className="text-blue-400">{displayName}</span>
-            ) : (
-              registry.username || truncateAddress(address!)
+        <button
+          ref={buttonRef}
+          onClick={handleToggleOpen}
+          className={cn(
+            'flex items-center gap-2.5 sm:gap-3 h-10 px-4 rounded-xl border text-sm font-medium transition-all shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#242424]/20 select-none bg-[#FFFFFF] border-zinc-200/90 text-[#242424] hover:bg-zinc-50 hover:border-zinc-300 hover:shadow min-w-[210px]',
+            className
+          )}
+        >
+          {!networkReady ? (
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+              <span className="text-xs sm:text-sm text-[#242424] font-medium">
+                {isWrongNetwork ? 'Wrong Network' : 'Network Not Verified'}
+              </span>
+            </div>
+          ) : (
+            <>
+              <span className="text-sm font-mono text-[#242424] font-medium">
+                {balance ? formatBalance(balance) : '...'}
+              </span>
+              <span className="text-[#242424]/30 font-normal select-none">|</span>
+              <span className="text-sm font-mono text-[#242424] font-semibold">
+                {identity.displayHandle || (address ? truncateAddress(address) : '')}
+              </span>
+            </>
+          )}
+          <ChevronDown
+            size={15}
+            className={cn(
+              'shrink-0 transition-transform duration-200 text-[#242424]/70 ml-auto',
+              open && 'rotate-180'
             )}
-          </span>
-          <span className="text-zinc-500 hidden sm:inline">|</span>
-          <span className="text-xs text-zinc-400 hidden sm:inline">{balance ? formatBalance(balance) : '...'}</span>
-          <ChevronDown size={14} className="text-zinc-500" />
+          />
         </button>
 
-        <AnimatePresence>
-          {open && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-              <motion.div initial={{ opacity: 0, y: -8, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -8, scale: 0.96 }}
-                className="absolute right-0 top-full mt-2 w-72 p-4 rounded-xl border border-zinc-700/50 bg-zinc-900 shadow-xl z-50">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-sm font-medium text-white">
-                    {displayName ? (
-                      <>
-                        {displayName}
-                        {registry.username && <span className="text-zinc-500"> @{registry.username}</span>}
-                      </>
-                    ) : (
-                      registry.username ? `@${registry.username}` : 'Wallet'
-                    )}
-                  </span>
-                  <div className="flex items-center gap-1 text-xs text-zinc-500"><div className="w-1.5 h-1.5 rounded-full bg-green-400" /> Connected</div>
-                </div>
-                <div className="p-3 rounded-lg bg-zinc-800/50 mb-3">
-                  <div className="text-xs text-zinc-500 mb-1">Address</div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-white font-mono">{truncateAddress(address!)}</span>
-                    <button onClick={copyAddress} className="p-1 rounded hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors">
+        {mounted && typeof document !== 'undefined' && createPortal(
+          <AnimatePresence>
+            {open && (
+              <div key="wallet-dropdown-portal-root">
+                <div
+                  key="wallet-dropdown-backdrop"
+                  className="fixed inset-0 z-[100]"
+                  onClick={handleClose}
+                  aria-hidden="true"
+                />
+                <motion.div
+                  key="wallet-dropdown-panel"
+                  initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
+                  animate={shouldReduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
+                  exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
+                  transition={{
+                    duration: shouldReduceMotion ? 0.15 : 0.28,
+                    ease: [0.16, 1, 0.3, 1],
+                  }}
+                  style={{
+                    position: 'fixed',
+                    top: dropdownPos.top,
+                    left: dropdownPos.left,
+                    width: dropdownPos.width || (buttonRef.current?.getBoundingClientRect().width ?? 210),
+                  }}
+                  className={cn(
+                    pressStart2P.className,
+                    "p-4 rounded-2xl border border-[#444444] bg-[#303030] shadow-2xl z-[101] overflow-hidden flex flex-col gap-3.5 text-white box-border"
+                  )}
+                >
+                  {/* Wrong network alert banner (if network is not verified / wrong network) */}
+                  {!networkReady && (
+                    <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25 space-y-2">
+                      <div className="flex items-center gap-1.5 text-[7.5px] text-amber-300 leading-tight">
+                        <AlertTriangle size={12} className="shrink-0 text-amber-400" />
+                        <span className="truncate">{isWrongNetwork ? 'Wrong Network' : 'Network Unverified'}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleSwitchToSepolia}
+                        disabled={isSwitching}
+                        className="w-full flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg bg-amber-500/20 text-[7.5px] text-amber-200 hover:bg-amber-500/30 disabled:opacity-50 transition-colors"
+                      >
+                        {isSwitching ? <Loader2 size={11} className="animate-spin" /> : <ArrowRightLeft size={11} />}
+                        <span>{isSwitching ? 'Switching...' : 'Switch Sepolia'}</span>
+                      </button>
+                      {(connectionError || networkError) && (
+                        <p className="text-[7px] text-red-300 truncate">{connectionError || networkError?.message}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Header: Display Name, Username, Network Status */}
+                  <div className="flex items-start justify-between gap-2 pb-3 border-b border-[#404040]">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[10px] text-white font-normal truncate tracking-tight">
+                        {displayName || identity.displayHandle || (address ? truncateAddress(address) : 'Connected')}
+                      </div>
+                      {displayName && identity.displayHandle && (
+                        <div className="text-[8px] text-zinc-400 truncate mt-1 tracking-tight font-mono">
+                          {identity.displayHandle}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0 text-[7.5px] text-zinc-400 pt-0.5 select-none">
+                      <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', networkReady ? 'bg-green-400' : 'bg-amber-400')} />
+                      <span>{networkReady ? 'Sepolia' : 'Wrong Net'}</span>
+                    </div>
+                  </div>
+
+                  {/* Two Equally Prominent Balance Rows: USDC & ETH */}
+                  <div className="pb-3 border-b border-[#404040] flex flex-col gap-2.5">
+                    <BalanceRow
+                      value={!networkReady ? '--' : isUsdcLoading ? '...' : formatUsdcValue(usdcRawBalance)}
+                      symbol="USDC"
+                    />
+                    <BalanceRow
+                      value={!networkReady ? '--' : !balance ? '...' : formatEthValue(balance)}
+                      symbol="ETH"
+                    />
+                  </div>
+
+                  {/* Address with Full Address Copy */}
+                  <div className="pb-3 border-b border-[#404040] flex items-center justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[7px] text-zinc-400 uppercase tracking-tight mb-1 select-none">
+                        Address
+                      </div>
+                      <span className="text-[10px] sm:text-[10.5px] text-zinc-200 tracking-tight truncate block">
+                        {address ? truncateAddress(address) : ''}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={copyAddress}
+                      className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/50"
+                      title="Copy full address"
+                      aria-label="Copy full wallet address"
+                    >
                       {copied ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
                     </button>
                   </div>
-                </div>
-                {registry.username && (
-                  <div className="p-3 rounded-lg bg-zinc-800/50 mb-3">
-                    <div className="text-xs text-zinc-500 mb-1">Username</div>
-                    <div className="text-sm text-blue-400">@{registry.username}</div>
-                  </div>
-                )}
-                {displayName && (
-                  <div className="p-3 rounded-lg bg-zinc-800/50 mb-3">
-                    <div className="text-xs text-zinc-500 mb-1">Display Name</div>
-                    <div className="text-sm text-white">{displayName}</div>
-                  </div>
-                )}
-                <div className="p-3 rounded-lg bg-zinc-800/50 mb-3">
-                  <div className="text-xs text-zinc-500 mb-1">Balance</div>
-                  <div className="text-sm text-white">{balance ? formatBalance(balance) : '...'}</div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => { navigator.clipboard.writeText(address!); }} className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-zinc-800 text-xs text-zinc-300 hover:bg-zinc-700 transition-colors">
-                    <ExternalLink size={14} /> Explorer
-                  </button>
-                  <button onClick={() => { disconnect(); setOpen(false); }} className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-600/10 text-xs text-red-400 hover:bg-red-600/20 transition-colors">
-                    <LogOut size={14} /> Disconnect
-                  </button>
-                </div>
-              </motion.div>
-            </>
-          )}
-        </AnimatePresence>
 
-        <AnimatePresence>
-          {needsRegistration && (
-            <>
-              <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50" onClick={() => {}} />
-              <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                <div className="w-full max-w-md rounded-2xl border border-zinc-700/50 bg-zinc-900 shadow-2xl overflow-hidden">
-                  <div className="flex items-center justify-between p-5 border-b border-zinc-800">
-                    <div>
-                      <h2 className="text-lg font-semibold text-white">Create Your Unique ID</h2>
-                      <p className="text-sm text-zinc-400 mt-0.5">You must register a username before using Synq.</p>
-                    </div>
+                  {/* Actions: Swap & Disconnect in 35:65 Ratio Grid */}
+                  <div
+                    className="grid grid-cols-[minmax(0,35fr)_minmax(0,65fr)] gap-2 w-full pt-1"
+                    style={{ gridTemplateColumns: 'minmax(0, 35fr) minmax(0, 65fr)' }}
+                  >
+                    <Link
+                      href="/swap"
+                      onClick={handleClose}
+                      className="w-full flex items-center justify-center gap-1 sm:gap-1.5 h-9 px-1.5 sm:px-2 rounded-xl bg-white text-[#242424] hover:bg-zinc-100 transition-colors text-[8px] sm:text-[8.5px] font-normal tracking-tight select-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white whitespace-nowrap overflow-hidden"
+                    >
+                      <ArrowRightLeft size={11} className="shrink-0 text-[#242424]" />
+                      <span>Swap</span>
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        disconnect();
+                        handleClose();
+                      }}
+                      className="w-full flex items-center justify-center gap-1 sm:gap-1.5 h-9 px-1.5 sm:px-2 rounded-xl bg-white text-[#242424] hover:bg-zinc-100 transition-colors text-[8px] sm:text-[8.5px] font-normal tracking-tight select-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white whitespace-nowrap overflow-hidden"
+                    >
+                      <LogOut size={11} className="shrink-0 text-[#242424]" />
+                      <span>Disconnect</span>
+                    </button>
                   </div>
-                  <div className="p-5 space-y-4">
-                    {registry.isLoading ? (
-                      <div className="flex items-center justify-center gap-2 py-8 text-zinc-400">
-                        <Loader2 size={18} className="animate-spin text-blue-400" />
-                        <span className="text-sm">Checking registry...</span>
-                      </div>
-                    ) : registry.username === undefined ? (
-                      <>
-                        <div className="flex items-center gap-3 p-3 rounded-lg bg-amber-600/10 border border-amber-500/20">
-                          <span className="text-xs text-amber-400">
-                            {String(registry.config.address ?? '').length < 2
-                              ? <>Synq contracts are <strong>not deployed on {chainId === 11155111 ? 'Ethereum Sepolia' : 'this network'}</strong> yet. Deploy them first, then reconnect.</>
-                              : <>Cannot reach the registry contract. Your wallet is on <strong>{chainId === 11155111 ? 'Ethereum Sepolia' : chainId === 31337 ? 'Hardhat localhost:8545' : `chain ${chainId}`}</strong> — {chainId === 11155111 ? 'the registry address seems wrong or RPC is down.' : 'switch to <strong>Ethereum Sepolia</strong> in your wallet for testnet mode, or start the local node for Hardhat mode.'}</>}
-                          </span>
-                        </div>
-                        <button
-                          onClick={() => registry.refetchUsername()}
-                          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-zinc-700 text-sm text-zinc-300 hover:bg-zinc-800 transition-all"
-                        >
-                          <Loader2 size={16} /> Retry Connection
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <div className="flex items-center gap-3 p-3 rounded-lg bg-zinc-800/50">
-                          <User size={20} className="text-blue-400" />
-                          <span className="text-sm text-zinc-300 font-mono">{truncateAddress(address!)}</span>
-                        </div>
-                        <div>
-                          <label className="text-xs text-zinc-500 mb-1 block">Username</label>
-                          <div className="relative">
-                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 text-sm">@</span>
-                            <input
-                              value={usernameInput}
-                              onChange={(e) => { setUsernameInput(e.target.value.replace(/[^a-zA-Z0-9_]/g, '')); setUsernameError(''); }}
-                              onKeyDown={(e) => e.key === 'Enter' && handleRegisterUsername()}
-                              placeholder="your_unique_id"
-                              className="w-full h-11 rounded-xl border border-zinc-700 bg-zinc-800/50 pl-8 pr-4 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 font-mono"
-                              autoFocus
-                              maxLength={32}
-                            />
-                          </div>
-                          <p className="text-xs text-zinc-500 mt-1">3-32 characters, letters, numbers, underscores. This is your permanent digital identity on Synq.</p>
-                        </div>
-                        {isTaken && <p className="text-xs text-red-400">This username is already taken — pick another one</p>}
-                        {usernameError && <p className="text-xs text-red-400">{usernameError}</p>}
-                        {txError && <p className="text-xs text-red-400">{txError}</p>}
-                        <button
-                          onClick={handleRegisterUsername}
-                          disabled={usernameInput.length < 3 || registry.isPending || isTaken}
-                          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-sm text-white font-medium hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                        >
-                          {registry.isPending ? <><Loader2 size={16} className="animate-spin" /> Signing...</> : <><Sparkles size={16} /> Register Unique ID</>}
-                        </button>
-                        <p className="text-xs text-zinc-500 text-center">This creates an on-chain record linking your wallet to this unique username.</p>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </motion.div>
-            </>
-          )}
-        </AnimatePresence>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>,
+          document.body
+        )}
       </div>
     );
   }
 
   return (
-    <>
-      <button onClick={() => setShowModal(true)} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-500 transition-all shadow-lg shadow-blue-600/20">
-        <Wallet size={16} /> Connect Wallet
-      </button>
+    <div className="relative">
+      {connecting !== null ? (
+        <button
+          ref={buttonRef}
+          disabled
+          className={cn(
+            'flex items-center gap-2.5 h-10 px-4 rounded-xl border border-zinc-200/90 bg-[#FFFFFF] text-[#242424] opacity-90 shadow-sm text-sm font-medium transition-all select-none cursor-wait',
+            className
+          )}
+        >
+          <Loader2 size={15} className="animate-spin text-[#242424]/70 shrink-0" />
+          <span className="text-[#242424]/80 font-medium">Connecting...</span>
+        </button>
+      ) : (
+        <button
+          ref={buttonRef}
+          onClick={handleOpenModal}
+          className={cn(
+            'flex items-center gap-2.5 h-10 px-4 rounded-xl border border-zinc-200/90 bg-[#FFFFFF] text-[#242424] hover:bg-zinc-50 hover:border-zinc-300 hover:shadow shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#242424]/20 text-sm font-medium transition-all select-none',
+            className
+          )}
+        >
+          <Wallet size={16} className="text-[#242424]/80 shrink-0" />
+          <span className="text-[#242424] font-medium">Connect Wallet</span>
+        </button>
+      )}
+      {connectionError && (
+        <p className="absolute right-0 top-full mt-2 w-72 text-xs text-red-600 bg-white border border-red-200 rounded-xl p-2.5 shadow-lg z-50">
+          {connectionError}
+        </p>
+      )}
 
-      <AnimatePresence>
-        {showModal && (
-          <>
-            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50" onClick={() => setShowModal(false)} />
-            <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="fixed inset-0 z-50 flex items-center justify-center p-4">
-              <div className="w-full max-w-md rounded-2xl border border-zinc-700/50 bg-zinc-900 shadow-2xl overflow-hidden">
-                <div className="flex items-center justify-between p-5 border-b border-zinc-800">
-                  <div>
-                    <h2 className="text-lg font-semibold text-white">Connect Wallet</h2>
-                    <p className="text-sm text-zinc-400 mt-0.5">Choose a connection method</p>
+      {mounted && typeof document !== 'undefined' && createPortal(
+        <AnimatePresence>
+          {showModal && (
+            <div key="wallet-modal-portal-root">
+              <div
+                key="wallet-modal-backdrop"
+                className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100]"
+                onClick={handleCloseModal}
+                aria-hidden="true"
+              />
+              <motion.div
+                key="wallet-modal-panel"
+                initial={{ opacity: 0, scale: 0.95, y: 16 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 16 }}
+                transition={{ duration: 0.15, ease: 'easeOut' }}
+                className="fixed inset-0 z-[101] flex items-center justify-center p-4 pointer-events-none"
+              >
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="wallet-modal-title"
+                  className="w-full max-w-[500px] rounded-3xl bg-[#303030] border border-[#444444] shadow-2xl overflow-hidden pointer-events-auto flex flex-col max-h-[85vh]"
+                >
+                  {/* Header */}
+                  <div className="p-6 pb-4 border-b border-[#404040] relative shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleCloseModal}
+                      className="absolute right-5 top-5 p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/5 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/50"
+                      aria-label="Close modal"
+                    >
+                      <X size={18} />
+                    </button>
+                    <h2
+                      id="wallet-modal-title"
+                      className={cn(pressStart2P.className, "text-[14px] sm:text-[15px] text-white tracking-normal leading-relaxed")}
+                      style={{ wordSpacing: '-0.35em' }}
+                    >
+                      Synq your wallet...
+                    </h2>
+                    <p className={cn(pressStart2P.className, "text-[9px] sm:text-[10px] text-zinc-400 mt-2.5 leading-relaxed tracking-tight")}>
+                      Choose a wallet to connect and continue.
+                    </p>
                   </div>
-                  <button onClick={() => setShowModal(false)} className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors">
-                    <X size={18} />
-                  </button>
-                </div>
-                <div className="p-5">
-                  <div className="grid gap-2">
-                      {walletOptions.map((option) => (
-                        <button key={option.id} onClick={() => handleConnect(option)} disabled={connecting !== null}
-                          className={cn('flex items-center gap-3 w-full p-3 rounded-xl border text-left transition-all group', option.bg, connecting === option.id ? 'opacity-70' : 'hover:bg-zinc-800/50')}>
-                          <WalletIcon src={option.src} name={option.name} />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium text-white group-hover:text-blue-400 transition-colors">{option.name}</span>
-                              {connecting === option.id && <Loader2 size={12} className="animate-spin text-blue-400" />}
-                            </div>
-                            <p className="text-xs text-zinc-500 truncate">{option.description}</p>
-                          </div>
-                          <ChevronRight size={16} className="text-zinc-600 group-hover:text-zinc-400 transition-colors" />
-                        </button>
-                      ))}
+
+                  {/* Connection error display */}
+                  {connectionError && (
+                    <div className="mx-6 mt-4 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-300 flex items-center justify-between shrink-0">
+                      <span className="truncate">{connectionError}</span>
+                      <button
+                        type="button"
+                        onClick={() => setConnectionError('')}
+                        className="text-red-400 hover:text-red-200 ml-2 shrink-0"
+                        aria-label="Dismiss error"
+                      >
+                        <X size={14} />
+                      </button>
                     </div>
+                  )}
+
+                  {/* Wallet Grid - Bounded scrollable area */}
+                  <div className="p-6 py-5 overflow-y-auto flex-1 max-h-[380px]">
+                    {gridItems.length > 0 ? (
+                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-y-5 gap-x-3 sm:gap-x-4 place-items-center">
+                        {gridItems.map((item) => {
+                          const isConnectingThis = connecting === item.key;
+                          return (
+                            <button
+                              key={item.key}
+                              type="button"
+                              onClick={() => handleConnect(item.connector)}
+                              disabled={connecting !== null}
+                              className="group flex flex-col items-center focus-visible:outline-none w-full max-w-[80px]"
+                              aria-label={`Connect with ${item.name}`}
+                            >
+                              <div className="relative w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-white shadow-sm flex items-center justify-center p-2.5 shrink-0 transition-transform duration-150 group-hover:scale-105 group-focus-visible:ring-2 group-focus-visible:ring-white group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-[#303030] overflow-hidden">
+                                {isConnectingThis ? (
+                                  <Loader2 size={24} className="animate-spin text-zinc-700" />
+                                ) : (
+                                  <WalletItemIcon item={item} connector={item.connector} />
+                                )}
+                              </div>
+                              <span
+                                className={cn(
+                                  pressStart2P.className,
+                                  "mt-2 text-[8px] sm:text-[8.5px] text-zinc-300 font-normal text-center leading-snug line-clamp-2 w-full max-w-[76px] sm:max-w-[82px] break-words group-hover:text-white transition-colors select-none min-h-[22px] flex items-center justify-center tracking-tight"
+                                )}
+                                title={item.name}
+                              >
+                                {item.compactName}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="py-8 text-center">
+                        <p className={cn(pressStart2P.className, "text-[9px] text-zinc-400")}>No Web3 wallet extensions found</p>
+                        <p className="text-[11px] text-zinc-500 mt-2">Please install a supported browser wallet to continue.</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Footer */}
+                  <div className="px-6 py-3.5 border-t border-[#404040] shrink-0">
+                    <p className={cn(pressStart2P.className, "text-[8px] text-zinc-400 text-center leading-relaxed tracking-tight select-none")}>
+                      By connecting, you agree to Synq&apos;s Terms of Service
+                    </p>
+                  </div>
                 </div>
-                <div className="px-5 py-3 bg-zinc-800/30 border-t border-zinc-800">
-                  <p className="text-xs text-zinc-500 text-center">By connecting, you agree to Synq's Terms of Service</p>
-                </div>
-              </div>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
-    </>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
+    </div>
   );
 }

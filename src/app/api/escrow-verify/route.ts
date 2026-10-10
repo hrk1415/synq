@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { verifyMilestone } from '@/lib/ai';
 import { query, create } from '@/lib/db';
+import { getAuthenticatedWallet, unauthorized } from '@/lib/auth';
 
 export async function GET(req: NextRequest) {
   const dealAddress = String(req.nextUrl.searchParams.get('dealAddress') || '').toLowerCase();
@@ -15,6 +16,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const authenticatedWallet = getAuthenticatedWallet(req);
+  if (!authenticatedWallet) return unauthorized();
+
   try {
     const body = await req.json();
     const { dealAddress, milestoneId, title, description, evidenceHash } = body;
@@ -40,7 +44,7 @@ export async function POST(req: NextRequest) {
     });
 
     return Response.json({ verification: record });
-  } catch (e: any) {
-    return Response.json({ error: e.message }, { status: 500 });
+  } catch {
+    return Response.json({ error: 'Milestone verification failed' }, { status: 500 });
   }
 }

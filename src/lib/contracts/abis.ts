@@ -3,16 +3,175 @@ import NexotiqFactory from './artifacts/contracts/NexotiqFactory.sol/NexotiqFact
 import NexotiqReputation from './artifacts/contracts/NexotiqReputation.sol/NexotiqReputation.json';
 import NexotiqProtection from './artifacts/contracts/NexotiqProtection.sol/NexotiqProtection.json';
 import NexotiqDirectory from './artifacts/contracts/NexotiqDirectory.sol/NexotiqDirectory.json';
+import NexotiqRegistry from './artifacts/contracts/NexotiqRegistry.sol/NexotiqRegistry.json';
+import SynqFactoryV2 from './artifacts/contracts/v1/SynqFactoryV2.sol/SynqFactoryV2.json';
+import SynqDealV1 from './artifacts/contracts/v1/SynqDealV1.sol/SynqDealV1.json';
+import SynqResolutionCommittee from './artifacts/contracts/v1/SynqResolutionCommittee.sol/SynqResolutionCommittee.json';
 
 export const nexotiqDealABI = NexotiqDeal.abi;
 export const nexotiqFactoryABI = NexotiqFactory.abi;
 export const nexotiqReputationABI = NexotiqReputation.abi;
 export const nexotiqProtectionABI = NexotiqProtection.abi;
 export const nexotiqDirectoryABI = NexotiqDirectory.abi;
+export const nexotiqRegistryABI = NexotiqRegistry.abi;
+
+export const synqFactoryV2ABI = SynqFactoryV2.abi;
+export const synqDealV1ABI = SynqDealV1.abi;
+export const synqResolutionCommitteeABI = SynqResolutionCommittee.abi;
+
 
 export const erc20ABI = [
   { inputs: [{ name: 'account', type: 'address' }], name: 'balanceOf', outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view', type: 'function' },
   { inputs: [{ name: 'owner', type: 'address' }, { name: 'spender', type: 'address' }], name: 'allowance', outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view', type: 'function' },
   { inputs: [{ name: 'spender', type: 'address' }, { name: 'amount', type: 'uint256' }], name: 'approve', outputs: [{ name: '', type: 'bool' }], stateMutability: 'nonpayable', type: 'function' },
   { inputs: [{ name: 'to', type: 'address' }, { name: 'amount', type: 'uint256' }], name: 'transfer', outputs: [{ name: '', type: 'bool' }], stateMutability: 'nonpayable', type: 'function' },
+] as const;
+
+export const synqPremiumProtectionManagerABI = [
+  {
+    inputs: [],
+    name: 'premiumFeeBps',
+    outputs: [{ name: '', type: 'uint16' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'COVERAGE_RATE_BPS',
+    outputs: [{ name: '', type: 'uint16' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ name: 'deal', type: 'address' }],
+    name: 'getPolicy',
+    outputs: [
+      {
+        components: [
+          { name: 'client', type: 'address' },
+          { name: 'purchasedAt', type: 'uint64' },
+          { name: 'premiumPaid', type: 'uint256' },
+          { name: 'maxCoverage', type: 'uint256' },
+          { name: 'totalPaid', type: 'uint256' },
+          { name: 'active', type: 'bool' },
+        ],
+        name: '',
+        type: 'tuple',
+      },
+    ],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ name: 'deal', type: 'address' }],
+    name: 'purchasePolicy',
+    outputs: [{ name: 'premiumFee', type: 'uint256' }],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true, name: 'deal', type: 'address' },
+      { indexed: true, name: 'client', type: 'address' },
+      { indexed: false, name: 'totalEscrow', type: 'uint256' },
+      { indexed: false, name: 'premiumPaid', type: 'uint256' },
+      { indexed: false, name: 'maxCoverage', type: 'uint256' },
+    ],
+    name: 'PolicyPurchased',
+    type: 'event',
+  },
+] as const;
+
+export const synqProtectionPoolABI = [
+  {
+    inputs: [],
+    name: 'availableBalance',
+    outputs: [{ name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'usdc',
+    outputs: [{ name: '', type: 'address' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+] as const;
+
+export const synqPremiumProtectionManagerV1_1ABI = [
+  {
+    inputs: [],
+    name: 'premiumFeeBps',
+    outputs: [{ name: '', type: 'uint16' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'COVERAGE_RATE_BPS',
+    outputs: [{ name: '', type: 'uint16' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'MAX_MILESTONES',
+    outputs: [{ name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [
+      { name: 'deal', type: 'address' },
+      { name: 'milestoneId', type: 'uint256' },
+    ],
+    name: 'isMilestoneCovered',
+    outputs: [{ name: '', type: 'bool' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ name: 'deal', type: 'address' }],
+    name: 'getPolicy',
+    outputs: [
+      {
+        components: [
+          { name: 'client', type: 'address' },
+          { name: 'purchasedAt', type: 'uint64' },
+          { name: 'coveredBitmap', type: 'uint16' },
+          { name: 'active', type: 'bool' },
+          { name: 'eligiblePrincipal', type: 'uint256' },
+          { name: 'premiumPaid', type: 'uint256' },
+          { name: 'maxCoverage', type: 'uint256' },
+          { name: 'totalPaid', type: 'uint256' },
+        ],
+        name: '',
+        type: 'tuple',
+      },
+    ],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ name: 'deal', type: 'address' }],
+    name: 'purchasePolicy',
+    outputs: [{ name: 'premiumFee', type: 'uint256' }],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true, name: 'deal', type: 'address' },
+      { indexed: true, name: 'client', type: 'address' },
+      { indexed: false, name: 'eligiblePrincipal', type: 'uint256' },
+      { indexed: false, name: 'coveredBitmap', type: 'uint16' },
+      { indexed: false, name: 'premiumPaid', type: 'uint256' },
+      { indexed: false, name: 'maxCoverage', type: 'uint256' },
+    ],
+    name: 'PolicyPurchased',
+    type: 'event',
+  },
 ] as const;

@@ -36,11 +36,6 @@
   .text-gradient {
     @apply bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-violet-400;
   }
-  .synq-dashboard-bg {
-    background:
-      linear-gradient(140deg, rgba(10, 10, 11, 0.18) 0%, rgba(10, 10, 11, 0) 40%, rgba(10, 10, 11, 0.22) 100%),
-      linear-gradient(140deg, #5C447A 0%, #9C6A97 22%, #CB8E9F 45%, #F3B294 70%, #FFEAA9 100%);
-  }
   .glow {
     box-shadow: 0 0 20px rgba(59, 130, 246, 0.18), 0 0 40px rgba(59, 130, 246, 0.08);
   }

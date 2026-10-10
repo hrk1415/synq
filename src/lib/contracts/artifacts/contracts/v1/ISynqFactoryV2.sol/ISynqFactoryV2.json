@@ -1,0 +1,1263 @@
+{
+  "_format": "hh-sol-artifact-1",
+  "contractName": "ISynqFactoryV2",
+  "sourceName": "contracts/v1/ISynqFactoryV2.sol",
+  "abi": [
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "dealAddress",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "client",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "freelancer",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "creator",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "usdc",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "primaryResolver",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "emergencyResolver",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "totalEscrow",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "milestoneCount",
+          "type": "uint256"
+        }
+      ],
+      "name": "DealCreated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "oldImplementation",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "newImplementation",
+          "type": "address"
+        }
+      ],
+      "name": "DealImplementationUpdated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "proposalId",
+          "type": "bytes32"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "client",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "freelancer",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "dealAddress",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "nonce",
+          "type": "uint256"
+        }
+      ],
+      "name": "DealProposalAccepted",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "proposalId",
+          "type": "bytes32"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "client",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "freelancer",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "nonce",
+          "type": "uint256"
+        }
+      ],
+      "name": "DealProposalCancelled",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "proposalId",
+          "type": "bytes32"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "client",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "freelancer",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "nonce",
+          "type": "uint256"
+        }
+      ],
+      "name": "DealProposalDeclined",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "oldResolver",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "newResolver",
+          "type": "address"
+        }
+      ],
+      "name": "EmergencyResolverUpdated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "oldResolver",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "newResolver",
+          "type": "address"
+        }
+      ],
+      "name": "PrimaryResolverUpdated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "client",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "nonce",
+          "type": "uint256"
+        }
+      ],
+      "name": "ProposalNonceCancelled",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "oldModule",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "newModule",
+          "type": "address"
+        }
+      ],
+      "name": "ProtectionModuleUpdated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "oldPolicy",
+          "type": "bytes32"
+        },
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "newPolicy",
+          "type": "bytes32"
+        }
+      ],
+      "name": "ProtectionPolicyUpdated",
+      "type": "event"
+    },
+    {
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "address",
+              "name": "client",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "freelancer",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "canonicalUsdc",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "dealImplementation",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "primaryResolver",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "emergencyResolver",
+              "type": "address"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "milestonesHash",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bool",
+              "name": "isProtected",
+              "type": "bool"
+            },
+            {
+              "internalType": "address",
+              "name": "protectionModule",
+              "type": "address"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "policyId",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "uint256",
+              "name": "proposalNonce",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "expiry",
+              "type": "uint256"
+            }
+          ],
+          "internalType": "struct DealProposal",
+          "name": "proposal",
+          "type": "tuple"
+        },
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "amount",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint64",
+              "name": "workDeadline",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint64",
+              "name": "reviewWindow",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint64",
+              "name": "gracePeriod",
+              "type": "uint64"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "specHash",
+              "type": "bytes32"
+            }
+          ],
+          "internalType": "struct MilestoneInit[]",
+          "name": "milestoneInits",
+          "type": "tuple[]"
+        },
+        {
+          "internalType": "bytes",
+          "name": "clientSignature",
+          "type": "bytes"
+        }
+      ],
+      "name": "acceptDealProposal",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "dealAddress",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "index",
+          "type": "uint256"
+        }
+      ],
+      "name": "allDeals",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "address",
+              "name": "client",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "freelancer",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "canonicalUsdc",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "dealImplementation",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "primaryResolver",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "emergencyResolver",
+              "type": "address"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "milestonesHash",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bool",
+              "name": "isProtected",
+              "type": "bool"
+            },
+            {
+              "internalType": "address",
+              "name": "protectionModule",
+              "type": "address"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "policyId",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "uint256",
+              "name": "proposalNonce",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "expiry",
+              "type": "uint256"
+            }
+          ],
+          "internalType": "struct DealProposal",
+          "name": "proposal",
+          "type": "tuple"
+        }
+      ],
+      "name": "cancelDealProposal",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "nonce",
+          "type": "uint256"
+        }
+      ],
+      "name": "cancelProposalNonce",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "canonicalUsdc",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "client",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "freelancer",
+          "type": "address"
+        },
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "amount",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint64",
+              "name": "workDeadline",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint64",
+              "name": "reviewWindow",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint64",
+              "name": "gracePeriod",
+              "type": "uint64"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "specHash",
+              "type": "bytes32"
+            }
+          ],
+          "internalType": "struct MilestoneInit[]",
+          "name": "milestoneInits",
+          "type": "tuple[]"
+        }
+      ],
+      "name": "createDeal",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "dealAddress",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "client",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "freelancer",
+          "type": "address"
+        },
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "amount",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint64",
+              "name": "workDeadline",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint64",
+              "name": "reviewWindow",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint64",
+              "name": "gracePeriod",
+              "type": "uint64"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "specHash",
+              "type": "bytes32"
+            }
+          ],
+          "internalType": "struct MilestoneInit[]",
+          "name": "milestoneInits",
+          "type": "tuple[]"
+        }
+      ],
+      "name": "createProtectedDeal",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "dealAddress",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "dealImplementation",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "address",
+              "name": "client",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "freelancer",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "canonicalUsdc",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "dealImplementation",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "primaryResolver",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "emergencyResolver",
+              "type": "address"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "milestonesHash",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bool",
+              "name": "isProtected",
+              "type": "bool"
+            },
+            {
+              "internalType": "address",
+              "name": "protectionModule",
+              "type": "address"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "policyId",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "uint256",
+              "name": "proposalNonce",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "expiry",
+              "type": "uint256"
+            }
+          ],
+          "internalType": "struct DealProposal",
+          "name": "proposal",
+          "type": "tuple"
+        },
+        {
+          "internalType": "bytes",
+          "name": "clientSignature",
+          "type": "bytes"
+        }
+      ],
+      "name": "declineDealProposal",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "defaultEmergencyResolver",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "defaultPrimaryResolver",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "defaultProtectionModule",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "defaultProtectionPolicyId",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getDealCount",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "offset",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "limit",
+          "type": "uint256"
+        }
+      ],
+      "name": "getDeals",
+      "outputs": [
+        {
+          "internalType": "address[]",
+          "name": "",
+          "type": "address[]"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "client",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "offset",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "limit",
+          "type": "uint256"
+        }
+      ],
+      "name": "getDealsByClient",
+      "outputs": [
+        {
+          "internalType": "address[]",
+          "name": "",
+          "type": "address[]"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "freelancer",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "offset",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "limit",
+          "type": "uint256"
+        }
+      ],
+      "name": "getDealsByFreelancer",
+      "outputs": [
+        {
+          "internalType": "address[]",
+          "name": "",
+          "type": "address[]"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "client",
+          "type": "address"
+        }
+      ],
+      "name": "getDealsCountByClient",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "freelancer",
+          "type": "address"
+        }
+      ],
+      "name": "getDealsCountByFreelancer",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "address",
+              "name": "client",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "freelancer",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "canonicalUsdc",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "dealImplementation",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "primaryResolver",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "emergencyResolver",
+              "type": "address"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "milestonesHash",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bool",
+              "name": "isProtected",
+              "type": "bool"
+            },
+            {
+              "internalType": "address",
+              "name": "protectionModule",
+              "type": "address"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "policyId",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "uint256",
+              "name": "proposalNonce",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "expiry",
+              "type": "uint256"
+            }
+          ],
+          "internalType": "struct DealProposal",
+          "name": "proposal",
+          "type": "tuple"
+        }
+      ],
+      "name": "getProposalStatus",
+      "outputs": [
+        {
+          "internalType": "enum ProposalStatus",
+          "name": "",
+          "type": "uint8"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "proposalId",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "address",
+          "name": "client",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "nonce",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "expiry",
+          "type": "uint256"
+        }
+      ],
+      "name": "getProposalStatusById",
+      "outputs": [
+        {
+          "internalType": "enum ProposalStatus",
+          "name": "",
+          "type": "uint8"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "address",
+              "name": "client",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "freelancer",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "canonicalUsdc",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "dealImplementation",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "primaryResolver",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "emergencyResolver",
+              "type": "address"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "milestonesHash",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bool",
+              "name": "isProtected",
+              "type": "bool"
+            },
+            {
+              "internalType": "address",
+              "name": "protectionModule",
+              "type": "address"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "policyId",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "uint256",
+              "name": "proposalNonce",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "expiry",
+              "type": "uint256"
+            }
+          ],
+          "internalType": "struct DealProposal",
+          "name": "proposal",
+          "type": "tuple"
+        }
+      ],
+      "name": "hashDealProposal",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "amount",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint64",
+              "name": "workDeadline",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint64",
+              "name": "reviewWindow",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint64",
+              "name": "gracePeriod",
+              "type": "uint64"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "specHash",
+              "type": "bytes32"
+            }
+          ],
+          "internalType": "struct MilestoneInit[]",
+          "name": "milestoneInits",
+          "type": "tuple[]"
+        }
+      ],
+      "name": "hashMilestones",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "pure",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "client",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "nonce",
+          "type": "uint256"
+        }
+      ],
+      "name": "isProposalNonceUsed",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "deal",
+          "type": "address"
+        }
+      ],
+      "name": "isSynqDeal",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "newImplementation",
+          "type": "address"
+        }
+      ],
+      "name": "setDealImplementation",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "newResolver",
+          "type": "address"
+        }
+      ],
+      "name": "setDefaultEmergencyResolver",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "newResolver",
+          "type": "address"
+        }
+      ],
+      "name": "setDefaultPrimaryResolver",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "newModule",
+          "type": "address"
+        }
+      ],
+      "name": "setDefaultProtectionModule",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "newPolicyId",
+          "type": "bytes32"
+        }
+      ],
+      "name": "setDefaultProtectionPolicyId",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x",
+  "deployedBytecode": "0x",
+  "linkReferences": {},
+  "deployedLinkReferences": {}
+}

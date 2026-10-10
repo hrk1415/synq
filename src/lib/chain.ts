@@ -1,14 +1,27 @@
-import { createPublicClient, http } from 'viem';
-import { hardhat, sepolia } from 'viem/chains';
+import { createPublicClient, http, fallback } from 'viem';
+import { sepolia } from 'viem/chains';
+import { SEPOLIA_CHAIN_ID } from './contracts/addresses';
 
-export function getPublicClient(chainId: number) {
-  if (chainId === 11155111) return createPublicClient({ chain: sepolia, transport: http('https://ethereum-sepolia-rpc.publicnode.com') });
-  if (chainId === 31337) return createPublicClient({ chain: hardhat, transport: http('http://127.0.0.1:8545') });
-  return undefined;
+const envRpc = typeof process !== 'undefined'
+  ? (process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL || process.env.SEPOLIA_RPC_URL)?.trim()
+  : undefined;
+
+const rpcTransports = [
+  ...(envRpc ? [http(envRpc, { batch: true, timeout: 8_000, retryCount: 2 })] : []),
+  http('https://ethereum-sepolia-rpc.publicnode.com', { batch: true, timeout: 8_000, retryCount: 2 }),
+  http('https://11155111.rpc.thirdweb.com', { batch: true, timeout: 8_000, retryCount: 2 }),
+  http('https://gateway.tenderly.co/public/sepolia', { batch: true, timeout: 8_000, retryCount: 2 }),
+];
+
+/** Canonical client for all imperative Synq application reads with resilient public RPC fallback and request batching. */
+export const sepoliaPublicClient = createPublicClient({
+  chain: sepolia,
+  transport: fallback(rpcTransports, { rank: false }),
+});
+
+/** Explorer URLs for Synq application data are always Ethereum Sepolia. */
+export function getSepoliaExplorerUrl(type: 'tx' | 'address', hash: string): string {
+  return `${sepolia.blockExplorers.default.url}/${type}/${hash}`;
 }
 
-export function getExplorerUrl(chainId: number, type: 'tx' | 'address', hash: string): string | null {
-  if (chainId === 11155111) return `https://sepolia.etherscan.io/${type}/${hash}`;
-  if (chainId === 31337) return null;
-  return null;
-}
+export { SEPOLIA_CHAIN_ID };

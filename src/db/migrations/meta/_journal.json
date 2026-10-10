@@ -1,0 +1,174 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1790087888767,
+      "tag": "0000_funny_smiling_tiger",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790096036109,
+      "tag": "0001_slimy_jack_murdock",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790171397548,
+      "tag": "0002_sleepy_skaar",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790690000000,
+      "tag": "0003_canonical_conversation_pairs",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790776400000,
+      "tag": "0004_structured_message_payload",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790900000000,
+      "tag": "0005_standard_v2_deal_proposals",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791000000000,
+      "tag": "0006_milestone_submissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791100000000,
+      "tag": "0007_milestone_revisions",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791200000000,
+      "tag": "0008_standard_v2_disputes_and_mutual_settlements",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791300000000,
+      "tag": "0009_standard_v2_resolution_reports",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1791400000000,
+      "tag": "0010_standard_v2_committee_authorizations",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1791500000000,
+      "tag": "0011_standard_v2_committee_executions",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1791500000001,
+      "tag": "0012_glorious_micromacro",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1791500000002,
+      "tag": "0013_premium_protection_selection",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1791494740868,
+      "tag": "0014_grey_aqueduct",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1791496345443,
+      "tag": "0015_sparkling_viper",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1791499695755,
+      "tag": "0016_lumpy_wolverine",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1791504480592,
+      "tag": "0017_talented_norman_osborn",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791507920110,
+      "tag": "0018_dry_reptil",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1791510000000,
+      "tag": "0019_scanner_cursor_bootstrap",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1791520000000,
+      "tag": "0020_historical_deal_replay",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1791530000000,
+      "tag": "0021_accepted_deal_deployment_block",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1791558211945,
+      "tag": "0022_notification_preferences",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1791561412582,
+      "tag": "0023_otp_rate_limits",
+      "breakpoints": true
+    }
+  ]
+}

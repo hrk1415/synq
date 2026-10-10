@@ -1,50 +1,178 @@
 'use client';
 
-import { useState, useRef, useEffect, Suspense } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useState, useRef, useEffect, Suspense, useMemo } from 'react';
+import { motion, AnimatePresence, LayoutGroup, useReducedMotion } from 'framer-motion';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, ArrowRight, Check, Sparkles, Bot, Loader2, MessageSquare } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
+import {
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  Sparkles,
+  Loader2,
+  Search,
+  X,
+  Plus,
+  Trash2,
+  FileSignature,
+  Info,
+  HelpCircle,
+  AlertTriangle,
+  Star,
+  UserCheck,
+  Wallet,
+  ChevronDown,
+  ChevronUp,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Separator } from '@/components/ui/separator';
-import { useAccount, useChainId } from 'wagmi';
-import { parseUnits, decodeEventLog } from 'viem';
-import { useFactoryContract } from '@/hooks/useFactoryContract';
-import { formatCurrency, shortenAddress } from '@/lib/utils';
-import { nexotiqFactoryABI } from '@/lib/contracts/abis';
-import { getTokenInfo, chainKeyForId, isSupportedChain, DEFAULT_CHAIN_ID } from '@/lib/contracts/addresses';
+import { Press_Start_2P } from 'next/font/google';
+import { useAccount, useSignTypedData } from 'wagmi';
+import { getAddress, isAddress } from 'viem';
+
+import { shortenAddress, cn } from '@/lib/utils';
+import {
+  SYNQ_V2_SEPOLIA_CONFIG,
+} from '@/lib/contracts/addresses';
+import {
+  ZERO_ADDRESS,
+  ZERO_BYTES32,
+  MIN_REVIEW_WINDOW_SECONDS,
+  MAX_REVIEW_WINDOW_SECONDS,
+  getStandardV2Eip712Domain,
+  DEAL_PROPOSAL_EIP712_TYPES,
+  parseUsdcAmount,
+  formatUsdcAmount,
+  hashMilestoneSpec,
+  hashStandardV2Milestones,
+  verifyDealProposalSignature,
+  validateStandardV2ProtocolRules,
+} from '@/lib/deals/v2';
+import { fetchNextClientProposalNonce } from '@/lib/deals/v2-actions';
+import { sepoliaPublicClient } from '@/lib/chain';
 import { ChainGuard } from '@/components/shared/ChainGuard';
 import { useDirectoryContract } from '@/hooks/useDirectoryContract';
+import { useSepoliaNetwork } from '@/hooks/useSepoliaNetwork';
+import { useSidebar } from '@/context/SidebarContext';
+import { useBatchFreelancerCompletedDeals } from '@/hooks/useFreelancerStats';
+import { useSynqIdentity, useSynqIdentities } from '@/hooks/useSynqIdentity';
+import { useAuthSession } from '@/hooks/useAuthSession';
+import { DealReceipt } from '@/components/deals/DealReceipt';
+import { AIFreelancerMatches, calculateFreelancerMatch } from '@/components/deals/AIFreelancerMatches';
+import { formatPublicPricing, type FreelancerPricing } from '@/lib/deals/pricing';
+import type { DealProposalV2, StandardV2MilestoneInit } from '@/types/deal-v2';
 
-const ZERO = '0x0000000000000000000000000000000000000000';
+const pressStart2P = Press_Start_2P({
+  subsets: ['latin'],
+  weight: '400',
+  display: 'swap',
+});
 
 const tokenize = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
 
-// Assets available per chain (address(0) = native ETH)
-const SUPPORTED_ASSETS: Record<number, { address: string; symbol: string }[]> = {
-  31337: [{ address: ZERO, symbol: 'ETH' }],
-  11155111: [
-    { address: ZERO, symbol: 'ETH' },
-    { address: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238', symbol: 'USDC' },
-  ],
-};
+const SUGGESTED_JOB_TITLES = [
+  'Web Development',
+  'Frontend Development',
+  'Backend Development',
+  'Full Stack Development',
+  'Web3 Development',
+  'React Development',
+  'Next.js Development',
+  'Mobile App Development',
+  'API Development',
+  'Smart Contract Development',
+  'Web Design',
+  'UI Design',
+  'UX Design',
+  'UI/UX Design',
+  'Landing Page Design',
+  'Graphic Design',
+  'Logo Design',
+  'Product Design',
+  'Smart Contract Audit',
+  'Blockchain Development',
+  'Solidity Development',
+  'Web3 Integration',
+  'Security Audit',
+  'Content Writing',
+  'Technical Writing',
+  'Copywriting',
+  'Documentation',
+];
+
+interface FormMilestone {
+  title: string;
+  description: string;
+  amountUsdc: string;
+  deadlineDate: string;
+  deadlineTime: string;
+  reviewWindowSeconds: number;
+  gracePeriodSeconds: number;
+}
 
 const steps = [
-  { title: 'Type', description: 'What are you buying or selling?' },
-  { title: 'Counterparty', description: 'Who is the counterparty?' },
-  { title: 'Budget', description: 'What is the budget (in wei)?' },
-  { title: 'Deliverables', description: 'What are the deliverables?' },
-  { title: 'Deadline', description: 'Pick the deadline date and time' },
-  { title: 'Payment', description: 'How should payment be released?' },
-  { title: 'Protection', description: 'Do you want Adaptive Protection?' },
-  { title: 'Review', description: 'Review your deal terms' },
+  { title: 'Type', description: 'What is the deal?' },
+  { title: 'Freelancer', description: 'Who is the freelancer?' },
+  { title: 'Scope', description: 'What is the overall scope?' },
+  { title: 'Budget', description: 'Total deal budget' },
+  { title: 'Deadline', description: 'Project completion target' },
+  { title: 'Payment Structure', description: 'How should payment be structured?' },
+  { title: 'Protection', description: 'Choose the protection level you want for this deal' },
+  { title: 'Review', description: 'Review and sign deal terms' },
 ];
+
+function FreelancerAvatar({
+  avatar,
+  name,
+  handle,
+  wallet,
+  size = 'md',
+}: {
+  avatar?: string | null;
+  name?: string | null;
+  handle?: string | null;
+  wallet?: string;
+  size?: 'sm' | 'md' | 'lg';
+}) {
+  const sizeClasses = {
+    sm: 'w-7 h-7 text-[10px]',
+    md: 'w-9 h-9 text-xs',
+    lg: 'w-12 h-12 text-sm',
+  }[size];
+
+  if (avatar) {
+    return (
+      <img
+        src={avatar}
+        alt={name || 'Avatar'}
+        className={cn('rounded-full object-cover shrink-0 border border-zinc-700/60', sizeClasses)}
+      />
+    );
+  }
+
+  const label = name || handle || wallet || 'FL';
+  const initials = label.slice(0, 2).toUpperCase();
+  return (
+    <div
+      className={cn(
+        'rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-bold shrink-0 border border-zinc-700/60',
+        sizeClasses
+      )}
+    >
+      {initials}
+    </div>
+  );
+}
 
 export default function NewDealPage() {
   return (
-    <Suspense fallback={<div className="flex items-center justify-center py-20"><Loader2 size={24} className="animate-spin text-blue-400" /></div>}>
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center py-20">
+          <Loader2 size={24} className="animate-spin text-blue-400" />
+        </div>
+      }
+    >
       <NewDealForm />
     </Suspense>
   );
@@ -54,637 +182,2455 @@ function NewDealForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { address } = useAccount();
-  const chainId = useChainId();
-  const factory = useFactoryContract();
+  const { collapsed } = useSidebar();
+  const { ensureSepolia } = useSepoliaNetwork();
+  const { ensureAuthenticated } = useAuthSession();
+  const { signTypedDataAsync } = useSignTypedData();
+
   const directory = useDirectoryContract(address);
-  const [step, setStep] = useState(searchParams.get('seller') ? 1 : 0);
+  const initialSeller = searchParams.get('seller') || '';
+
+  const [step, setStep] = useState(0);
+  const shouldReduceMotion = useReducedMotion();
+  const [isReviewTransitioning, setIsReviewTransitioning] = useState<'forward' | 'backward' | null>(null);
+
+  const isReviewView =
+    (step === 7 && isReviewTransitioning !== 'backward') || isReviewTransitioning === 'forward';
+
   const [matches, setMatches] = useState<any[]>([]);
   const [matchState, setMatchState] = useState<'idle' | 'matching' | 'done'>('idle');
   const [matchError, setMatchError] = useState('');
+  const [aiPanelExpanded, setAiPanelExpanded] = useState(false);
+
   const prefilledDeadline = searchParams.get('deadline') || '';
-  const [form, setForm] = useState({
-    type: searchParams.get('type') || '',
-    counterparty: searchParams.get('seller') || '',
-    budget: searchParams.get('budget') || '',
-    deliverables: '',
-    deadline: prefilledDeadline ? String(Math.floor(new Date(`${prefilledDeadline}T23:59`).getTime() / 1000)) : '',
-    paymentStructure: searchParams.get('payment') === '50/50' ? 'half' : 'full',
-    protection: true,
-    protectionLevel: 'enhanced',
-    aiEnhanced: false,
-    asset: ZERO,
-  });
-  const [deadlineDate, setDeadlineDate] = useState(prefilledDeadline);
-  const [deadlineTime, setDeadlineTime] = useState('23:59');
-  const [creating, setCreating] = useState(false);
-  const [error, setError] = useState('');
+  const [deadlineDate, setDeadlineDate] = useState<string>(prefilledDeadline || '');
+  const [deadlineTime, setDeadlineTime] = useState<string>('23:59');
+  const [selectedDeadlinePreset, setSelectedDeadlinePreset] = useState<number | null>(null);
 
-  // On an unsupported chain we show the default chain's asset list so the form
-  // still renders — ChainGuard tells the user to switch, and handleCreate refuses
-  // to submit. Never fall back to hardhat: its addresses don't exist elsewhere.
-  const assets = SUPPORTED_ASSETS[chainId] || SUPPORTED_ASSETS[DEFAULT_CHAIN_ID];
-  const activeAsset = assets.find((a) => a.address === form.asset) || assets[0];
-  const tokenChainKey = chainKeyForId(isSupportedChain(chainId) ? chainId : DEFAULT_CHAIN_ID);
-  const assetInfo = getTokenInfo(tokenChainKey, form.asset);
-  const assetDecimals = activeAsset.symbol === 'ETH' ? 18 : assetInfo.decimals;
+  const dateInputRef = useRef<HTMLInputElement>(null);
+  const timeInputRef = useRef<HTMLInputElement>(null);
 
-  /**
-   * The protection pool is ETH-denominated: it holds ETH, quotes premiums in wei
-   * and pays claims in ETH. Pricing coverage off an ERC20 `coverageAmount` mixed
-   * base units with wei, so a 100 USDC deal was quoted a premium of a few hundred
-   * thousand wei — coverage that was effectively free and could never pay out.
-   * Coverage is therefore ETH-only, enforced in the contracts; the form must not
-   * offer a checkbox that the factory will reject.
-   */
-  const isEthDeal = String(form.asset) === ZERO;
-  const protectionEnabled = form.protection && isEthDeal;
-
-  const update = (key: string, value: string | boolean) => {
-    setForm(prev => ({ ...prev, [key]: value }));
-  };
-
-  const canProceed = () => {
-    switch (step) {
-      case 0: return form.type.length > 0;
-      case 1: return form.counterparty.startsWith('0x') && form.counterparty.length === 42;
-      case 2: return form.budget.length > 0 && !isNaN(Number(form.budget));
-      case 3: return form.deliverables.length > 0;
-      case 4: return !!deadlineDate && !isNaN(Number(form.deadline));
-      default: return true;
+  const openDatePicker = () => {
+    try {
+      if (dateInputRef.current && 'showPicker' in HTMLInputElement.prototype) {
+        dateInputRef.current.showPicker();
+      }
+    } catch {
+      dateInputRef.current?.focus();
     }
   };
 
-  const scoreSeller = (p: any) => {
+  const openTimePicker = () => {
+    try {
+      if (timeInputRef.current && 'showPicker' in HTMLInputElement.prototype) {
+        timeInputRef.current.showPicker();
+      }
+    } catch {
+      timeInputRef.current?.focus();
+    }
+  };
+
+  const handleDeadlineDateChange = (date: string) => {
+    setDeadlineDate(date);
+    setSelectedDeadlinePreset(null);
+    if (milestones.length > 0) {
+      const updated = [...milestones];
+      updated[updated.length - 1] = {
+        ...updated[updated.length - 1],
+        deadlineDate: date,
+      };
+      if (form.paymentStructure === '50-50' && updated.length === 2 && date) {
+        try {
+          const targetTs = new Date(`${date}T${deadlineTime || '23:59'}`).getTime();
+          const nowTs = Date.now();
+          if (targetTs > nowTs) {
+            const midTs = new Date(nowTs + (targetTs - nowTs) / 2);
+            const y = midTs.getFullYear();
+            const m = String(midTs.getMonth() + 1).padStart(2, '0');
+            const d = String(midTs.getDate()).padStart(2, '0');
+            updated[0] = { ...updated[0], deadlineDate: `${y}-${m}-${d}` };
+          }
+        } catch {}
+      }
+      setMilestones(updated);
+    }
+  };
+
+  const handleDeadlineTimeChange = (time: string) => {
+    setDeadlineTime(time);
+    setSelectedDeadlinePreset(null);
+    if (milestones.length > 0) {
+      const updated = [...milestones];
+      updated[updated.length - 1] = {
+        ...updated[updated.length - 1],
+        deadlineTime: time,
+      };
+      setMilestones(updated);
+    }
+  };
+
+  const applyDeadlinePreset = (days: number) => {
+    setSelectedDeadlinePreset(days);
+    const target = new Date();
+    target.setDate(target.getDate() + days);
+    const y = target.getFullYear();
+    const m = String(target.getMonth() + 1).padStart(2, '0');
+    const d = String(target.getDate()).padStart(2, '0');
+    const hh = String(target.getHours()).padStart(2, '0');
+    const mm = String(target.getMinutes()).padStart(2, '0');
+    const dateStr = `${y}-${m}-${d}`;
+    const timeStr = `${hh}:${mm}`;
+    setDeadlineDate(dateStr);
+    setDeadlineTime(timeStr);
+    if (milestones.length > 0) {
+      const updated = [...milestones];
+      updated[updated.length - 1] = {
+        ...updated[updated.length - 1],
+        deadlineDate: dateStr,
+        deadlineTime: timeStr,
+      };
+      if (form.paymentStructure === '50-50' && updated.length === 2 && dateStr) {
+        try {
+          const targetTs = target.getTime();
+          const nowTs = Date.now();
+          if (targetTs > nowTs) {
+            const midTs = new Date(nowTs + (targetTs - nowTs) / 2);
+            const my = midTs.getFullYear();
+            const mmth = String(midTs.getMonth() + 1).padStart(2, '0');
+            const md = String(midTs.getDate()).padStart(2, '0');
+            updated[0] = { ...updated[0], deadlineDate: `${my}-${mmth}-${md}` };
+          }
+        } catch {}
+      }
+      setMilestones(updated);
+    }
+  };
+
+  const formattedLocalDelivery = useMemo(() => {
+    if (!deadlineDate || !deadlineTime) return null;
+    try {
+      const d = new Date(`${deadlineDate}T${deadlineTime}`);
+      if (isNaN(d.getTime())) return null;
+      const datePart = d.toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      });
+      const timePart = d.toLocaleTimeString(undefined, {
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+      return `${datePart} at ${timePart}`;
+    } catch {
+      return null;
+    }
+  }, [deadlineDate, deadlineTime]);
+
+  const rawUrlPayment = searchParams.get('payment');
+  const validUrlPayment =
+    rawUrlPayment === '50/50' || rawUrlPayment === '50-50' || rawUrlPayment === 'half'
+      ? '50-50'
+      : rawUrlPayment === 'single'
+      ? 'single'
+      : rawUrlPayment === 'custom'
+      ? 'custom'
+      : null;
+
+  const [paymentStructureSelected, setPaymentStructureSelected] = useState<boolean>(!!validUrlPayment);
+  const [expandedMilestoneIndex, setExpandedMilestoneIndex] = useState<number | null>(validUrlPayment ? 0 : null);
+
+  const rawUrlProtection = searchParams.get('protection')?.trim().toUpperCase();
+  const validUrlProtection: 'STANDARD' | 'PREMIUM' | '' =
+    rawUrlProtection === 'STANDARD'
+      ? 'STANDARD'
+      : rawUrlProtection === 'PREMIUM'
+      ? 'PREMIUM'
+      : '';
+
+  const [form, setForm] = useState<{
+    type: string;
+    counterparty: string;
+    budget: string;
+    deliverables: string;
+    paymentStructure: 'single' | '50-50' | 'custom' | '';
+    protectionSelection: 'STANDARD' | 'PREMIUM' | '';
+    expiryDays: number;
+  }>({
+    type: searchParams.get('type') || '',
+    counterparty: initialSeller,
+    budget: searchParams.get('budget') || '',
+    deliverables: '',
+    paymentStructure: validUrlPayment || '',
+    protectionSelection: validUrlProtection || '',
+    expiryDays: 7,
+  });
+
+  const getDefaultDeadlineDate = (daysFromNow: number) => {
+    const d = new Date(Date.now() + daysFromNow * 86400 * 1000);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const initialBudgetParam = searchParams.get('budget')?.trim();
+  const initialHalfBudget = initialBudgetParam && !isNaN(Number(initialBudgetParam)) && Number(initialBudgetParam) > 0
+    ? formatUsdcAmount(parseUsdcAmount(initialBudgetParam) / 2n)
+    : '';
+
+  const [milestones, setMilestones] = useState<FormMilestone[]>(() => {
+    if (!validUrlPayment) return [];
+    if (validUrlPayment === 'single') {
+      return [
+        {
+          title: 'Final Deliverable',
+          description: 'Complete deliverable according to agreed scope.',
+          amountUsdc: initialBudgetParam || '',
+          deadlineDate: prefilledDeadline || getDefaultDeadlineDate(14),
+          deadlineTime: '23:59',
+          reviewWindowSeconds: 86400,
+          gracePeriodSeconds: 0,
+        },
+      ];
+    }
+    if (validUrlPayment === '50-50') {
+      return [
+        {
+          title: 'Milestone 1 — Initial Deliverable',
+          description: 'Initial deliverables and progress demo.',
+          amountUsdc: initialHalfBudget,
+          deadlineDate: getDefaultDeadlineDate(7),
+          deadlineTime: '23:59',
+          reviewWindowSeconds: 86400,
+          gracePeriodSeconds: 0,
+        },
+        {
+          title: 'Milestone 2 — Final Deliverable',
+          description: 'Final delivery and documentation.',
+          amountUsdc: initialHalfBudget,
+          deadlineDate: prefilledDeadline || getDefaultDeadlineDate(14),
+          deadlineTime: '23:59',
+          reviewWindowSeconds: 86400,
+          gracePeriodSeconds: 0,
+        },
+      ];
+    }
+    return [
+      {
+        title: '',
+        description: '',
+        amountUsdc: '',
+        deadlineDate: '',
+        deadlineTime: '23:59',
+        reviewWindowSeconds: 86400,
+        gracePeriodSeconds: 0,
+      },
+    ];
+  });
+
+  const [signing, setSigning] = useState(false);
+  const [error, setError] = useState('');
+  const [nonceConflict, setNonceConflict] = useState(false);
+  const [refreshingNonce, setRefreshingNonce] = useState(false);
+
+  const handleRefreshNonce = async () => {
+    try {
+      setRefreshingNonce(true);
+      setError('');
+      if (!address) {
+        setError('Please connect your wallet first.');
+        return;
+      }
+      await fetchNextClientProposalNonce(address, sepoliaPublicClient);
+      setNonceConflict(false);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to refresh proposal nonce');
+    } finally {
+      setRefreshingNonce(false);
+    }
+  };
+
+  const [showPremiumInfo, setShowPremiumInfo] = useState(false);
+  const premiumInfoRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showPremiumInfo) return;
+    const handleClickOutside = (e: MouseEvent | TouchEvent) => {
+      if (premiumInfoRef.current && !premiumInfoRef.current.contains(e.target as Node)) {
+        setShowPremiumInfo(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowPremiumInfo(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showPremiumInfo]);
+
+  useEffect(() => {
+    setShowPremiumInfo(false);
+  }, [step]);
+
+  // Negotiator Handoff
+  const negotiatorConvId = searchParams.get('negotiatorConversationId');
+  const negotiatorMode = searchParams.get('negotiatorMode');
+  const [handoffLoading, setHandoffLoading] = useState<boolean>(!!negotiatorConvId);
+  const [handoffError, setHandoffError] = useState<string | null>(null);
+  const handoffLoadedRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    if (!negotiatorConvId || handoffLoadedRef.current) return;
+
+    let cancelled = false;
+    setHandoffLoading(true);
+    setHandoffError(null);
+
+    (async () => {
+      try {
+        const token = await ensureAuthenticated();
+        if (cancelled) return;
+
+        const isEditMode = negotiatorMode === 'edit';
+        const url = `/api/negotiator/conversations/${encodeURIComponent(negotiatorConvId)}/deal-handoff${isEditMode ? '?mode=edit' : ''}`;
+
+        const res = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (cancelled) return;
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          setHandoffError(errData.error || 'Failed to load negotiated deal draft.');
+          setHandoffLoading(false);
+          return;
+        }
+
+        const data = await res.json();
+        if (cancelled || !data?.handoff) return;
+
+        const h = data.handoff;
+        handoffLoadedRef.current = true;
+
+        const explicitStructure = h.paymentStructure && ['single', '50-50', 'custom'].includes(h.paymentStructure)
+          ? (h.paymentStructure as 'single' | '50-50' | 'custom')
+          : null;
+
+        if (explicitStructure) {
+          setPaymentStructureSelected(true);
+        }
+
+        const amountStr = h.amount ? String(h.amount) : '';
+        const deadlineDateStr = h.deadline || getDefaultDeadlineDate(14);
+        if (h.deadline) {
+          setDeadlineDate(h.deadline);
+        }
+
+        setForm((prev) => ({
+          ...prev,
+          type: h.title ?? prev.type ?? '',
+          counterparty: h.seller ?? prev.counterparty ?? '',
+          budget: amountStr || prev.budget,
+          deliverables: h.scope ?? prev.deliverables ?? '',
+          paymentStructure: explicitStructure || '',
+        }));
+
+        if (explicitStructure === 'single') {
+          setMilestones([
+            {
+              title: h.title ? `${h.title} — Final Delivery` : 'Final Deliverable',
+              description: h.scope || 'Complete deliverable as agreed.',
+              amountUsdc: amountStr,
+              deadlineDate: deadlineDateStr,
+              deadlineTime: '23:59',
+              reviewWindowSeconds: 86400,
+              gracePeriodSeconds: 0,
+            },
+          ]);
+          setExpandedMilestoneIndex(0);
+        } else if (explicitStructure === '50-50') {
+          let halfAmount = '';
+          try {
+            const totalUnits = parseUsdcAmount(amountStr);
+            halfAmount = formatUsdcAmount(totalUnits / 2n);
+          } catch {}
+          setMilestones([
+            {
+              title: 'Milestone 1 — Initial Progress',
+              description: 'Initial deliverable components.',
+              amountUsdc: halfAmount,
+              deadlineDate: getDefaultDeadlineDate(7),
+              deadlineTime: '23:59',
+              reviewWindowSeconds: 86400,
+              gracePeriodSeconds: 0,
+            },
+            {
+              title: 'Milestone 2 — Final Delivery',
+              description: h.scope || 'Final deliverable and review.',
+              amountUsdc: halfAmount,
+              deadlineDate: deadlineDateStr,
+              deadlineTime: '23:59',
+              reviewWindowSeconds: 86400,
+              gracePeriodSeconds: 0,
+            },
+          ]);
+          setExpandedMilestoneIndex(0);
+        } else if (explicitStructure === 'custom') {
+          setMilestones([
+            {
+              title: '',
+              description: '',
+              amountUsdc: '',
+              deadlineDate: '',
+              deadlineTime: '23:59',
+              reviewWindowSeconds: 86400,
+              gracePeriodSeconds: 0,
+            },
+          ]);
+          setExpandedMilestoneIndex(0);
+        }
+
+        const targetStep = typeof h.targetStep === 'number' ? Math.min(h.targetStep, 6) : 6;
+        setStep(targetStep);
+        setHandoffLoading(false);
+      } catch (err: any) {
+        if (!cancelled) {
+          setHandoffError(err?.message || 'Failed to load negotiated deal draft.');
+          setHandoffLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [negotiatorConvId, negotiatorMode, ensureAuthenticated]);
+
+  const applyPaymentStructure = (struct: 'single' | '50-50' | 'custom', budgetStr: string) => {
+    const rawBudget = (budgetStr || '').trim();
+    let hasValidBudget = false;
+    let singleAmount = '';
+    let half1Amount = '';
+    let half2Amount = '';
+
+    if (rawBudget && !isNaN(Number(rawBudget)) && Number(rawBudget) > 0) {
+      try {
+        const total = parseUsdcAmount(rawBudget);
+        hasValidBudget = true;
+        singleAmount = formatUsdcAmount(total);
+        const half1 = total / 2n;
+        const half2 = total - half1;
+        half1Amount = formatUsdcAmount(half1);
+        half2Amount = formatUsdcAmount(half2);
+      } catch {}
+    }
+
+    if (struct === 'single') {
+      setMilestones([
+        {
+          title: form.type ? `${form.type} — Final Delivery` : 'Final Deliverable',
+          description: form.deliverables || 'Complete deliverable according to agreed scope.',
+          amountUsdc: hasValidBudget ? singleAmount : '',
+          deadlineDate: deadlineDate || milestones[0]?.deadlineDate || getDefaultDeadlineDate(14),
+          deadlineTime: deadlineTime || '23:59',
+          reviewWindowSeconds: 86400,
+          gracePeriodSeconds: 0,
+        },
+      ]);
+    } else if (struct === '50-50') {
+      setMilestones([
+        {
+          title: 'Milestone 1 — Initial Deliverable',
+          description: 'Initial deliverables and progress demo.',
+          amountUsdc: hasValidBudget ? half1Amount : '',
+          deadlineDate: milestones[0]?.deadlineDate || getDefaultDeadlineDate(7),
+          deadlineTime: '23:59',
+          reviewWindowSeconds: 86400,
+          gracePeriodSeconds: 0,
+        },
+        {
+          title: 'Milestone 2 — Final Deliverable',
+          description: form.deliverables || 'Final delivery and documentation.',
+          amountUsdc: hasValidBudget ? half2Amount : '',
+          deadlineDate: deadlineDate || milestones[1]?.deadlineDate || getDefaultDeadlineDate(14),
+          deadlineTime: deadlineTime || '23:59',
+          reviewWindowSeconds: 86400,
+          gracePeriodSeconds: 0,
+        },
+      ]);
+    } else if (struct === 'custom') {
+      setMilestones([
+        {
+          title: '',
+          description: '',
+          amountUsdc: '',
+          deadlineDate: '',
+          deadlineTime: '23:59',
+          reviewWindowSeconds: 86400,
+          gracePeriodSeconds: 0,
+        },
+      ]);
+    }
+  };
+
+  const getMilestoneDisplayTitle = (title: string, index: number) => {
+    const prefix = `Milestone ${index + 1}`;
+    const trimmed = (title || '').trim();
+    if (!trimmed) return prefix;
+    if (new RegExp(`^milestone\\s*${index + 1}\\s*([—:\\-]\\s*)?`, 'i').test(trimmed)) {
+      const stripped = trimmed.replace(new RegExp(`^milestone\\s*${index + 1}\\s*([—:\\-]\\s*)?`, 'i'), '').trim();
+      return stripped ? `${prefix} — ${stripped}` : prefix;
+    }
+    return `${prefix} — ${trimmed}`;
+  };
+
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [avatarsMap, setAvatarsMap] = useState<Record<string, string>>({});
+  const [namesMap, setNamesMap] = useState<Record<string, string>>({});
+  const [pricingMap, setPricingMap] = useState<Record<string, FreelancerPricing | null>>({});
+  const [reviewCountsMap, setReviewCountsMap] = useState<Record<string, number>>({});
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchFocused, setSearchFocused] = useState(false);
+  const searchRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!searchFocused) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setSearchFocused(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [searchFocused]);
+
+  const freelancerIdentity = useSynqIdentity(form.counterparty);
+  const clientIdentity = useSynqIdentity(address);
+
+  const filteredSuggestions = useMemo(() => {
+    const rawInput = form.type.trim();
+    if (!rawInput) return [];
+
+    const lowerInput = rawInput.toLowerCase();
+    const inputTokens = tokenize(lowerInput);
+
+    return SUGGESTED_JOB_TITLES.filter((title) => {
+      const lowerTitle = title.toLowerCase();
+      if (lowerTitle === lowerInput) return false;
+      if (lowerTitle.includes(lowerInput)) return true;
+      if (inputTokens.length > 1) {
+        return inputTokens.every((token) => lowerTitle.includes(token));
+      }
+      return false;
+    }).slice(0, 6);
+  }, [form.type]);
+
+  const selectFreelancer = (wallet: string) => {
+    const normalized = (wallet || '').trim();
+    setForm((prev) => ({ ...prev, counterparty: normalized }));
+    setError('');
+  };
+
+  const clearSelectedFreelancer = () => {
+    setForm((prev) => ({ ...prev, counterparty: '' }));
+    setMatches([]);
+    setMatchState('idle');
+    setMatchError('');
+  };
+
+  const sellerWallets = useMemo(
+    () => (directory.profiles || []).filter((p: any) => p && p.wallet).map((p: any) => String(p.wallet).trim()),
+    [directory.profiles]
+  );
+  const uniqueWalletsKey = useMemo(() => {
+    const list = [...sellerWallets];
+    if (address) list.push(address.trim());
+    return Array.from(new Set(list.filter(Boolean).map((w) => w.toLowerCase()))).sort().join(',');
+  }, [sellerWallets, address]);
+
+  const { completedCountsMap } = useBatchFreelancerCompletedDeals(sellerWallets);
+  const { identitiesMap: sellerIdentities } = useSynqIdentities(sellerWallets);
+
+  useEffect(() => {
+    if (!uniqueWalletsKey) return;
+    const uniqueWallets = uniqueWalletsKey.split(',');
+    let isMounted = true;
+    fetch('/api/profile/public', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wallets: uniqueWallets }),
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!isMounted || !Array.isArray(data?.profiles)) return;
+        const avatarMap: Record<string, string> = {};
+        const nameMap: Record<string, string> = {};
+        const pMap: Record<string, FreelancerPricing | null> = {};
+        for (const p of data.profiles) {
+          if (p?.wallet) {
+            const key = String(p.wallet).toLowerCase();
+            if (p.avatar) avatarMap[key] = p.avatar;
+            if (p.name) nameMap[key] = p.name;
+            if (p.pricing) {
+              pMap[key] = p.pricing;
+            } else if (p.startingRateAmount && (p.startingRateType === 'PER_PROJECT' || p.startingRateType === 'PER_HOUR')) {
+              pMap[key] = {
+                amount: String(p.startingRateAmount),
+                currency: 'USDC',
+                rateType: p.startingRateType,
+              };
+            } else {
+              pMap[key] = null;
+            }
+          }
+        }
+        setAvatarsMap(avatarMap);
+        setNamesMap(nameMap);
+        setPricingMap(pMap);
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, [uniqueWalletsKey]);
+
+  useEffect(() => {
+    if (!uniqueWalletsKey) return;
+    let isMounted = true;
+    fetch(`/api/reviews?sellers=${uniqueWalletsKey}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!isMounted || !data?.counts) return;
+        setReviewCountsMap(data.counts);
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, [uniqueWalletsKey]);
+
+  const selectedFreelancerProfile = useMemo(() => {
+    if (!form.counterparty || !isAddress(form.counterparty)) return null;
+    const target = form.counterparty.toLowerCase();
+    return (
+      (directory.profiles || []).find(
+        (p: any) => p?.wallet && String(p.wallet).toLowerCase() === target
+      ) || null
+    );
+  }, [form.counterparty, directory.profiles]);
+
+  // Valid selectable directory freelancers (excluding self, zero address, invalid)
+  const availableProfiles = useMemo(() => {
+    return (directory.profiles || []).filter((p: any) => {
+      if (!p || !p.wallet) return false;
+      const w = String(p.wallet).toLowerCase();
+      if (w === ZERO_ADDRESS.toLowerCase()) return false;
+      if (address && w === address.toLowerCase()) return false;
+      return true;
+    });
+  }, [directory.profiles, address]);
+
+  // Deterministic local freelancer scoring baseline
+  const scoreSeller = (p: any, type: string, deliverables: string) => {
     let score = 0;
-    const typeLower = form.type.toLowerCase();
+    const typeLower = (type || '').toLowerCase();
     const cat = String(p.category || '').toLowerCase();
     if (typeLower && typeLower !== 'other') {
       if (cat === typeLower) score += 30;
-      else if (cat.includes(typeLower) || typeLower.includes(cat)) score += 18;
+      else if (cat && (cat.includes(typeLower) || typeLower.includes(cat))) score += 18;
     }
     const skills = (p.skills || []).map((s: string) => String(s).toLowerCase());
     const bio = String(p.bio || '').toLowerCase();
     const name = String(p.name || '').toLowerCase();
-    const terms = [...tokenize(form.type), ...tokenize(form.deliverables), typeLower.replace(/\s/g, '')];
+    const terms = [
+      ...tokenize(type || ''),
+      ...tokenize(deliverables || ''),
+      typeLower.replace(/\s/g, ''),
+    ].filter((t) => t && t.length >= 3);
+
     const haystack = [name, bio, ...skills].join(' ');
     for (const t of terms) {
-      if (!t || t.length < 3) continue;
-      if (skills.includes(t)) score += 10;
+      if (skills.some((s: string) => s.includes(t) || t.includes(s))) score += 10;
       else if (haystack.includes(t)) score += 6;
     }
     if (p.available) score += 5;
-    score += Math.min(Number(p.completedDeals || 0) * 2, 8);
+    const walletKey = String(p.wallet || '').toLowerCase();
+    const completedCount = completedCountsMap[walletKey] ?? Number(p.completedDeals || 0);
+    score += Math.min(completedCount * 2, 10);
     return score;
   };
 
   const runMatch = (autoPick = false) => {
     setMatchState('matching');
     setMatchError('');
+
     if (directory.isLoading) {
       setMatches([]);
       setMatchState('done');
-      setMatchError('Loading registered sellers... try again in a moment.');
+      setMatchError('Loading registered freelancers... try again in a moment.');
       return;
     }
-    const sellers = (directory.profiles || []).filter(
-      (p: any) => p && p.wallet && p.wallet !== address && String(p.wallet) !== ZERO && (p.available || true)
-    );
-    if (sellers.length === 0) {
+
+    if (availableProfiles.length === 0) {
       setMatches([]);
       setMatchState('done');
-      setMatchError('No sellers are registered in the Deal Port yet. Register a seller profile on the Deal Port page first.');
+      setMatchError(
+        'No freelancers are registered in the Deal Port yet. Register a freelancer profile on the Deal Port page first.'
+      );
       return;
     }
-    const scored = sellers
-      .map((p: any) => ({ p, score: scoreSeller(p) }))
+
+    const scored = availableProfiles
+      .map((p: any) => ({
+        p,
+        score: scoreSeller(p, form.type, form.deliverables),
+      }))
       .sort((a: any, b: any) => b.score - a.score)
       .slice(0, 3);
+
     setMatches(scored);
     setMatchState('done');
+
     if (autoPick && scored.length > 0) {
-      setForm((prev) => ({ ...prev, counterparty: scored[0].p.wallet as string }));
+      selectFreelancer(scored[0].p.wallet);
     }
   };
 
-  const handleCreate = async () => {
-    if (!address) { setError('Connect your wallet first'); return; }
-    if (!factory.onSupportedChain) { setError('Switch your wallet to Ethereum Sepolia — Synq contracts are not deployed on this network.'); return; }
-    if (!form.counterparty.startsWith('0x')) { setError('Enter a valid counterparty address'); return; }
-    setCreating(true);
+  // Real-time typeahead search results
+  const searchResults = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return [];
+
+    type ScoredMatch = {
+      p: any;
+      priority: number;
+    };
+
+    const resultList: ScoredMatch[] = [];
+
+    for (const p of availableProfiles) {
+      const w = String(p.wallet).toLowerCase();
+      const name = String(p.name || '').toLowerCase();
+      const cat = String(p.category || '').toLowerCase();
+      const skills = (p.skills || []).map((s: string) => String(s).toLowerCase());
+      const idInfo = sellerIdentities[w];
+      const handle = String(idInfo?.handle || '').toLowerCase();
+      const displayHandle = String(idInfo?.displayHandle || '').toLowerCase();
+      const publicName = String(namesMap[w] || '').toLowerCase();
+
+      // Direct wallet match
+      if (w === query) {
+        resultList.push({ p, priority: 100 });
+        continue;
+      }
+      if (w.includes(query)) {
+        resultList.push({ p, priority: 60 });
+        continue;
+      }
+      // Handle match
+      if (handle === query || displayHandle === query || `@${handle}` === query) {
+        resultList.push({ p, priority: 95 });
+        continue;
+      }
+      if (handle.includes(query) || displayHandle.includes(query)) {
+        resultList.push({ p, priority: 85 });
+        continue;
+      }
+      // Name match
+      if (name === query || publicName === query) {
+        resultList.push({ p, priority: 90 });
+        continue;
+      }
+      if (name.includes(query) || publicName.includes(query)) {
+        resultList.push({ p, priority: 80 });
+        continue;
+      }
+      // Skills match
+      if (skills.some((s: string) => s === query)) {
+        resultList.push({ p, priority: 75 });
+        continue;
+      }
+      if (skills.some((s: string) => s.includes(query))) {
+        resultList.push({ p, priority: 70 });
+        continue;
+      }
+      // Category match
+      if (cat.includes(query)) {
+        resultList.push({ p, priority: 65 });
+        continue;
+      }
+    }
+
+    resultList.sort((a, b) => b.priority - a.priority);
+    return resultList.map((m) => m.p);
+  }, [searchQuery, availableProfiles, sellerIdentities, namesMap]);
+
+  const queryIsAddress = isAddress(searchQuery.trim());
+  const queryIsOwnAddress = !!(
+    address &&
+    queryIsAddress &&
+    searchQuery.trim().toLowerCase() === address.toLowerCase()
+  );
+  const queryMatchesDirectoryProfile = searchResults.some(
+    (p) => String(p.wallet).toLowerCase() === searchQuery.trim().toLowerCase()
+  );
+
+  const update = (key: string, value: any) => {
+    setForm((prev) => ({ ...prev, [key]: value }));
     setError('');
-    try {
-      // parseUnits, not `Number(budget) * 10 ** decimals` — the multiply loses
-      // precision above 2^53 (any ETH amount that isn't a round power of ten)
-      // and silently truncates extra decimal places on 6-decimal assets.
-      const rawBudget = parseUnits(String(form.budget).trim(), assetDecimals);
-      if (rawBudget <= 0n) { setError('Budget must be greater than zero'); setCreating(false); return; }
-      factory.createDeal(
-        form.counterparty as `0x${string}`,
-        form.type,
-        form.deliverables,
-        rawBudget,
-        BigInt(form.deadline),
-        protectionEnabled,
-        form.asset as `0x${string}`,
-      );
-    } catch (e: any) {
-      setError(e?.message?.includes('decimal') || e?.name === 'InvalidDecimalNumberError'
-        ? `Enter a valid ${activeAsset.symbol} amount with at most ${assetDecimals} decimal places.`
-        : e?.message || 'Transaction failed');
-      setCreating(false);
+    setNonceConflict(false);
+  };
+
+  const updateMilestone = (index: number, field: keyof FormMilestone, value: any) => {
+    setMilestones((prev) => {
+      const copy = [...prev];
+      copy[index] = { ...copy[index], [field]: value };
+      return copy;
+    });
+    setError('');
+    setNonceConflict(false);
+  };
+
+  const addMilestone = () => {
+    if (milestones.length >= 10) return;
+    setMilestones((prev) => [
+      ...prev,
+      {
+        title: '',
+        description: '',
+        amountUsdc: '',
+        deadlineDate: '',
+        deadlineTime: '23:59',
+        reviewWindowSeconds: 86400,
+        gracePeriodSeconds: 0,
+      },
+    ]);
+    setExpandedMilestoneIndex(milestones.length);
+  };
+
+  const removeMilestone = (index: number) => {
+    if (milestones.length <= 1) return;
+    setMilestones((prev) => prev.filter((_, i) => i !== index));
+    if (expandedMilestoneIndex !== null) {
+      if (expandedMilestoneIndex === index) {
+        setExpandedMilestoneIndex(Math.max(0, index - 1));
+      } else if (expandedMilestoneIndex > index) {
+        setExpandedMilestoneIndex(expandedMilestoneIndex - 1);
+      }
     }
   };
 
-  const txConfirmed = factory.txReceipt.isSuccess;
-  const notifiedRef = useRef(false);
-
-  // The factory emits `DealCreated(dealAddr, buyer, seller, totalValue, dealId)`,
-  // but writeContract only returns the tx hash. Recover the new deal address from
-  // the receipt logs so we can link it to the chat conversation.
-  const getCreatedDealAddress = (receipt: any): string | null => {
-    const logs = receipt?.logs || [];
-    for (const log of logs) {
+  // Total escrow calculation
+  const totalEscrowBaseUnits = useMemo(() => {
+    let sum = 0n;
+    for (const m of milestones) {
       try {
-        const decoded = decodeEventLog({
-          abi: nexotiqFactoryABI,
-          data: (log.data || '0x') as any,
-          topics: (log.topics || []) as any,
-        });
-        if (decoded.eventName === 'DealCreated') {
-          const args = decoded.args as any;
-          if (args && args.dealAddr) return String(args.dealAddr);
-        }
-      } catch {
-        /* not this event */
-      }
+        sum += parseUsdcAmount(m.amountUsdc || '0');
+      } catch {}
     }
-    return null;
+    return sum;
+  }, [milestones]);
+
+  const formattedTotalEscrow = useMemo(() => {
+    return formatUsdcAmount(totalEscrowBaseUnits);
+  }, [totalEscrowBaseUnits]);
+
+  // Context for AI Freelancer Matches (derived strictly from user-entered intent)
+  const aiDraftContext = useMemo(
+    () => ({
+      title: form.type.trim() || undefined,
+      counterparty: form.counterparty || undefined,
+      deliverables: step >= 2 && form.deliverables.trim() ? form.deliverables.trim() : undefined,
+      budget:
+        step >= 3 && form.budget.trim() && !isNaN(Number(form.budget)) && Number(form.budget) > 0
+          ? form.budget.trim()
+          : undefined,
+      paymentStructure: step >= 5 ? form.paymentStructure : undefined,
+      milestones:
+        step >= 5
+          ? milestones.map((m) => ({
+              title: m.title.trim(),
+              description: m.description.trim(),
+              amountUsdc: m.amountUsdc,
+            }))
+          : undefined,
+    }),
+    [step, form.type, form.counterparty, form.budget, form.deliverables, form.paymentStructure, milestones]
+  );
+
+  // Selected freelancer match percentage (calculated with the same deterministic engine)
+  const selectedMatchPercentage = useMemo(() => {
+    if (!form.counterparty || !isAddress(form.counterparty)) return undefined;
+    const p = selectedFreelancerProfile || {
+      wallet: form.counterparty,
+      name: namesMap[form.counterparty.toLowerCase()] || 'Direct Wallet',
+      available: true,
+    };
+    const completedDeals =
+      completedCountsMap[form.counterparty.toLowerCase()] ?? Number(p.completedDeals || 0);
+    return calculateFreelancerMatch({
+      profile: p,
+      draftContext: aiDraftContext,
+      completedDeals,
+    });
+  }, [
+    form.counterparty,
+    selectedFreelancerProfile,
+    namesMap,
+    completedCountsMap,
+    aiDraftContext,
+  ]);
+
+  // Validation
+  const canProceed = () => {
+    switch (step) {
+      case 0:
+        return form.type.trim().length > 0;
+      case 1:
+        return (
+          isAddress(form.counterparty) &&
+          form.counterparty.toLowerCase() !== ZERO_ADDRESS.toLowerCase() &&
+          (!address || form.counterparty.toLowerCase() !== address.toLowerCase())
+        );
+      case 2:
+        return form.deliverables.trim().length > 0;
+      case 3:
+        return (
+          form.budget.trim().length > 0 &&
+          !isNaN(Number(form.budget)) &&
+          Number(form.budget) > 0
+        );
+      case 4: {
+        if (!deadlineDate?.trim() || !deadlineTime?.trim()) return false;
+        const ts = Math.floor(new Date(`${deadlineDate.trim()}T${deadlineTime.trim()}`).getTime() / 1000);
+        const now = Math.floor(Date.now() / 1000);
+        return !isNaN(ts) && ts > now;
+      }
+      case 5: {
+        if (!paymentStructureSelected || !form.paymentStructure) return false;
+        if (!['single', '50-50', 'custom'].includes(form.paymentStructure)) return false;
+        if (milestones.length === 0 || milestones.length > 10) return false;
+        if (form.paymentStructure === 'single' && milestones.length !== 1) return false;
+        if (form.paymentStructure === '50-50' && milestones.length !== 2) return false;
+        if (form.paymentStructure === 'custom' && (milestones.length < 1 || milestones.length > 10)) return false;
+        const now = Math.floor(Date.now() / 1000);
+        let sumUnits = 0n;
+        for (const m of milestones) {
+          if (!m.title.trim()) return false;
+          if (!m.amountUsdc || isNaN(Number(m.amountUsdc)) || Number(m.amountUsdc) <= 0) return false;
+          try {
+            const units = parseUsdcAmount(m.amountUsdc);
+            if (units <= 0n) return false;
+            sumUnits += units;
+          } catch {
+            return false;
+          }
+          if (!m.deadlineDate) return false;
+          const ts = Math.floor(new Date(`${m.deadlineDate}T${m.deadlineTime || '23:59'}`).getTime() / 1000);
+          if (isNaN(ts) || ts <= now) return false;
+          if (m.reviewWindowSeconds < Number(MIN_REVIEW_WINDOW_SECONDS) || m.reviewWindowSeconds > Number(MAX_REVIEW_WINDOW_SECONDS)) {
+            return false;
+          }
+        }
+        if (form.budget && !isNaN(Number(form.budget)) && Number(form.budget) > 0) {
+          try {
+            const expectedBudgetUnits = parseUsdcAmount(form.budget);
+            if (sumUnits !== expectedBudgetUnits) return false;
+          } catch {
+            return false;
+          }
+        }
+        return true;
+      }
+      case 6:
+        return form.protectionSelection === 'STANDARD' || form.protectionSelection === 'PREMIUM';
+      case 7:
+        return form.protectionSelection === 'STANDARD' || form.protectionSelection === 'PREMIUM';
+      default:
+        return true;
+    }
   };
 
-  const createdDealAddress = txConfirmed ? getCreatedDealAddress(factory.txReceipt.data) : null;
+  const handlePrevious = () => {
+    setError('');
+    setNonceConflict(false);
+    if (step > 0) setStep(step - 1);
+  };
 
-  useEffect(() => {
-    if (txConfirmed && !notifiedRef.current) {
-      notifiedRef.current = true;
-      fetch('/api/notify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          event: 'deal_confirmed',
-          recipientWallet: form.counterparty,
-          recipientName: 'seller',
-          dealTitle: form.type || 'Deal',
-          dealAmount: form.budget,
-        }),
-      }).catch(() => {});
+  const handleContinueToReview = () => {
+    if (isReviewTransitioning) return;
+    if (!canProceed()) return;
 
-      // Link the on-chain deal to the chat thread. When the buyer opened the
-      // wizard from an existing conversation (Messages → "Create escrow deal")
-      // we have its id; otherwise the buyer will message the seller next and the
-      // deal address is passed along so the thread can link then.
-      const dealAddr = getCreatedDealAddress(factory.txReceipt.data);
-      const cid = searchParams.get('conversationId');
-      if (dealAddr && cid) {
-        fetch('/api/conversations/link', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            conversationId: cid,
-            buyerWallet: address,
-            sellerWallet: form.counterparty,
-            dealAddress: dealAddr,
-          }),
-        }).catch(() => {});
-      }
+    if (shouldReduceMotion) {
+      setStep(7);
+      return;
     }
-  }, [txConfirmed, form.counterparty, form.type, form.budget, factory.txReceipt.data, address, searchParams]);
+
+    setIsReviewTransitioning('forward');
+    setTimeout(() => {
+      setStep(7);
+      setIsReviewTransitioning(null);
+    }, 550);
+  };
+
+  const handlePreviousFromReview = () => {
+    if (isReviewTransitioning) return;
+
+    if (shouldReduceMotion) {
+      setStep(6);
+      return;
+    }
+
+    setIsReviewTransitioning('backward');
+    setTimeout(() => {
+      setStep(6);
+      setIsReviewTransitioning(null);
+    }, 550);
+  };
+
+  // Sign & Send Proposal Action
+  const handleSignAndSendProposal = async () => {
+    if (!address) {
+      setError('Please connect your wallet first.');
+      return;
+    }
+
+    if (!isAddress(form.counterparty) || form.counterparty.toLowerCase() === ZERO_ADDRESS.toLowerCase()) {
+      setError('Please select a valid freelancer wallet address.');
+      return;
+    }
+
+    if (address.toLowerCase() === form.counterparty.toLowerCase()) {
+      setError('Client and freelancer cannot be the same wallet address (self-deal forbidden).');
+      return;
+    }
+
+    try {
+      setSigning(true);
+      setError('');
+      setNonceConflict(false);
+      await ensureSepolia();
+
+      // 1. Validate milestones and build MilestoneInits
+      const nowSec = Math.floor(Date.now() / 1000);
+      const normalizedMilestoneInits: StandardV2MilestoneInit[] = [];
+
+      for (let i = 0; i < milestones.length; i++) {
+        const m = milestones[i];
+        const rawAmount = parseUsdcAmount(m.amountUsdc);
+        if (rawAmount <= 0n) {
+          throw new Error(`Milestone [${i + 1}] amount must be greater than zero.`);
+        }
+
+        const deadlineTs = Math.floor(new Date(`${m.deadlineDate}T${m.deadlineTime || '23:59'}`).getTime() / 1000);
+        if (isNaN(deadlineTs) || deadlineTs <= nowSec) {
+          throw new Error(`Milestone [${i + 1}] deadline must be a future date and time.`);
+        }
+
+        const reviewSec = BigInt(m.reviewWindowSeconds);
+        if (reviewSec < MIN_REVIEW_WINDOW_SECONDS || reviewSec > MAX_REVIEW_WINDOW_SECONDS) {
+          throw new Error(`Milestone [${i + 1}] review window must be between 1 hour and 30 days.`);
+        }
+
+        const graceSec = BigInt(m.gracePeriodSeconds);
+        const specText = m.description.trim() || m.title.trim();
+        const specHash = hashMilestoneSpec(specText);
+
+        normalizedMilestoneInits.push({
+          amount: rawAmount,
+          workDeadline: BigInt(deadlineTs),
+          reviewWindow: reviewSec,
+          gracePeriod: graceSec,
+          specHash,
+        });
+      }
+
+      // 2. Fetch fresh unused client proposal nonce
+      const proposalNonce = await fetchNextClientProposalNonce(address, sepoliaPublicClient);
+
+      // 3. Compute milestonesHash
+      const milestonesHash = hashStandardV2Milestones(normalizedMilestoneInits);
+
+      // 4. Construct DealProposalV2 struct
+      const expiry = BigInt(nowSec + form.expiryDays * 86400);
+      const proposalStruct: DealProposalV2 = {
+        client: getAddress(address),
+        freelancer: getAddress(form.counterparty),
+        canonicalUsdc: SYNQ_V2_SEPOLIA_CONFIG.canonicalUsdc,
+        dealImplementation: SYNQ_V2_SEPOLIA_CONFIG.dealImplementation,
+        primaryResolver: SYNQ_V2_SEPOLIA_CONFIG.primaryResolver,
+        emergencyResolver: SYNQ_V2_SEPOLIA_CONFIG.emergencyResolver,
+        milestonesHash,
+        isProtected: false,
+        protectionModule: ZERO_ADDRESS,
+        policyId: ZERO_BYTES32,
+        proposalNonce,
+        expiry,
+      };
+
+      // 5. Pre-validate protocol rules
+      const protocolVal = validateStandardV2ProtocolRules(proposalStruct, normalizedMilestoneInits);
+      if (!protocolVal.valid) {
+        throw new Error(`Proposal validation failed: ${protocolVal.errors.join('; ')}`);
+      }
+
+      // 6. Sign EIP-712 DealProposal with client wallet
+      const domain = getStandardV2Eip712Domain();
+      const clientSignature = await signTypedDataAsync({
+        domain,
+        types: DEAL_PROPOSAL_EIP712_TYPES,
+        primaryType: 'DealProposal',
+        message: proposalStruct,
+      });
+
+      // 7. Locally verify recovered signer
+      const isSigValid = await verifyDealProposalSignature(proposalStruct, clientSignature, domain);
+      if (!isSigValid) {
+        throw new Error('Local signature verification failed. Please try again.');
+      }
+
+      // 8. Ensure Synq authentication session
+      const token = await ensureAuthenticated();
+
+      // 9. Persist proposal via API
+      const requestPayload = {
+        proposal: {
+          client: proposalStruct.client,
+          freelancer: proposalStruct.freelancer,
+          canonicalUsdc: proposalStruct.canonicalUsdc,
+          dealImplementation: proposalStruct.dealImplementation,
+          primaryResolver: proposalStruct.primaryResolver,
+          emergencyResolver: proposalStruct.emergencyResolver,
+          milestonesHash: proposalStruct.milestonesHash,
+          isProtected: false,
+          protectionModule: ZERO_ADDRESS,
+          policyId: ZERO_BYTES32,
+          proposalNonce: proposalStruct.proposalNonce.toString(),
+          expiry: proposalStruct.expiry.toString(),
+        },
+        milestones: normalizedMilestoneInits.map((m, idx) => ({
+          amount: m.amount.toString(),
+          workDeadline: m.workDeadline.toString(),
+          reviewWindow: m.reviewWindow.toString(),
+          gracePeriod: m.gracePeriod.toString(),
+          specHash: m.specHash,
+          title: milestones[idx].title.trim(),
+          description: milestones[idx].description.trim(),
+        })),
+        clientSignature,
+        metadata: {
+          title: form.type.trim(),
+          scope: form.deliverables.trim() || 'Standard Synq Deal',
+        },
+        protectionSelection: form.protectionSelection || 'STANDARD',
+      };
+
+      const res = await fetch('/api/deals/proposals', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(requestPayload),
+      });
+
+      const resData = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (
+          res.status === 409 &&
+          (resData.code === 'CONFLICT_NONCE' ||
+            (typeof resData.error === 'string' && resData.error.toLowerCase().includes('nonce conflict')))
+        ) {
+          setNonceConflict(true);
+          setError('');
+          return;
+        }
+        throw new Error(resData.error || 'Failed to submit deal proposal');
+      }
+
+      // Route to proposal view
+      router.push(`/deals/proposals/${resData.proposal.proposalId}`);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to create deal proposal');
+    } finally {
+      setSigning(false);
+    }
+  };
 
   const renderStep = () => {
     switch (step) {
       case 0:
         return (
-          <div className="space-y-3">
-            <p className="text-sm text-zinc-400 mb-4">Describe what you're buying or selling in natural language, or select a category.</p>
-            <div className="grid grid-cols-2 gap-3">
-              {['Development', 'Design', 'Marketing', 'Content', 'Consulting', 'Smart Contract', 'Audit', 'Other'].map((cat) => (
-                <button
-                  key={cat}
-                  onClick={() => update('type', cat)}
-                  className={`p-3 rounded-xl border text-sm font-medium text-left transition-all ${
-                    form.type === cat ? 'border-blue-500/50 bg-blue-600/10 text-blue-400' : 'border-zinc-700/50 bg-zinc-800/30 text-zinc-300 hover:border-zinc-600'
-                  }`}
-                >
-                  {cat}
-                </button>
-              ))}
-            </div>
-            <div className="relative mt-2">
+          <div className="space-y-4">
+            <label htmlFor="job-title-input" className="block text-sm font-medium text-zinc-300">
+              What&apos;s the Deal?
+            </label>
+            <div className="relative">
               <Input
-                value={form.type === 'Other' || (form.type && !['Development', 'Design', 'Marketing', 'Content', 'Consulting', 'Smart Contract', 'Audit'].includes(form.type)) ? form.type : ''}
-                onChange={(e) => update('type', e.target.value)}
-                placeholder="Or type custom description..."
+                id="job-title-input"
+                value={form.type}
+                onChange={(e) => {
+                  update('type', e.target.value);
+                  setShowSuggestions(true);
+                }}
+                onFocus={() => setShowSuggestions(true)}
+                onBlur={() => {
+                  setTimeout(() => setShowSuggestions(false), 150);
+                }}
+                placeholder="Type a job title..."
+                className="w-full text-sm bg-zinc-900/60 border-zinc-700 text-white placeholder:text-zinc-500 focus:border-blue-500/60 h-11"
+                autoComplete="off"
               />
+              {showSuggestions && filteredSuggestions.length > 0 && (
+                <div className="absolute left-0 right-0 top-full mt-1.5 z-20 overflow-hidden rounded-xl border border-zinc-700/70 bg-zinc-900/95 p-1.5 shadow-xl backdrop-blur-md">
+                  <div className="space-y-0.5">
+                    {filteredSuggestions.map((suggestion) => (
+                      <button
+                        key={suggestion}
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          update('type', suggestion);
+                          setShowSuggestions(false);
+                        }}
+                        className={cn(
+                          'w-full text-left px-3 py-2 rounded-lg text-sm transition-colors text-zinc-200 hover:bg-blue-600/15 hover:text-blue-300',
+                          form.type === suggestion && 'bg-blue-600/20 text-blue-400 font-medium'
+                        )}
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
+            <p className="text-xs text-zinc-500">
+              Type any title or pick a suggestion. Custom titles are fully supported.
+            </p>
           </div>
         );
+
       case 1:
         return (
-          <div className="space-y-3">
-            <p className="text-sm text-zinc-400 mb-4">The AI agent will find the best seller for your deal. No address needed.</p>
-            {searchParams.get('seller') && form.counterparty === searchParams.get('seller') && (
-              <div className="p-2 rounded-lg bg-emerald-600/10 border border-emerald-500/20 text-xs text-emerald-400">
-                Seller selected from the Deal Port — this is the freelancer's wallet address.
-              </div>
-            )}
-            {form.counterparty.length === 42 && !matches.some((m: any) => String(m.p.wallet) === form.counterparty) && (
-              <div className="p-2 rounded-lg bg-zinc-800/30 text-xs text-zinc-400">
-                Counterparty: {shortenAddress(form.counterparty)}
-              </div>
-            )}
-            {address && (
-              <div className="p-2 rounded-lg bg-zinc-800/30 text-xs text-zinc-400">
-                You (buyer): {shortenAddress(address)}
-              </div>
-            )}
-            <div className="pt-2 border-t border-zinc-800/60">
-              {matches.length === 0 ? (
-                <button
-                  onClick={() => runMatch(false)}
-                  disabled={matchState === 'matching'}
-                  className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-blue-500/40 bg-blue-600/10 text-sm font-medium text-blue-400 hover:bg-blue-600/20 transition-all disabled:opacity-50"
-                >
-                  {matchState === 'matching' ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-                  {matchState === 'matching' ? 'Searching sellers...' : 'Find My Seller'}
-                </button>
-              ) : (
-                <button
-                  onClick={() => runMatch(false)}
-                  disabled={matchState === 'matching'}
-                  className="flex items-center gap-2 text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50 transition-colors"
-                >
-                  {matchState === 'matching' ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                  Re-run AI search
-                </button>
-              )}
-              {matchError && (
-                <div className="mt-2 p-2 rounded-lg bg-amber-600/10 border border-amber-500/20 text-xs text-amber-400">
-                  {matchError}
+          <div className="space-y-5">
+            <h3 className="text-base font-semibold text-white">
+              Choose the freelancer you want to propose this deal to
+            </h3>
+
+            {/* SELECTED FREELANCER STATE */}
+            {form.counterparty && isAddress(form.counterparty) ? (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <UserCheck size={16} className="text-emerald-400" />
+                    <span className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
+                      Selected Freelancer
+                    </span>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      clearSelectedFreelancer();
+                      setSearchQuery('');
+                    }}
+                    className="text-xs text-blue-400 hover:text-blue-300 hover:bg-blue-600/10 h-7 px-2.5"
+                  >
+                    Change
+                  </Button>
                 </div>
-              )}
-              {matches.length > 0 && (
-                <div className="mt-2 space-y-2">
-                  <p className="text-[10px] text-zinc-500 uppercase tracking-wide">Best matches</p>
-                  {matches.map(({ p, score }, i) => (
-                    <button
-                      key={String(p.wallet)}
-                      onClick={() => {
-                        update('counterparty', String(p.wallet));
-                        setStep(2);
-                      }}
-                      className={`w-full text-left p-2.5 rounded-lg border transition-all ${
-                        form.counterparty === p.wallet
-                          ? 'border-emerald-500/50 bg-emerald-600/10'
-                          : 'border-zinc-700/50 bg-zinc-800/30 hover:border-blue-500/40'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <div className="text-sm font-medium text-white truncate">
-                            {i === 0 && <span className="text-amber-400 mr-1">★</span>}
-                            {String(p.name || 'Anonymous')}
-                            {!p.available && <span className="ml-1 text-[10px] text-zinc-500">(busy)</span>}
-                          </div>
-                          <div className="text-xs text-zinc-400 truncate">
-                            {String(p.category || '-')} · {(p.skills || []).slice(0, 3).join(', ')}
-                          </div>
-                          <div className="font-mono text-[10px] text-zinc-500">{shortenAddress(String(p.wallet))}</div>
-                        </div>
-                        <div className="text-right shrink-0">
-                          <div className="text-sm font-bold text-emerald-400">{Math.min(Math.round(score / 0.6), 99)}% match</div>
-                          <div className="text-[10px] text-zinc-500">{Number(p.rate) / 1e18 || 0} ETH</div>
-                        </div>
+
+                <div className="p-4 rounded-xl border border-zinc-800/80 bg-zinc-900/60 shadow-sm flex items-center justify-between gap-4">
+                  {/* LEFT: PFP + NAME/HANDLE + WALLET/STATUS */}
+                  <div className="flex items-center gap-3.5 min-w-0 flex-1">
+                    <FreelancerAvatar
+                      avatar={avatarsMap[form.counterparty.toLowerCase()]}
+                      name={selectedFreelancerProfile?.name || namesMap[form.counterparty.toLowerCase()]}
+                      handle={freelancerIdentity.handle}
+                      wallet={form.counterparty}
+                      size="lg"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline gap-2 flex-wrap truncate">
+                        <span className="text-base font-bold text-white truncate">
+                          {selectedFreelancerProfile?.name ||
+                            namesMap[form.counterparty.toLowerCase()] ||
+                            'Direct Wallet'}
+                        </span>
+                        {freelancerIdentity.displayHandle && (
+                          <span className="text-xs font-mono text-blue-400 truncate">
+                            {freelancerIdentity.displayHandle}
+                          </span>
+                        )}
                       </div>
-                    </button>
-                  ))}
-                  <p className="text-[10px] text-zinc-600">Click a seller to select, or enter an address manually above.</p>
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      case 2:
-        return (
-          <div className="space-y-3">
-            <p className="text-sm text-zinc-400 mb-4">Choose the payment asset and enter the deal value in units (e.g. 0.5 ETH, 100 USDC).</p>
-            <div className="flex items-center gap-2">
-              {assets.map((a) => (
-                <button
-                  key={a.address}
-                  onClick={() => update('asset', a.address)}
-                  className={`flex-1 p-3 rounded-xl border text-sm font-medium text-left transition-all ${
-                    form.asset === a.address ? 'border-blue-500/50 bg-blue-600/10 text-blue-400' : 'border-zinc-700/50 bg-zinc-800/30 text-zinc-300 hover:border-zinc-600'
-                  }`}
-                >
-                  {a.symbol}
-                  {a.symbol !== 'ETH' && <span className="block text-[10px] text-zinc-500 font-normal">ERC-20</span>}
-                </button>
-              ))}
-            </div>
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 text-sm">{activeAsset.symbol}</span>
-              <Input
-                value={form.budget}
-                onChange={(e) => update('budget', e.target.value)}
-                placeholder={activeAsset.symbol === 'ETH' ? '0.5' : '100'}
-                className="pl-10 font-mono text-sm"
-                type="number"
-                min="0"
-                step="any"
-              />
-            </div>
-            {form.budget && !isNaN(Number(form.budget)) && (
-              <div className="p-3 rounded-lg bg-zinc-800/30 text-sm">
-                <span className="text-zinc-400">Value: </span>
-                <span className="text-white font-semibold">{Number(form.budget)} {activeAsset.symbol}</span>
-                <span className="text-zinc-500 text-xs ml-2">= {BigInt(Math.round(Number(form.budget) * 10 ** assetDecimals)).toString()} raw</span>
-              </div>
-            )}
-          </div>
-        );
-      case 3:
-        return (
-          <div className="space-y-3">
-            <p className="text-sm text-zinc-400 mb-4">Describe the deliverables in detail.</p>
-            <textarea
-              value={form.deliverables}
-              onChange={(e) => update('deliverables', e.target.value)}
-              placeholder="Describe what the seller will deliver..."
-              className="w-full h-32 rounded-lg border border-zinc-700 bg-zinc-800/50 px-4 py-3 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 resize-none"
-            />
-            <button
-              onClick={() => update('deliverables', 'Comprehensive DeFi dashboard with real-time analytics, portfolio tracking, and transaction monitoring.')}
-              className="flex items-center gap-2 text-xs text-blue-400 hover:text-blue-300"
-            >
-              <Sparkles size={12} /> Use AI to generate description
-            </button>
-            {form.deliverables.length > 5 && (
-              <button
-                onClick={() => runMatch(true)}
-                disabled={matchState === 'matching'}
-                className="flex items-center gap-2 text-xs text-emerald-400 hover:text-emerald-300 disabled:opacity-50 transition-colors"
-              >
-                {matchState === 'matching' ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                Auto-select best seller from this description
-              </button>
-            )}
-            {matchState === 'done' && matches.length > 0 && form.counterparty && (
-              <div className="flex items-center justify-between p-2.5 rounded-lg border border-emerald-500/30 bg-emerald-600/10">
-                <div className="min-w-0">
-                  <div className="text-xs text-emerald-400 font-medium">Seller auto-selected</div>
-                  <div className="text-sm text-white truncate">
-                    {String(matches[0].p.name || 'Anonymous')} · {shortenAddress(String(matches[0].p.wallet))}
-                  </div>
-                  <div className="text-[10px] text-zinc-500">
-                    {(matches[0].p.skills || []).slice(0, 4).join(', ')}
-                  </div>
-                </div>
-                <div className="text-right shrink-0 text-[10px] text-zinc-500">
-                  <div className="text-emerald-400 font-bold text-sm">{Math.min(Math.round(matches[0].score / 0.6), 99)}% match</div>
-                  <button onClick={() => { setStep(1); setForm(f => ({ ...f, counterparty: '' })); }} className="text-zinc-400 hover:text-white">Change</button>
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      case 4:
-        const today = new Date().toISOString().slice(0, 10);
-        const onPickDeadline = (date: string, time: string) => {
-          setDeadlineDate(date);
-          setDeadlineTime(time);
-          if (date) {
-            const ts = Math.floor(new Date(`${date}T${time || '23:59'}`).getTime() / 1000);
-            update('deadline', String(ts));
-          } else {
-            update('deadline', '');
-          }
-        };
-        return (
-          <div className="space-y-3">
-            <p className="text-sm text-zinc-400 mb-4">Pick the date and time the seller must deliver by.</p>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-zinc-500 mb-1 block">Date</label>
-                <Input
-                  type="date"
-                  min={today}
-                  value={deadlineDate}
-                  onChange={(e) => onPickDeadline(e.target.value, deadlineTime)}
-                  className="font-mono"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-zinc-500 mb-1 block">Time</label>
-                <Input
-                  type="time"
-                  value={deadlineTime}
-                  onChange={(e) => onPickDeadline(deadlineDate, e.target.value)}
-                  className="font-mono"
-                />
-              </div>
-            </div>
-            {form.deadline && !isNaN(Number(form.deadline)) && (
-              <div className="p-3 rounded-lg bg-zinc-800/30 text-sm text-zinc-400">
-                Deadline: <span className="text-white font-medium">{new Date(Number(form.deadline) * 1000).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</span> at <span className="text-white font-medium">{new Date(Number(form.deadline) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-              </div>
-            )}
-          </div>
-        );
-      case 5:
-        return (
-          <div className="space-y-3">
-            <p className="text-sm text-zinc-400 mb-4">How should payment be released?</p>
-            <div className="space-y-2">
-              {[
-                { value: 'full', label: 'Full Payment', desc: 'Pay 100% upon completion' },
-                { value: 'half', label: '50/50 Split', desc: '50% upfront, 50% on completion' },
-              ].map((opt) => (
-                <button
-                  key={opt.value}
-                  onClick={() => update('paymentStructure', opt.value)}
-                  className={`w-full p-3 rounded-xl border text-left transition-all ${
-                    form.paymentStructure === opt.value ? 'border-blue-500/50 bg-blue-600/10' : 'border-zinc-700/50 bg-zinc-800/30 hover:border-zinc-600'
-                  }`}
-                >
-                  <div className="text-sm font-medium text-white">{opt.label}</div>
-                  <div className="text-xs text-zinc-500">{opt.desc}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-        );
-      case 6:
-        return (
-          <div className="space-y-3">
-            <p className="text-sm text-zinc-400 mb-4">Adaptive Protection monitors your deal and provides coverage against risk.</p>
-            {!isEthDeal && (
-              <div className="p-3 rounded-xl bg-amber-600/10 border border-amber-500/25">
-                <p className="text-xs text-amber-300">
-                  Coverage is not available for {activeAsset.symbol} deals. The protection pool holds and pays out ETH,
-                  so it cannot price or settle a claim denominated in {activeAsset.symbol}. Pick ETH in the asset step
-                  if you want coverage — this deal will be created without it.
-                </p>
-              </div>
-            )}
-            <div className="space-y-2">
-              {[
-                { value: true, label: 'Enable Adaptive Protection', desc: 'AI-powered risk monitoring and deal protection' },
-                { value: false, label: 'No Protection', desc: 'Proceed without protection coverage' },
-              ].map((opt) => (
-                <button
-                  key={String(opt.value)}
-                  onClick={() => isEthDeal && update('protection', opt.value)}
-                  disabled={!isEthDeal}
-                  className={`w-full p-3 rounded-xl border text-left transition-all ${
-                    !isEthDeal
-                      ? opt.value === false
-                        ? 'border-zinc-700/50 bg-zinc-800/30 opacity-70'
-                        : 'border-zinc-800/50 bg-zinc-900/30 opacity-40 cursor-not-allowed'
-                      : form.protection === opt.value ? 'border-blue-500/50 bg-blue-600/10' : 'border-zinc-700/50 bg-zinc-800/30 hover:border-zinc-600'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-sm font-medium text-white">{opt.label}</div>
-                      <div className="text-xs text-zinc-500">{opt.desc}</div>
+                      <div className="flex items-center gap-2 mt-1 text-xs font-mono">
+                        <span className="text-zinc-400">
+                          {shortenAddress(form.counterparty)}
+                        </span>
+                        <span className="text-zinc-600">•</span>
+                        {selectedFreelancerProfile?.available === false ? (
+                          <span className="text-amber-400/90 font-sans text-[11px]">
+                            ○ Busy
+                          </span>
+                        ) : (
+                          <span className="text-emerald-400 font-sans text-[11px]">
+                            ● Active
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        );
-      case 7:
-        const selectedMatchInfo = matches.find((m: any) => String(m.p.wallet).toLowerCase() === String(form.counterparty).toLowerCase());
-        const sellerName = selectedMatchInfo ? String(selectedMatchInfo.p.name || 'Seller') : 'Seller';
-        return (
-          <div className="space-y-4">
-            <p className="text-sm text-zinc-400 mb-2">Review your deal before creating it.</p>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between p-2"><span className="text-zinc-400">Type</span><span className="text-white">{form.type}</span></div>
-              <div className="flex justify-between p-2"><span className="text-zinc-400">Buyer</span><span className="text-white">You</span></div>
-              <div className="flex justify-between p-2"><span className="text-zinc-400">Seller</span><span className="text-white">{sellerName}</span></div>
-              <div className="flex justify-between p-2"><span className="text-zinc-400">Value</span><span className="text-white font-semibold">{Number(form.budget) || 0} {activeAsset.symbol}</span></div>
-              <div className="flex justify-between p-2"><span className="text-zinc-400">Asset</span><span className="text-white">{activeAsset.symbol}{activeAsset.symbol !== 'ETH' ? ' (ERC-20)' : ' (native)'}</span></div>
-              <div className="flex justify-between p-2"><span className="text-zinc-400">Deadline</span><span className="text-white text-right">{new Date(Number(form.deadline) * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} · {new Date(Number(form.deadline) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>
-              <div className="flex justify-between p-2"><span className="text-zinc-400">Protection</span><span className="text-white">{protectionEnabled ? 'Enabled' : isEthDeal ? 'Disabled' : `Not available for ${activeAsset.symbol}`}</span></div>
-            </div>
-            <Separator />
-            <div className="p-3 rounded-lg bg-blue-600/10 border border-blue-500/20 text-sm text-zinc-300">
-              <div className="flex items-center gap-2 text-blue-400 mb-1"><Bot size={14} /> AI Note</div>
-              Your deal will be created on-chain via Synq's factory contract. You will need to sign a transaction with your wallet.
-            </div>
-          </div>
-        );
-    }
-  };
 
-  const showSuccess = txConfirmed;
-
-  return (
-    <div className="max-w-2xl mx-auto">
-      <button onClick={() => step > 0 ? setStep(step - 1) : router.back()} className="flex items-center gap-2 text-sm text-zinc-400 hover:text-white mb-6 transition-colors">
-        <ArrowLeft size={16} /> Back
-      </button>
-
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-white">Create a Deal</h1>
-        <p className="text-zinc-400 text-sm mt-1">Step {step + 1} of {steps.length} · {steps[step].description}</p>
-      </div>
-
-      <div className="mb-6">
-        <ChainGuard what="the deal factory is" />
-      </div>
-
-      <div className="flex items-center gap-2 mb-8">
-        {steps.map((_, i) => (
-          <div key={i} className="flex items-center gap-2 flex-1">
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium transition-all ${
-              i < step ? 'bg-green-600 text-white' : i === step ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-500'
-            }`}>
-              {i < step ? <Check size={14} /> : i + 1}
-            </div>
-            {i < steps.length - 1 && <div className={`h-px flex-1 ${i < step ? 'bg-green-600' : 'bg-zinc-800'}`} />}
-          </div>
-        ))}
-      </div>
-
-      <Card>
-        <CardContent className="p-6">
-          {showSuccess ? (
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="text-center py-8">
-              <div className="w-16 h-16 rounded-full bg-green-600/20 flex items-center justify-center mx-auto mb-4">
-                <Check size={32} className="text-green-400" />
-              </div>
-              <h2 className="text-xl font-bold text-white mb-2">Deal Created!</h2>
-              <p className="text-zinc-400 text-sm mb-4">
-                Your deal has been created on-chain. Transaction: {shortenAddress(factory.txReceipt.data?.transactionHash || '')}
-              </p>
-              <div className="flex items-center justify-center gap-3">
-                <Button onClick={() => router.push('/deals')}>View My Deals</Button>
-                {form.counterparty && (
-                  <Button
-                    variant="outline"
-                    className="gap-1.5"
-                    onClick={() => {
-                      const q = new URLSearchParams({ to: form.counterparty });
-                      if (form.type) q.set('type', form.type);
-                      const nm = searchParams.get('name');
-                      if (nm) q.set('name', nm);
-                      if (createdDealAddress) q.set('deal', createdDealAddress);
-                      router.push(`/messages?${q.toString()}`);
-                    }}
-                  >
-                    <MessageSquare size={16} /> Message Seller
-                  </Button>
-                )}
-              </div>
-            </motion.div>
-          ) : (
-            <AnimatePresence mode="wait">
-              <motion.div key={step} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
-                {renderStep()}
-
-                {error && (
-                  <div className="mt-4 p-3 rounded-lg bg-red-600/10 border border-red-500/20 text-sm text-red-400">
-                    {error}
-                  </div>
-                )}
-
-                <div className="flex items-center justify-between mt-8">
-                  <Button variant="ghost" onClick={() => step > 0 ? setStep(step - 1) : null} disabled={step === 0}>
-                    Previous
-                  </Button>
-                  {step < steps.length - 1 ? (
-                    <Button onClick={() => setStep(step + 1)} disabled={!canProceed()} className="gap-2">
-                      Next <ArrowRight size={16} />
-                    </Button>
-                  ) : (
-                    <Button onClick={handleCreate} disabled={creating || factory.isPending} className="gap-2">
-                      {creating || factory.isPending ? (
-                        <><Loader2 size={16} className="animate-spin" /> {factory.isPending ? 'Confirming...' : 'Creating...'}</>
-                      ) : 'Create Deal & Sign'}
-                    </Button>
+                  {/* RIGHT: LARGE MATCH % */}
+                  {selectedMatchPercentage !== undefined && (
+                    <div className="text-right shrink-0 leading-none pl-2">
+                      <div className="text-2xl sm:text-3xl font-black text-emerald-400 font-mono tracking-tight">
+                        {selectedMatchPercentage}%
+                      </div>
+                      <div className="text-[9px] uppercase tracking-wider text-zinc-500 font-bold mt-0.5">
+                        MATCH
+                      </div>
+                    </div>
                   )}
                 </div>
 
-                {!address && step === 7 && (
-                  <p className="text-xs text-zinc-500 mt-2 text-center">Connect your wallet to create a deal</p>
+                <p className="text-xs text-zinc-400">
+                  Click <strong className="text-white font-medium">Next</strong> below to confirm this freelancer and continue.
+                </p>
+              </div>
+            ) : (
+              /* DISCOVERY & SEARCH MODE */
+              <div className="space-y-4">
+                {/* SEARCH INPUT & DROPDOWN */}
+                <div ref={searchRef} className="relative space-y-1">
+                  <label htmlFor="freelancer-search-input" className="text-xs text-zinc-400 font-medium block">
+                    Search Freelancers
+                  </label>
+                  <div className="relative">
+                    <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
+                    <Input
+                      id="freelancer-search-input"
+                      value={searchQuery}
+                      onChange={(e) => {
+                        setSearchQuery(e.target.value);
+                        setSearchFocused(true);
+                      }}
+                      onFocus={() => setSearchFocused(true)}
+                      placeholder="Search freelancers by handle, name, skill, category, or wallet..."
+                      className="w-full pl-9 pr-8 text-sm bg-zinc-900/60 border-zinc-700/60 text-white placeholder:text-zinc-500 focus:border-blue-500/60 rounded-xl h-11"
+                      autoComplete="off"
+                    />
+                    {searchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setSearchQuery('')}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-0.5"
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* REAL-TIME TYPEAHEAD DROPDOWN */}
+                  {searchFocused && searchQuery.trim().length > 0 && (
+                    <div className="absolute left-0 right-0 top-full mt-1.5 z-30 overflow-hidden rounded-xl border border-zinc-700/80 bg-zinc-900/98 p-1.5 shadow-2xl backdrop-blur-md">
+                      <div className="space-y-1 max-h-72 overflow-y-auto">
+                        {/* Direct Address Entry (when valid EVM address) */}
+                        {queryIsAddress && !queryIsOwnAddress && !queryMatchesDirectoryProfile && (
+                          <button
+                            type="button"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              selectFreelancer(searchQuery.trim());
+                              setSearchQuery('');
+                              setSearchFocused(false);
+                            }}
+                            className="w-full text-left p-2.5 rounded-lg hover:bg-blue-600/15 border border-blue-500/20 bg-blue-950/20 flex items-center justify-between gap-3 transition-colors"
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="w-8 h-8 rounded-full bg-blue-600/30 border border-blue-500/40 flex items-center justify-center text-blue-400 shrink-0">
+                                <Wallet size={14} />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="text-xs font-semibold text-white flex items-center gap-1.5">
+                                  <span>Use direct address</span>
+                                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400 border border-zinc-700">
+                                    Unregistered
+                                  </span>
+                                </div>
+                                <div className="text-[11px] font-mono text-blue-300 truncate">
+                                  {searchQuery.trim()}
+                                </div>
+                              </div>
+                            </div>
+                            <span className="text-xs text-blue-400 shrink-0 font-medium">Select →</span>
+                          </button>
+                        )}
+
+                        {/* Own Wallet Guard */}
+                        {queryIsOwnAddress && (
+                          <div className="p-3 text-center text-xs text-amber-400 bg-amber-950/20 border border-amber-500/30 rounded-lg">
+                            Cannot create a deal proposal with your own wallet address.
+                          </div>
+                        )}
+
+                        {/* Directory Matches */}
+                        {searchResults.map((p: any) => {
+                          const w = String(p.wallet).toLowerCase();
+                          const idInfo = sellerIdentities[w];
+                          const displayName = namesMap[w] || p.name || 'Freelancer';
+                          const handle = idInfo?.displayHandle || (p.name ? `@${p.name.toLowerCase().replace(/\s+/g, '')}` : null);
+                          const dealsDone = completedCountsMap[w] ?? Number(p.completedDeals || 0);
+
+                          return (
+                            <button
+                              key={p.wallet}
+                              type="button"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                selectFreelancer(p.wallet);
+                                setSearchQuery('');
+                                setSearchFocused(false);
+                              }}
+                              className="w-full text-left p-2.5 rounded-lg hover:bg-zinc-800/70 border border-transparent hover:border-zinc-700/60 flex items-center justify-between gap-3 transition-colors"
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <FreelancerAvatar
+                                  avatar={avatarsMap[w]}
+                                  name={displayName}
+                                  handle={handle}
+                                  wallet={p.wallet}
+                                  size="md"
+                                />
+                                <div className="min-w-0">
+                                  <div className="text-sm font-semibold text-white truncate flex items-center gap-1.5">
+                                    <span>{displayName}</span>
+                                    {handle && (
+                                      <span className="text-xs font-mono text-blue-400 font-normal">
+                                        {handle}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-xs text-zinc-400 truncate">
+                                    {p.category && <span className="text-zinc-300 mr-1.5">{p.category}</span>}
+                                    {(p.skills || []).slice(0, 3).join(', ')}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="text-right shrink-0">
+                                {(() => {
+                                  const itemPricing = formatPublicPricing(pricingMap[w]);
+                                  if (itemPricing) {
+                                    return (
+                                      <div className="text-xs font-semibold text-white">
+                                        {itemPricing.amountDisplay} <span className="text-[10px] text-zinc-400 font-normal">USDC / {pricingMap[w]?.rateType === 'PER_HOUR' ? 'hour' : 'project'}</span>
+                                      </div>
+                                    );
+                                  }
+                                  return <div className="text-[11px] text-zinc-500">Rate not set</div>;
+                                })()}
+                                <div className="text-[10px] text-zinc-500">
+                                  {dealsDone} deal{dealsDone === 1 ? '' : 's'}
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })}
+
+                        {/* No Results Fallback */}
+                        {searchResults.length === 0 && !queryIsAddress && (
+                          <div className="p-4 text-center text-xs text-zinc-500">
+                            No registered freelancers found matching &quot;{searchQuery}&quot;
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+
+      case 2:
+        return (
+          <div className="space-y-4">
+            <h3 className="text-base font-semibold text-white">
+              Describe the overall deliverables scope of the engagement.
+            </h3>
+
+            <div className="relative space-y-1">
+              <textarea
+                value={form.deliverables}
+                onChange={(e) => update('deliverables', e.target.value)}
+                placeholder="Describe project scope, technical requirements, and acceptance standards..."
+                className="w-full h-36 rounded-xl border border-zinc-700/60 bg-zinc-900/60 p-4 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-blue-500/60 resize-none font-sans"
+              />
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-[11px] text-zinc-500 font-mono">
+                  {form.deliverables.length} characters
+                </span>
+              </div>
+            </div>
+          </div>
+        );
+
+      case 3:
+        return (
+          <div className="space-y-4">
+            <h3 className="text-base font-semibold text-white">What&apos;s your budget?</h3>
+
+            <div className="space-y-1.5">
+              <label htmlFor="deal-budget-input" className="text-xs text-zinc-400 font-medium block">
+                TOTAL DEAL BUDGET (USDC)
+              </label>
+              <div className="relative">
+                <Input
+                  id="deal-budget-input"
+                  value={form.budget}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    update('budget', val);
+                    if (form.paymentStructure && form.paymentStructure !== 'custom') {
+                      applyPaymentStructure(form.paymentStructure, val);
+                    }
+                  }}
+                  placeholder="0.00"
+                  className="w-full pl-4 pr-18 font-mono text-base bg-zinc-900/60 border-zinc-700/60 text-white placeholder:text-zinc-500 focus:border-blue-500/60 rounded-xl h-14"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                />
+                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-400 text-xs font-semibold uppercase pointer-events-none">
+                  USDC
+                </span>
+              </div>
+            </div>
+          </div>
+        );
+
+      case 4: {
+        const today = new Date().toISOString().slice(0, 10);
+        return (
+          <div className="space-y-5">
+            <h3 className="text-base font-semibold text-white">When do you need the job done?</h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label htmlFor="deal-deadline-date" className="text-xs text-zinc-400 font-medium block">
+                  TARGET COMPLETION DATE
+                </label>
+                <Input
+                  ref={dateInputRef}
+                  id="deal-deadline-date"
+                  type="date"
+                  min={today}
+                  value={deadlineDate}
+                  onClick={openDatePicker}
+                  onChange={(e) => {
+                    handleDeadlineDateChange(e.target.value);
+                    setSelectedDeadlinePreset(null);
+                  }}
+                  className="w-full font-mono text-sm bg-zinc-900/60 border-zinc-700/60 text-white focus:border-blue-500/60 rounded-xl h-11 [color-scheme:dark] cursor-pointer [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:scale-125 [&::-webkit-calendar-picker-indicator]:opacity-90 hover:[&::-webkit-calendar-picker-indicator]:opacity-100"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label htmlFor="deal-deadline-time" className="text-xs text-zinc-400 font-medium block">
+                  TARGET TIME
+                </label>
+                <Input
+                  ref={timeInputRef}
+                  id="deal-deadline-time"
+                  type="time"
+                  value={deadlineTime}
+                  onClick={openTimePicker}
+                  onChange={(e) => {
+                    handleDeadlineTimeChange(e.target.value);
+                    setSelectedDeadlinePreset(null);
+                  }}
+                  className="w-full font-mono text-sm bg-zinc-900/60 border-zinc-700/60 text-white focus:border-blue-500/60 rounded-xl h-11 [color-scheme:dark] cursor-pointer [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:scale-125 [&::-webkit-calendar-picker-indicator]:opacity-90 hover:[&::-webkit-calendar-picker-indicator]:opacity-100"
+                />
+              </div>
+            </div>
+
+            {/* QUICK PRESET DEADLINE CARDS */}
+            <div className="space-y-1.5">
+              <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider block">
+                Quick Presets
+              </span>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                {[
+                  { days: 3, label: '3 days' },
+                  { days: 5, label: '5 days' },
+                  { days: 10, label: '10 days' },
+                  { days: 30, label: '30 days' },
+                ].map((preset) => {
+                  const isSelected = selectedDeadlinePreset === preset.days;
+                  return (
+                    <button
+                      key={preset.days}
+                      type="button"
+                      onClick={() => applyDeadlinePreset(preset.days)}
+                      className={cn(
+                        'px-3 py-2 rounded-lg border text-center transition-all text-xs font-medium',
+                        isSelected
+                          ? 'border-blue-500/60 bg-blue-600/20 text-blue-300 shadow-sm'
+                          : 'border-zinc-800 bg-zinc-900/50 text-zinc-300 hover:border-zinc-700 hover:bg-zinc-800/40'
+                      )}
+                    >
+                      {preset.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {formattedLocalDelivery && (
+              <div className="p-3.5 rounded-xl border border-zinc-800 bg-zinc-900/40 text-xs text-zinc-400 flex items-center justify-between">
+                <span>Target Delivery:</span>
+                <span className="font-mono text-zinc-100 text-sm font-semibold">
+                  {formattedLocalDelivery}
+                </span>
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      case 5:
+        return (
+          <div className="space-y-6">
+            {/* CARD 1 — PAYMENT STRUCTURE */}
+            <div className="p-5 sm:p-6 rounded-2xl bg-zinc-900/80 border border-zinc-800/80 shadow-md space-y-4">
+              <h3 className="text-base font-semibold text-white">
+                Choose how funds should be released across milestones.
+              </h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {[
+                  { value: 'single', label: 'Single Release', desc: '100% on final deliverable' },
+                  { value: '50-50', label: '50/50 Milestones', desc: 'Two equal milestone releases' },
+                  { value: 'custom', label: 'Custom Stages', desc: 'Tailored milestone breakdown' },
+                ].map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => {
+                      setPaymentStructureSelected(true);
+                      update('paymentStructure', opt.value);
+                      applyPaymentStructure(opt.value as any, form.budget);
+                      setExpandedMilestoneIndex(0);
+                    }}
+                    className={cn(
+                      'p-3.5 rounded-xl border text-left transition-all',
+                      paymentStructureSelected && form.paymentStructure === opt.value
+                        ? 'border-blue-500/50 bg-blue-600/10 shadow-sm'
+                        : 'border-zinc-700/50 bg-zinc-800/30 hover:border-zinc-600'
+                    )}
+                  >
+                    <div className="text-sm font-semibold text-white">{opt.label}</div>
+                    <div className="text-xs text-zinc-400 mt-0.5">{opt.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* CARD 2 — MILESTONES (Rendered ONLY after explicit selection) */}
+            {paymentStructureSelected && form.paymentStructure && milestones.length > 0 && (
+              <div className="p-5 sm:p-6 rounded-2xl bg-zinc-900/80 border border-zinc-800/80 shadow-md space-y-4">
+                {/* Milestone Card Header */}
+                <div>
+                  <h4 className="text-sm font-semibold text-white">Milestone Breakdown</h4>
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    Total Escrow: <span className="font-semibold text-blue-400 font-mono">{formattedTotalEscrow} USDC</span> across {milestones.length} milestone{milestones.length === 1 ? '' : 's'}.
+                  </p>
+                </div>
+
+                {/* Collapsible Accordion List */}
+                <div className="space-y-3">
+                  {milestones.map((m, idx) => {
+                    const isExpanded = expandedMilestoneIndex === idx;
+                    const displayTitle = getMilestoneDisplayTitle(m.title, idx);
+
+                    return (
+                      <div
+                        key={idx}
+                        className="rounded-xl border border-zinc-800 bg-zinc-900/50 overflow-hidden transition-colors"
+                      >
+                        {/* Collapsed Header Bar */}
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => setExpandedMilestoneIndex(isExpanded ? null : idx)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              setExpandedMilestoneIndex(isExpanded ? null : idx);
+                            }
+                          }}
+                          className="w-full flex items-center justify-between p-3.5 hover:bg-zinc-800/40 cursor-pointer select-none transition-colors"
+                        >
+                          <span className="text-xs font-semibold text-zinc-200 truncate pr-2">
+                            {displayTitle}
+                          </span>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {form.paymentStructure === 'custom' && milestones.length > 1 && (
+                              <button
+                                type="button"
+                                aria-label={`Remove Milestone ${idx + 1}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  removeMilestone(idx);
+                                }}
+                                className="text-zinc-500 hover:text-red-400 transition-colors p-1"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            )}
+                            <div className="text-zinc-400">
+                              {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Expanded State Body */}
+                        {isExpanded && (
+                          <div className="p-4 pt-2 border-t border-zinc-800/70 space-y-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <div className="space-y-1">
+                                <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
+                                  Title
+                                </label>
+                                <Input
+                                  value={m.title}
+                                  onChange={(e) => updateMilestone(idx, 'title', e.target.value)}
+                                  placeholder={`Milestone ${idx + 1} Title`}
+                                  className="text-xs bg-zinc-950/40 border-zinc-800 text-white h-9"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
+                                  Amount (USDC)
+                                </label>
+                                <Input
+                                  value={m.amountUsdc}
+                                  onChange={(e) => updateMilestone(idx, 'amountUsdc', e.target.value)}
+                                  placeholder="0.00"
+                                  className="text-xs font-mono bg-zinc-950/40 border-zinc-800 text-white h-9"
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
+                                Acceptance Specification
+                              </label>
+                              <textarea
+                                value={m.description}
+                                onChange={(e) => updateMilestone(idx, 'description', e.target.value)}
+                                placeholder="Specify the work deliverable and acceptance criteria (hashed into specHash)..."
+                                className="w-full h-18 rounded-lg border border-zinc-800 bg-zinc-950/40 p-2.5 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-blue-500/50 resize-none font-sans"
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                              <div className="space-y-1">
+                                <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
+                                  Work Deadline
+                                </label>
+                                <Input
+                                  type="date"
+                                  value={m.deadlineDate}
+                                  onChange={(e) => updateMilestone(idx, 'deadlineDate', e.target.value)}
+                                  className="text-xs font-mono bg-zinc-950/40 border-zinc-800 text-white h-9"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
+                                  Review Window
+                                </label>
+                                <select
+                                  value={m.reviewWindowSeconds}
+                                  onChange={(e) => updateMilestone(idx, 'reviewWindowSeconds', Number(e.target.value))}
+                                  className="w-full rounded-md border border-zinc-800 bg-zinc-950/40 px-3 text-xs text-white h-9"
+                                >
+                                  <option value={86400}>24 Hours</option>
+                                  <option value={259200}>3 Days</option>
+                                  <option value={604800}>7 Days</option>
+                                  <option value={1209600}>14 Days</option>
+                                </select>
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
+                                  Grace Period
+                                </label>
+                                <select
+                                  value={m.gracePeriodSeconds}
+                                  onChange={(e) => updateMilestone(idx, 'gracePeriodSeconds', Number(e.target.value))}
+                                  className="w-full rounded-md border border-zinc-800 bg-zinc-950/40 px-3 text-xs text-white h-9"
+                                >
+                                  <option value={0}>0 Days</option>
+                                  <option value={86400}>1 Day</option>
+                                  <option value={259200}>3 Days</option>
+                                  <option value={604800}>7 Days</option>
+                                </select>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {/* Add Milestone Bar for Custom Stages */}
+                  {form.paymentStructure === 'custom' && milestones.length < 10 && (
+                    <button
+                      type="button"
+                      onClick={addMilestone}
+                      className="w-full flex items-center justify-center gap-2 p-3 rounded-xl border border-dashed border-zinc-700/80 bg-zinc-900/30 hover:border-zinc-500 hover:bg-zinc-800/40 text-xs font-medium text-zinc-300 transition-all cursor-pointer"
+                    >
+                      <Plus size={15} className="text-blue-400" />
+                      <span>Add Milestone</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+
+      case 6:
+        return (
+          <div className="space-y-6">
+            <div>
+              <h3 className="text-base font-semibold text-white">Choose the protection level you want for this deal.</h3>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* STANDARD PROTECTION CARD */}
+              <button
+                type="button"
+                onClick={() => {
+                  update('protectionSelection', 'STANDARD');
+                }}
+                className={cn(
+                  'p-5 rounded-2xl border text-left transition-all relative flex flex-col justify-between cursor-pointer space-y-4',
+                  form.protectionSelection === 'STANDARD'
+                    ? 'border-blue-500/60 bg-blue-600/10 shadow-sm'
+                    : 'border-zinc-800/80 bg-zinc-900/40 hover:border-zinc-700 hover:bg-zinc-800/30'
                 )}
+              >
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-white">Standard Protection</span>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-zinc-800 text-zinc-300 border border-zinc-700/60 uppercase tracking-wider">
+                      Included
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-zinc-400 leading-relaxed">
+                    Secure escrow, milestone releases and standard dispute resolution.
+                  </p>
+
+                  <div className="space-y-1.5 pt-1">
+                    {[
+                      'Secure escrow',
+                      'Milestone-based releases',
+                      'Standard dispute resolution',
+                    ].map((benefit, i) => (
+                      <div key={i} className="flex items-center gap-2 text-[11px] text-zinc-400">
+                        <Check size={12} className="text-blue-400 shrink-0" />
+                        <span>{benefit}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-2 border-t border-zinc-800/60">
+                  <span className="text-[11px] text-zinc-500 font-medium">Core Protection</span>
+                  <div
+                    className={cn(
+                      'w-4 h-4 rounded-full flex items-center justify-center transition-all',
+                      form.protectionSelection === 'STANDARD'
+                        ? 'border-2 border-blue-500 bg-blue-500 text-white'
+                        : 'border border-zinc-600 bg-transparent'
+                    )}
+                  >
+                    {form.protectionSelection === 'STANDARD' && (
+                      <div className="w-1.5 h-1.5 rounded-full bg-white" />
+                    )}
+                  </div>
+                </div>
+              </button>
+
+              {/* PREMIUM PROTECTION CARD */}
+              <button
+                type="button"
+                onClick={() => {
+                  update('protectionSelection', 'PREMIUM');
+                }}
+                className={cn(
+                  'p-5 rounded-2xl border text-left transition-all relative flex flex-col justify-between cursor-pointer space-y-4',
+                  form.protectionSelection === 'PREMIUM'
+                    ? 'border-blue-500/60 bg-blue-600/10 shadow-sm'
+                    : 'border-zinc-800/80 bg-zinc-900/40 hover:border-zinc-700 hover:bg-zinc-800/30'
+                )}
+              >
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 relative" ref={premiumInfoRef}>
+                      <span className="text-sm font-semibold text-white">Premium Protection</span>
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        aria-label="Learn about Premium Protection"
+                        aria-expanded={showPremiumInfo}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowPremiumInfo((prev) => !prev);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setShowPremiumInfo((prev) => !prev);
+                          }
+                        }}
+                        className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 hover:bg-zinc-700/80 transition-colors focus:outline-none focus:ring-1 focus:ring-blue-400 cursor-pointer"
+                      >
+                        <HelpCircle size={10} className="shrink-0" />
+                      </span>
+
+                      {showPremiumInfo && (
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          className="absolute left-0 top-full mt-2 w-72 sm:w-80 max-w-[calc(100vw-3rem)] rounded-xl bg-zinc-900 border border-zinc-700/80 p-3.5 shadow-2xl shadow-black/80 z-30 cursor-default text-left space-y-2.5"
+                        >
+                          <div className="flex items-center justify-between pb-1.5 border-b border-zinc-800">
+                            <span className="text-xs font-semibold text-zinc-200">
+                              How Premium Protection works
+                            </span>
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              aria-label="Close"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setShowPremiumInfo(false);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setShowPremiumInfo(false);
+                                }
+                              }}
+                              className="text-zinc-500 hover:text-zinc-300 transition-colors p-0.5 rounded cursor-pointer"
+                            >
+                              <X size={12} />
+                            </span>
+                          </div>
+
+                          <div className="space-y-2 text-xs">
+                            <div className="space-y-0.5">
+                              <div className="font-medium text-white flex items-center gap-1.5 text-[11px]">
+                                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
+                                Coverage
+                              </div>
+                              <p className="text-[11px] text-zinc-400 leading-relaxed pl-3">
+                                Up to 20% additional recovery on eligible failed milestones.
+                              </p>
+                            </div>
+
+                            <div className="space-y-0.5">
+                              <div className="font-medium text-white flex items-center gap-1.5 text-[11px]">
+                                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
+                                Claim
+                              </div>
+                              <p className="text-[11px] text-zinc-400 leading-relaxed pl-3">
+                                Submit a claim after an eligible milestone failure.
+                              </p>
+                            </div>
+
+                            <div className="space-y-0.5">
+                              <div className="font-medium text-white flex items-center gap-1.5 text-[11px]">
+                                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
+                                Review
+                              </div>
+                              <p className="text-[11px] text-zinc-400 leading-relaxed pl-3">
+                                Your protection claim is reviewed before payout.
+                              </p>
+                            </div>
+
+                            <div className="space-y-0.5">
+                              <div className="font-medium text-white flex items-center gap-1.5 text-[11px]">
+                                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
+                                Payout
+                              </div>
+                              <p className="text-[11px] text-zinc-400 leading-relaxed pl-3">
+                                Approved claims are paid separately from your original deal escrow.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-500/20 text-blue-300 border border-blue-500/40 uppercase tracking-wider">
+                      Premium
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-zinc-300 leading-relaxed font-medium">
+                    Get up to 20% additional recovery coverage when an eligible milestone fails.
+                  </p>
+
+                  <div className="space-y-1.5 pt-1">
+                    {[
+                      'Additional recovery coverage',
+                      'Priority dispute review',
+                      'Replacement freelancer assistance',
+                    ].map((benefit, i) => (
+                      <div key={i} className="flex items-center gap-2 text-[11px] text-zinc-400">
+                        <Check size={12} className="text-blue-400 shrink-0" />
+                        <span>{benefit}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="text-[11px] text-zinc-500 italic pt-1">
+                    Premium fee shown before activation
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-2 border-t border-zinc-800/60">
+                  <span className="text-[11px] text-zinc-500 font-medium">Enhanced Recovery</span>
+                  <div
+                    className={cn(
+                      'w-4 h-4 rounded-full flex items-center justify-center transition-all',
+                      form.protectionSelection === 'PREMIUM'
+                        ? 'border-2 border-blue-500 bg-blue-500 text-white'
+                        : 'border border-zinc-600 bg-transparent'
+                    )}
+                  >
+                    {form.protectionSelection === 'PREMIUM' && (
+                      <div className="w-1.5 h-1.5 rounded-full bg-white" />
+                    )}
+                  </div>
+                </div>
+              </button>
+            </div>
+          </div>
+        );
+
+      case 7:
+        return null;
+
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div
+      className={cn(
+        'space-y-6 pt-0 transition-all duration-300',
+        isReviewView
+          ? 'pb-36'
+          : !aiPanelExpanded || step < 1 || step >= 7
+          ? 'pb-36'
+          : step === 1
+          ? 'pb-40 lg:pb-[460px]'
+          : 'pb-36 sm:pb-40'
+      )}
+    >
+      {/* PAGE HEADER */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <h1 className={`${pressStart2P.className} text-xl md:text-2xl font-normal text-white tracking-tight`}>
+          Create a Deal Proposal
+        </h1>
+      </div>
+
+      <ChainGuard what="Standard V2 proposals are" />
+
+      {/* MAIN CONTAINER */}
+      <div className="max-w-5xl mx-auto space-y-8">
+        <LayoutGroup id="synq-create-deal-layout">
+          <AnimatePresence mode="popLayout" initial={false}>
+            {!isReviewView ? (
+              <motion.div
+                key="wizard-layout-container"
+                exit={{
+                  opacity: 0,
+                  scale: 0.98,
+                  transition: {
+                    duration: shouldReduceMotion ? 0.05 : 0.45,
+                    ease: [0.16, 1, 0.3, 1],
+                  },
+                }}
+                className={cn('grid grid-cols-1 lg:grid-cols-12 gap-6', (step === 0 || step === 1) ? 'lg:items-center items-start' : 'items-start lg:items-start')}
+              >
+                {/* WIZARD COLUMN */}
+                <div className={cn('lg:col-span-8 space-y-6', (step === 0 || step === 1) ? '' : 'lg:self-start')}>
+                <div className="p-6 rounded-2xl bg-zinc-900/70 border border-zinc-800/80 shadow-2xl space-y-6">
+                  {handoffLoading ? (
+                    <div className="flex flex-col items-center justify-center py-16 text-center space-y-3">
+                      <Loader2 size={24} className="animate-spin text-blue-400" />
+                      <p className="text-sm font-medium text-zinc-300">Fetching negotiated deal terms...</p>
+                      <p className="text-xs text-zinc-500">Loading your draft from AI Negotiator</p>
+                    </div>
+                  ) : handoffError ? (
+                    <div className="py-8 text-center space-y-4">
+                      <div className="p-4 rounded-xl bg-red-600/10 border border-red-500/20 text-sm text-red-400 font-medium">
+                        {handoffError}
+                      </div>
+                      <Button
+                        variant="outline"
+                        onClick={() => router.push('/negotiator')}
+                        className="gap-2 border-zinc-700/60 bg-zinc-900/40 text-zinc-300"
+                      >
+                        <ArrowLeft size={16} /> Back to AI Negotiator
+                      </Button>
+                    </div>
+                  ) : (
+                    <AnimatePresence mode="wait">
+                      <motion.div key={step} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
+                        {renderStep()}
+
+                        {error && step < 7 && (
+                          <div className="mt-4 p-3 rounded-lg bg-red-600/10 border border-red-500/20 text-sm text-red-400">
+                            {error}
+                          </div>
+                        )}
+
+                        {step < 7 && (
+                          <div className="flex items-center justify-between mt-8 pt-4 border-t border-zinc-800/60">
+                            <Button
+                              variant="outline"
+                              onClick={handlePrevious}
+                              disabled={step === 0 || !!isReviewTransitioning}
+                              className="gap-2 border-zinc-700/60 bg-zinc-900/40 text-zinc-300 hover:bg-zinc-800/60 hover:text-white"
+                            >
+                              <ArrowLeft size={16} /> Previous
+                            </Button>
+                            <Button
+                              onClick={step === 6 ? handleContinueToReview : () => setStep(step + 1)}
+                              disabled={!canProceed() || !!isReviewTransitioning}
+                              className="gap-2 bg-blue-600 hover:bg-blue-500 text-white"
+                            >
+                              {step === 6 ? (
+                                <>
+                                  Continue <ArrowRight size={16} />
+                                </>
+                              ) : (
+                                <>
+                                  Next <ArrowRight size={16} />
+                                </>
+                              )}
+                            </Button>
+                          </div>
+                        )}
+                      </motion.div>
+                    </AnimatePresence>
+                  )}
+                </div>
+
+                {/* AI FREELANCER MATCHES (Persistent across Steps 2 through 7) */}
+                {step >= 1 && step < 7 && (
+                  <AIFreelancerMatches
+                    draftContext={aiDraftContext}
+                    availableProfiles={availableProfiles}
+                    avatarsMap={avatarsMap}
+                    namesMap={namesMap}
+                    sellerIdentities={sellerIdentities}
+                    completedCountsMap={completedCountsMap}
+                    reviewCountsMap={reviewCountsMap}
+                    pricingMap={pricingMap}
+                    clientAddress={address}
+                    isExpanded={aiPanelExpanded}
+                    onToggleExpand={() => setAiPanelExpanded((prev) => !prev)}
+                    onSelectFreelancer={(wallet) => {
+                      selectFreelancer(wallet);
+                    }}
+                    selectedWallet={form.counterparty}
+                    anchoredGrowth={step === 1}
+                  />
+                )}
+              </div>
+
+              {/* SIDEBAR PREVIEW (Steps 1-7, progressively populated) */}
+              <div className={cn('lg:col-span-4 relative z-10', (step === 0 || step === 1) ? '' : 'lg:self-start')}>
+                <motion.div
+                  layoutId="synq-deal-receipt-surface"
+                  transition={{
+                    duration: shouldReduceMotion ? 0.05 : 0.55,
+                    ease: [0.16, 1, 0.3, 1],
+                  }}
+                >
+                  <DealReceipt
+                    variant="compact"
+                    title={form.type.trim() || undefined}
+                    client={{
+                      wallet: address,
+                      name: address ? namesMap[address.toLowerCase()] || undefined : undefined,
+                      handle: clientIdentity.handle,
+                      displayHandle: clientIdentity.displayHandle,
+                      avatar: address ? avatarsMap[address.toLowerCase()] || null : null,
+                    }}
+                    freelancer={
+                      step >= 1 &&
+                      form.counterparty &&
+                      isAddress(form.counterparty) &&
+                      form.counterparty.toLowerCase() !== ZERO_ADDRESS.toLowerCase() &&
+                      (!address || form.counterparty.toLowerCase() !== address.toLowerCase())
+                        ? {
+                            wallet: form.counterparty,
+                            name:
+                              selectedFreelancerProfile?.name ||
+                              namesMap[form.counterparty.toLowerCase()] ||
+                              undefined,
+                            handle: freelancerIdentity.handle,
+                            displayHandle: freelancerIdentity.displayHandle,
+                            avatar: avatarsMap[form.counterparty.toLowerCase()] || null,
+                          }
+                        : undefined
+                    }
+                    scope={step >= 2 && form.deliverables.trim() ? form.deliverables.trim() : undefined}
+                    budget={
+                      step >= 3 && form.budget.trim() && !isNaN(Number(form.budget)) && Number(form.budget) > 0
+                        ? form.budget.trim()
+                        : undefined
+                    }
+                    asset={{ symbol: 'USDC', isErc20: true }}
+                    deadline={
+                      step >= 4 &&
+                      deadlineDate?.trim() &&
+                      deadlineTime?.trim() &&
+                      !isNaN(new Date(`${deadlineDate.trim()}T${deadlineTime.trim()}`).getTime()) &&
+                      Math.floor(new Date(`${deadlineDate.trim()}T${deadlineTime.trim()}`).getTime() / 1000) > Math.floor(Date.now() / 1000)
+                        ? `${deadlineDate.trim()}T${deadlineTime.trim()}`
+                        : undefined
+                    }
+                    paymentStructure={step >= 5 && paymentStructureSelected && form.paymentStructure ? form.paymentStructure : undefined}
+                    protection={
+                      form.protectionSelection === 'STANDARD'
+                        ? 'Standard Protection'
+                        : form.protectionSelection === 'PREMIUM'
+                        ? 'Premium Protection'
+                        : null
+                    }
+                  />
+                </motion.div>
+              </div>
+            </motion.div>
+          ) : (
+            /* STEP 8: CENTERED REVIEW RECEIPT & CONTROLS */
+            <motion.div
+              key="review-layout-container"
+              exit={{ opacity: 0, transition: { duration: 0.3 } }}
+              className="w-full flex flex-col items-center"
+            >
+              <motion.div
+                layoutId="synq-deal-receipt-surface"
+                transition={{
+                  duration: shouldReduceMotion ? 0.05 : 0.55,
+                  ease: [0.16, 1, 0.3, 1],
+                }}
+                className="w-full max-w-[600px]"
+              >
+                <DealReceipt
+                  variant="review"
+                  title={form.type.trim() || undefined}
+                  client={{
+                    wallet: address,
+                    name: address ? namesMap[address.toLowerCase()] || undefined : undefined,
+                    handle: clientIdentity.handle,
+                    displayHandle: clientIdentity.displayHandle,
+                    avatar: address ? avatarsMap[address.toLowerCase()] || null : null,
+                  }}
+                  freelancer={
+                    form.counterparty &&
+                    isAddress(form.counterparty) &&
+                    form.counterparty.toLowerCase() !== ZERO_ADDRESS.toLowerCase() &&
+                    (!address || form.counterparty.toLowerCase() !== address.toLowerCase())
+                      ? {
+                          wallet: form.counterparty,
+                          name:
+                            selectedFreelancerProfile?.name ||
+                            namesMap[form.counterparty.toLowerCase()] ||
+                            undefined,
+                          handle: freelancerIdentity.handle,
+                          displayHandle: freelancerIdentity.displayHandle,
+                          avatar: avatarsMap[form.counterparty.toLowerCase()] || null,
+                        }
+                      : undefined
+                  }
+                  scope={form.deliverables.trim() ? form.deliverables.trim() : undefined}
+                  budget={
+                    form.budget.trim() && !isNaN(Number(form.budget)) && Number(form.budget) > 0
+                      ? form.budget.trim()
+                      : undefined
+                  }
+                  asset={{ symbol: 'USDC', isErc20: true }}
+                  deadline={
+                    deadlineDate?.trim() &&
+                    deadlineTime?.trim() &&
+                    !isNaN(new Date(`${deadlineDate.trim()}T${deadlineTime.trim()}`).getTime()) &&
+                    Math.floor(new Date(`${deadlineDate.trim()}T${deadlineTime.trim()}`).getTime() / 1000) > Math.floor(Date.now() / 1000)
+                      ? `${deadlineDate.trim()}T${deadlineTime.trim()}`
+                      : undefined
+                  }
+                  paymentStructure={paymentStructureSelected && form.paymentStructure ? form.paymentStructure : undefined}
+                  protection={
+                    form.protectionSelection === 'STANDARD'
+                      ? 'Standard Protection'
+                      : form.protectionSelection === 'PREMIUM'
+                      ? 'Premium Protection'
+                      : null
+                  }
+                  actions={
+                    <div className="space-y-4 pt-1">
+                      {/* Nonce Conflict Banner */}
+                      {nonceConflict && (
+                        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5 space-y-2.5 text-left">
+                          <div className="flex items-start gap-2.5">
+                            <AlertTriangle className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
+                            <div className="space-y-1">
+                              <h4 className="font-semibold text-amber-200 text-xs">Proposal Nonce Conflict</h4>
+                              <p className="text-[11px] text-zinc-300 leading-relaxed">
+                                Another proposal from this wallet used this proposal nonce. Your deal terms have not been lost and no funds moved.
+                              </p>
+                              <p className="text-[11px] text-zinc-400">
+                                Refresh the proposal nonce and sign again to submit.
+                              </p>
+                            </div>
+                          </div>
+                          <div className="pt-0.5 flex items-center gap-2">
+                            <Button
+                              type="button"
+                              onClick={handleRefreshNonce}
+                              disabled={refreshingNonce}
+                              className="bg-amber-600 hover:bg-amber-500 text-white font-medium px-3 py-1 text-xs rounded-lg flex items-center gap-1.5"
+                            >
+                              {refreshingNonce ? (
+                                <>
+                                  <Loader2 size={12} className="animate-spin" />
+                                  Refreshing Nonce...
+                                </>
+                              ) : (
+                                <>Refresh Nonce & Review</>
+                              )}
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Error Message */}
+                      {error && !nonceConflict && (
+                        <div className="p-3 rounded-lg bg-red-600/10 border border-red-500/20 text-xs text-red-400 text-left">
+                          {error}
+                        </div>
+                      )}
+
+                      {/* Concise Protocol Notice */}
+                      <p className="text-xs text-zinc-400 text-center leading-relaxed px-2">
+                        No funds move when you sign. The freelancer must accept the proposal before you fund escrow.
+                      </p>
+                      {form.protectionSelection === 'PREMIUM' && (
+                        <p className="text-[11px] text-zinc-400 text-center leading-relaxed px-2">
+                          Premium Protection will be activated when you fund this deal after the freelancer accepts.
+                        </p>
+                      )}
+
+                      {/* Action Buttons */}
+                      <div className="flex items-center justify-between gap-3 pt-1">
+                        <Button
+                          variant="outline"
+                          onClick={handlePreviousFromReview}
+                          disabled={signing || !!isReviewTransitioning}
+                          className="gap-2 border-zinc-700 bg-zinc-800/40 text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                        >
+                          <ArrowLeft size={16} /> Previous
+                        </Button>
+
+                        <Button
+                          onClick={handleSignAndSendProposal}
+                          disabled={signing || !canProceed() || !!isReviewTransitioning}
+                          className="gap-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold shadow-lg shadow-blue-900/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {signing ? (
+                            <>
+                              <Loader2 size={16} className="animate-spin" /> Signing & Sending...
+                            </>
+                          ) : (
+                            <>
+                              <FileSignature size={16} /> Sign & Send Proposal
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  }
+                />
               </motion.div>
-            </AnimatePresence>
+            </motion.div>
           )}
-        </CardContent>
-      </Card>
+        </AnimatePresence>
+      </LayoutGroup>
+      </div>
+
+      {/* PROGRESS TRACKER */}
+      <div
+        className={cn(
+          'fixed bottom-14 right-0 flex justify-center pointer-events-none z-30 px-4 transition-all duration-300 ease-in-out',
+          collapsed ? 'left-0 lg:left-[68px]' : 'left-0 lg:left-[240px]'
+        )}
+      >
+        <div className="pointer-events-auto p-4 rounded-xl bg-zinc-900/90 backdrop-blur-md border border-zinc-800/90 shadow-2xl max-w-2xl w-full">
+          <div className="relative flex items-center justify-between">
+            <div className="absolute top-1/2 left-4 right-4 h-0.5 -translate-y-1/2 bg-zinc-800/80 z-0" />
+            <div
+              className="absolute top-1/2 left-4 h-0.5 -translate-y-1/2 bg-blue-500 transition-all duration-300 z-0"
+              style={{ width: `calc(${(step / (steps.length - 1)) * 100}% - 1rem)` }}
+            />
+            {steps.map((_, i) => {
+              const isCompleted = i < step;
+              const isActive = i === step;
+
+              return (
+                <div key={i} className="relative z-10 flex items-center justify-center shrink-0 rounded-full bg-zinc-900">
+                  <div
+                    className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold transition-all duration-200 ${
+                      isActive
+                        ? 'bg-blue-600 text-white ring-4 ring-blue-500/20 border border-blue-400'
+                        : isCompleted
+                        ? 'bg-blue-500/20 text-blue-400 border border-blue-500/50'
+                        : 'bg-zinc-900 text-zinc-500 border border-zinc-700/60'
+                    }`}
+                  >
+                    {isCompleted ? <Check size={13} /> : i + 1}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -1,0 +1,62 @@
+{
+  "network": "sepolia",
+  "chainId": 11155111,
+  "version": "synq-deal-v2-standard",
+  "status": "standard-ready",
+  "deployedAt": "2026-10-03T03:14:28.451Z",
+  "deployer": "0xD2D4d415a4730b1490c9Ce27944529B83ff76319",
+  "contracts": {
+    "dealImplementation": "0x7E376b006Db7798165a6b8E6B191E20e791E4419",
+    "supersededDealImplementation": "0x2a3C8A880398FF6DD8e6F9976c8BE6C8aBef2435",
+    "factory": "0x9b7C5B529A420d015a85fD77040eF63b0e6cbdb0",
+    "primaryResolver": "0xd60bBCc7c8aCA633A6D158B6f7F7367E36207676",
+    "emergencyResolver": "0x5dcB412bA5f032Bc9095CDc95046168A076Ff952",
+    "supersededFactoryV1": "0x7482c3439Aa6065066c7759b87eeD25a403CbB03",
+    "supersededPrimaryResolverV1": "0x50Ee032d382B49A687EBDa08c5192fb7c5b9e392",
+    "supersededEmergencyResolverV1": "0x9F45E79288f1766553E88C45CD5B254CD4662854"
+  },
+  "assets": {
+    "canonicalUsdc": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+    "usdcDecimals": 6
+  },
+  "governance": {
+    "factoryOwner": "0xD2D4d415a4730b1490c9Ce27944529B83ff76319",
+    "primaryCommittee": {
+      "address": "0xd60bBCc7c8aCA633A6D158B6f7F7367E36207676",
+      "signers": [
+        "0x6F270E8c6DE66fB53A97e59E3e89E2A02290e7Fa",
+        "0x17Cd3B3B214191805EB92BaA31518c7Ea76078b3",
+        "0x0491C59AdC81774dEeaB0777dC9eCEB1ea882f34"
+      ],
+      "threshold": 2,
+      "epoch": 0
+    },
+    "emergencyCommittee": {
+      "address": "0x5dcB412bA5f032Bc9095CDc95046168A076Ff952",
+      "signers": [
+        "0x90d2b8EB2ec109880D7f29474f1E323e156cc659",
+        "0xd0098BD613753d6d591fCc172108CE4bF314bCf7",
+        "0x8acB20e0a0E2c8a8327C8fCf8bc482C9BAa9772E"
+      ],
+      "threshold": 2,
+      "epoch": 0
+    }
+  },
+  "consent": {
+    "model": "EIP-712 DealProposal",
+    "eip712DomainName": "SynqFactoryV2",
+    "eip712DomainVersion": "1",
+    "directCreationDisabled": true
+  },
+  "protection": {
+    "enabled": false,
+    "module": null,
+    "policyId": null
+  },
+  "history": {
+    "v1Manifest": "deployments/sepolia-v1-standard.json",
+    "supersededDealImplementation": "0x2a3C8A880398FF6DD8e6F9976c8BE6C8aBef2435",
+    "historicalSmokeDeal1": "0x142Ee9d2b5B6758F4D00439f3583fDcB89309807",
+    "rotationReason": "Rotated dealImplementation in SynqFactoryV2 to SynqDealV1Sequential (0x7E376b006Db7798165a6b8E6B191E20e791E4419) for strict sequential milestone enforcement."
+  }
+}

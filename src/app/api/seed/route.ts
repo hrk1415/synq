@@ -1,6 +1,6 @@
-import { seedDatabase } from '@/lib/db';
-
 export async function POST() {
-  await seedDatabase();
-  return Response.json({ message: 'Database seeded successfully' });
+  return Response.json(
+    { error: 'Database seeding through this endpoint is no longer supported' },
+    { status: 410 },
+  );
 }

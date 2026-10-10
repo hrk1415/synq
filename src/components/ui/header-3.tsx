@@ -5,13 +5,11 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Zap,
   LayoutDashboard,
   Brain,
   Store,
   FileCheck,
-  ShieldCheck,
-  Wallet,
+  MessageSquare,
   ArrowLeftRight,
   Activity,
   User,
@@ -21,6 +19,7 @@ import {
   ChevronDown,
   Sparkles,
   ExternalLink,
+  Zap,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import WalletStatus from '@/components/layout/WalletStatus';
@@ -43,8 +42,7 @@ const defaultNavItems: NavItem[] = [
   { label: 'Agent Controller', href: '/agent-controller', icon: Zap, badge: 'AI' },
   { label: 'Deal Port', href: '/marketplace', icon: Store },
   { label: 'My Deals', href: '/deals', icon: FileCheck },
-  { label: 'Escrow', href: '/escrow', icon: ShieldCheck },
-  { label: 'ChatPay', href: '/chatpay', icon: Wallet },
+  { label: 'SynqChat', href: '/messages', icon: MessageSquare },
   { label: 'Swap', href: '/swap', icon: ArrowLeftRight },
   { label: 'Activity', href: '/activity', icon: Activity },
 ];
