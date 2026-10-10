@@ -1,6 +1,7 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from './schema';
+import { assertDatabaseAccessAllowed } from './guard';
 
 export type DbClient = ReturnType<typeof drizzle<typeof schema>>;
 
@@ -19,13 +20,9 @@ function createDbClient() {
   }
 
   const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) {
-    throw new Error(
-      'DATABASE_URL environment variable is missing. Please configure DATABASE_URL in your environment variables.'
-    );
-  }
+  assertDatabaseAccessAllowed(connectionString, { operation: 'application' });
 
-  const queryClient = postgres(connectionString, { max: 10, idle_timeout: 20 });
+  const queryClient = postgres(connectionString!, { max: 10, idle_timeout: 20 });
   const db = drizzle(queryClient, { schema });
 
   globalForDb.rawClient = queryClient;

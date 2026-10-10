@@ -20,8 +20,10 @@
 
 import { getAddress } from 'viem';
 import { getDb } from '@/db';
+import { isNotificationAllowed } from './notification-preferences-db';
 import {
   dealProposals,
+  dealEventsOutbox,
   conversations,
   messages,
   type DealProposalRow,
@@ -44,7 +46,7 @@ import {
   validateStandardV2UxRules,
 } from '@/lib/deals/v2';
 import { normalizeWallet } from '@/lib/utils';
-import { eq, and, or, inArray } from 'drizzle-orm';
+import { eq, and, or, inArray, isNotNull } from 'drizzle-orm';
 import { synqFactoryV2ABI } from '@/lib/contracts/abis';
 import { sepoliaPublicClient } from '@/lib/chain';
 import { canonicalizeConversationPair } from '@/lib/conversation-pair';
@@ -53,6 +55,11 @@ import {
   validateTrustedMessageData,
   type SynqDealProposalPayload,
 } from '@/lib/synq-message';
+import {
+  getDealOutboxRepository,
+  deriveOutboxEventId,
+  DealOutboxPersistenceError,
+} from '@/lib/deals/outbox-db';
 
 // ---------------------------------------------------------------------------
 // Error Types
@@ -547,11 +554,17 @@ export interface IDealProposalRepository {
   ): Promise<DealProposalRow | null>;
   getByDealAddress(dealAddress: string): Promise<DealProposalRow | null>;
   getByDealAddressesForParticipant(dealAddresses: string[], userWallet: string): Promise<DealProposalRow[]>;
+  getAcceptedDeals?(chainId?: number): Promise<DealProposalRow[]>;
   create(data: NewDealProposalRow): Promise<DealProposalRow>;
   updateStatus(
     proposalId: string,
     status: 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'CANCELLED' | 'EXPIRED',
-    terminalData?: { dealAddress?: string; txHash?: string; terminalType?: 'ACCEPTED' | 'DECLINED' | 'CANCELLED' },
+    terminalData?: {
+      dealAddress?: string;
+      txHash?: string;
+      terminalType?: 'ACCEPTED' | 'DECLINED' | 'CANCELLED';
+      deploymentBlock?: bigint | number | string;
+    },
   ): Promise<DealProposalRow | null>;
   createReceiptMessage(
     proposal: DealProposalRow,
@@ -628,16 +641,80 @@ export class DrizzleDealProposalRepository implements IDealProposalRepository {
     return rows;
   }
 
+  async getAcceptedDeals(chainId?: number): Promise<DealProposalRow[]> {
+    const db = getDb();
+    if (!db) return [];
+    const conditions = [
+      eq(dealProposals.cachedStatus, 'ACCEPTED'),
+      isNotNull(dealProposals.dealAddress),
+    ];
+    if (chainId) {
+      conditions.push(eq(dealProposals.chainId, chainId));
+    }
+    return db
+      .select()
+      .from(dealProposals)
+      .where(and(...conditions));
+  }
+
   async create(data: NewDealProposalRow): Promise<DealProposalRow> {
     const db = getDb();
-    const [created] = await db.insert(dealProposals).values(data).returning();
-    return created;
+    if (!db) {
+      throw new Error('Database connection unavailable');
+    }
+
+    return await db.transaction(async (tx) => {
+      const [created] = await tx.insert(dealProposals).values(data).returning();
+      if (!created) {
+        throw new Error('Failed to insert deal proposal');
+      }
+
+      const eventId = deriveOutboxEventId({
+        chainId: created.chainId,
+        dealId: created.proposalId,
+        event: 'proposal_received',
+        recipientWallet: created.freelancerWallet,
+      });
+
+      const allowed = await isNotificationAllowed(created.freelancerWallet, 'proposal_received');
+
+      await tx
+        .insert(dealEventsOutbox)
+        .values({
+          id: eventId,
+          chainId: created.chainId,
+          dealId: created.proposalId.toLowerCase(),
+          event: 'proposal_received',
+          recipientWallet: normalizeWallet(created.freelancerWallet),
+          payload: {
+            proposalId: created.proposalId,
+            clientWallet: created.clientWallet,
+            freelancerWallet: created.freelancerWallet,
+            title: created.title,
+            totalAmount: created.totalAmount.toString(),
+            createdAt: created.createdAt instanceof Date ? created.createdAt.toISOString() : String(created.createdAt),
+          },
+          origin: 'off_chain',
+          status: allowed ? 'pending' : 'skipped',
+          lastError: allowed ? null : 'Skipped at staging: recipient opted out of proposal_received notifications',
+          retryCount: 0,
+          createdAt: new Date(),
+        })
+        .onConflictDoNothing({ target: dealEventsOutbox.id });
+
+      return created;
+    });
   }
 
   async updateStatus(
     proposalId: string,
     status: 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'CANCELLED' | 'EXPIRED',
-    terminalData?: { dealAddress?: string; txHash?: string; terminalType?: 'ACCEPTED' | 'DECLINED' | 'CANCELLED' },
+    terminalData?: {
+      dealAddress?: string;
+      txHash?: string;
+      terminalType?: 'ACCEPTED' | 'DECLINED' | 'CANCELLED';
+      deploymentBlock?: bigint | number | string;
+    },
   ): Promise<DealProposalRow | null> {
     const db = getDb();
     const updates: Partial<NewDealProposalRow> & { updatedAt: Date } = {
@@ -646,6 +723,9 @@ export class DrizzleDealProposalRepository implements IDealProposalRepository {
     };
     if (terminalData?.dealAddress) {
       updates.dealAddress = normalizeWallet(terminalData.dealAddress);
+    }
+    if (terminalData?.deploymentBlock !== undefined) {
+      updates.deploymentBlock = String(terminalData.deploymentBlock);
     }
     if (terminalData?.terminalType === 'ACCEPTED' && terminalData.txHash) {
       updates.acceptedTxHash = terminalData.txHash;
@@ -816,6 +896,20 @@ export class InMemoryDealProposalRepository implements IDealProposalRepository {
     return results;
   }
 
+  async getAcceptedDeals(chainId?: number): Promise<DealProposalRow[]> {
+    const results: DealProposalRow[] = [];
+    for (const record of this.records.values()) {
+      if (
+        record.cachedStatus === 'ACCEPTED' &&
+        record.dealAddress &&
+        (!chainId || record.chainId === chainId)
+      ) {
+        results.push({ ...record });
+      }
+    }
+    return results;
+  }
+
   async create(data: NewDealProposalRow): Promise<DealProposalRow> {
     const now = new Date();
     const record: DealProposalRow = {
@@ -826,9 +920,46 @@ export class InMemoryDealProposalRepository implements IDealProposalRepository {
       declinedTxHash: data.declinedTxHash ?? null,
       cancelledTxHash: data.cancelledTxHash ?? null,
       cachedStatus: data.cachedStatus ?? 'PENDING',
+      deploymentBlock: data.deploymentBlock !== undefined && data.deploymentBlock !== null ? String(data.deploymentBlock) : null,
       createdAt: now,
       updatedAt: now,
     };
+
+    // Atomic outbox persistence in memory
+    try {
+      const outboxRepo = getDealOutboxRepository();
+      const eventId = deriveOutboxEventId({
+        chainId: record.chainId,
+        dealId: record.proposalId,
+        event: 'proposal_received',
+        recipientWallet: record.freelancerWallet,
+      });
+
+      // Enqueue to outbox before final commit to ensure failure rolls back proposal
+      await outboxRepo.enqueue({
+        id: eventId,
+        chainId: record.chainId,
+        dealId: record.proposalId,
+        event: 'proposal_received',
+        recipientWallet: record.freelancerWallet,
+        origin: 'off_chain',
+        payload: {
+          proposalId: record.proposalId,
+          clientWallet: record.clientWallet,
+          freelancerWallet: record.freelancerWallet,
+          title: record.title,
+          totalAmount: record.totalAmount.toString(),
+          createdAt: now.toISOString(),
+        },
+      });
+    } catch (err: any) {
+      if (err instanceof DealOutboxPersistenceError) {
+        // In-memory test environment without configured PostgreSQL: allow in-memory proposal
+      } else {
+        throw err;
+      }
+    }
+
     this.records.set(data.proposalId, record);
     return record;
   }
@@ -836,7 +967,12 @@ export class InMemoryDealProposalRepository implements IDealProposalRepository {
   async updateStatus(
     proposalId: string,
     status: 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'CANCELLED' | 'EXPIRED',
-    terminalData?: { dealAddress?: string; txHash?: string; terminalType?: 'ACCEPTED' | 'DECLINED' | 'CANCELLED' },
+    terminalData?: {
+      dealAddress?: string;
+      txHash?: string;
+      terminalType?: 'ACCEPTED' | 'DECLINED' | 'CANCELLED';
+      deploymentBlock?: bigint | number | string;
+    },
   ): Promise<DealProposalRow | null> {
     const existing = this.records.get(proposalId);
     if (!existing) return null;
@@ -844,6 +980,7 @@ export class InMemoryDealProposalRepository implements IDealProposalRepository {
       ...existing,
       cachedStatus: status,
       dealAddress: terminalData?.dealAddress ? normalizeWallet(terminalData.dealAddress) : existing.dealAddress,
+      deploymentBlock: terminalData?.deploymentBlock !== undefined ? String(terminalData.deploymentBlock) : existing.deploymentBlock ?? null,
       acceptedTxHash: terminalData?.terminalType === 'ACCEPTED' && terminalData.txHash ? terminalData.txHash : existing.acceptedTxHash,
       declinedTxHash: terminalData?.terminalType === 'DECLINED' && terminalData.txHash ? terminalData.txHash : existing.declinedTxHash,
       cancelledTxHash: terminalData?.terminalType === 'CANCELLED' && terminalData.txHash ? terminalData.txHash : existing.cancelledTxHash,
@@ -947,6 +1084,10 @@ export function setDealProposalRepository(repo: IDealProposalRepository) {
 
 export function resetDealProposalRepository() {
   activeRepo = new DrizzleDealProposalRepository();
+}
+
+export function getDealProposalRepository(): IDealProposalRepository {
+  return activeRepo;
 }
 
 export const defaultDealProposalRepository = activeRepo;

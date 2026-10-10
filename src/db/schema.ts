@@ -438,6 +438,7 @@ export const dealProposals = pgTable('deal_proposals', {
   cachedStatus: text('cached_status').default('PENDING').notNull(),
 
   dealAddress: text('deal_address'),
+  deploymentBlock: numeric('deployment_block', { precision: 78, scale: 0 }),
   acceptedTxHash: text('accepted_tx_hash'),
   declinedTxHash: text('declined_tx_hash'),
   cancelledTxHash: text('cancelled_tx_hash'),
@@ -450,6 +451,7 @@ export const dealProposals = pgTable('deal_proposals', {
   index('idx_deal_proposals_freelancer').on(table.freelancerWallet),
   index('idx_deal_proposals_deal_address').on(table.dealAddress),
   index('idx_deal_proposals_status').on(table.cachedStatus),
+  index('idx_deal_proposals_deployment_block').on(table.deploymentBlock),
   check('chk_deal_proposals_client_lower', sql`client_wallet = LOWER(client_wallet)`),
   check('chk_deal_proposals_freelancer_lower', sql`freelancer_wallet = LOWER(freelancer_wallet)`),
   check('chk_deal_proposals_factory_lower', sql`factory_address = LOWER(factory_address)`),
@@ -826,5 +828,208 @@ export const committeeResolutionSignatures = pgTable('committee_resolution_signa
 export type CommitteeResolutionSignatureRow = typeof committeeResolutionSignatures.$inferSelect;
 export type NewCommitteeResolutionSignatureRow = typeof committeeResolutionSignatures.$inferInsert;
 
+/**
+ * 19. DEAL NOTIFICATIONS TABLE (B.12.2.2 Hardening)
+ * Authoritative record of deal notifications dispatched, skipped, or failed.
+ * Provides durable idempotency & duplicate prevention across deal lifecycles.
+ */
+export const dealNotifications = pgTable('deal_notifications', {
+  id: text('id').primaryKey(),
+  dealId: text('deal_id').notNull(),
+  event: text('event').notNull(),
+  recipientWallet: text('recipient_wallet').notNull(),
+  recipientEmail: text('recipient_email'),
+  status: text('status').notNull(),
+  claimToken: text('claim_token'),
+  messageId: text('message_id'),
+  error: text('error'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('uq_deal_notifications_id').on(table.id),
+  index('idx_deal_notifications_deal').on(table.dealId),
+  index('idx_deal_notifications_status').on(table.status),
+  check('chk_deal_notifications_recipient_lower', sql`recipient_wallet = LOWER(recipient_wallet)`),
+]);
 
+export type DealNotificationRow = typeof dealNotifications.$inferSelect;
+export type NewDealNotificationRow = typeof dealNotifications.$inferInsert;
+
+/**
+ * 20. CHAIN SYNC CURSORS TABLE (Phase B.12.3 Foundation)
+ * Tracks durable blockchain block indexing cursors per scanner and network.
+ * Provides atomic cursor advancement, crash recovery, and reorg detection checkpoints.
+ */
+export const chainSyncCursors = pgTable('chain_sync_cursors', {
+  id: text('id').primaryKey(), // `${chainId}:${scannerId}`
+  chainId: integer('chain_id').notNull(),
+  scannerId: text('scanner_id').notNull(),
+  lastBlockNumber: numeric('last_block_number', { precision: 78, scale: 0 }).notNull(),
+  lastBlockHash: text('last_block_hash').notNull(),
+  isBootstrap: boolean('is_bootstrap').default(false).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('uq_chain_sync_cursors_chain_scanner').on(table.chainId, table.scannerId),
+  index('idx_chain_sync_cursors_scanner').on(table.scannerId),
+  check('chk_chain_sync_cursors_hash_lower', sql`last_block_hash = LOWER(last_block_hash)`),
+]);
+
+export type ChainSyncCursorRow = typeof chainSyncCursors.$inferSelect;
+export type NewChainSyncCursorRow = typeof chainSyncCursors.$inferInsert;
+
+/**
+ * 21. DEAL EVENTS OUTBOX TABLE (Phase B.12.3 Foundation)
+ * Authoritative off-chain transactional event outbox for deal proposals and asynchronous events.
+ * Enables atomic recording with proposal state changes and durable recovery.
+ */
+export type DealEventOutboxStatus = 'pending' | 'processing' | 'processed' | 'failed' | 'skipped' | 'cancelled';
+export type DealEventOutboxOrigin = 'on_chain' | 'off_chain';
+
+export const dealEventsOutbox = pgTable('deal_events_outbox', {
+  id: text('id').primaryKey(),
+  chainId: integer('chain_id').notNull(),
+  dealId: text('deal_id').notNull(),
+  event: text('event').notNull(),
+  recipientWallet: text('recipient_wallet').notNull(),
+  payload: jsonb('payload').notNull(),
+  status: text('status').$type<DealEventOutboxStatus>().default('pending').notNull(),
+  retryCount: integer('retry_count').default(0).notNull(),
+  claimToken: text('claim_token'),
+  claimedAt: timestamp('claimed_at', { withTimezone: true }),
+  nextRetryAt: timestamp('next_retry_at', { withTimezone: true }).defaultNow().notNull(),
+  lastError: text('last_error'),
+  origin: text('origin').$type<DealEventOutboxOrigin>().default('off_chain').notNull(),
+  blockNumber: numeric('block_number', { precision: 78, scale: 0 }),
+  blockHash: text('block_hash'),
+  txHash: text('tx_hash'),
+  logIndex: integer('log_index'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  processedAt: timestamp('processed_at', { withTimezone: true }),
+}, (table) => [
+  uniqueIndex('uq_deal_events_outbox_id').on(table.id),
+  index('idx_deal_events_outbox_status').on(table.status),
+  index('idx_deal_events_outbox_deal').on(table.dealId),
+  index('idx_deal_events_outbox_retry').on(table.status, table.nextRetryAt),
+  index('idx_deal_events_outbox_reorg').on(table.chainId, table.origin, table.blockNumber),
+  check('chk_deal_events_outbox_recipient_lower', sql`recipient_wallet = LOWER(recipient_wallet)`),
+  check('chk_deal_events_outbox_status_valid', sql`status IN ('pending', 'processing', 'processed', 'failed', 'skipped', 'cancelled')`),
+  check('chk_deal_events_outbox_origin_valid', sql`origin IN ('on_chain', 'off_chain')`),
+]);
+
+export type DealEventOutboxRow = typeof dealEventsOutbox.$inferSelect;
+export type NewDealEventOutboxRow = typeof dealEventsOutbox.$inferInsert;
+
+/**
+ * 22. TRACKED DEAL CONTRACTS TABLE (Phase B.12.3 Foundation)
+ * Durable registry of dynamically discovered deal clone instances.
+ * Guarantees cross-restart and serverless cold-start contract visibility.
+ */
+export type TrackedContractType = 'factory' | 'deal_v1' | 'deal_v2';
+
+export const trackedDealContracts = pgTable('tracked_deal_contracts', {
+  id: text('id').primaryKey(), // `${chainId}:${contractAddress.toLowerCase()}`
+  chainId: integer('chain_id').notNull(),
+  contractAddress: text('contract_address').notNull(),
+  contractType: text('contract_type').$type<TrackedContractType>().notNull(),
+  factoryAddress: text('factory_address'),
+  deploymentBlock: numeric('deployment_block', { precision: 78, scale: 0 }).notNull(),
+  discoveryTxHash: text('discovery_tx_hash'),
+  discoveryLogIndex: integer('discovery_log_index'),
+  buyerWallet: text('buyer_wallet'),
+  sellerWallet: text('seller_wallet'),
+  metadata: jsonb('metadata'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('uq_tracked_deal_contracts_chain_addr').on(table.chainId, table.contractAddress),
+  index('idx_tracked_deal_contracts_chain_type').on(table.chainId, table.contractType),
+  index('idx_tracked_deal_contracts_block').on(table.deploymentBlock),
+  check('chk_tracked_contracts_addr_lower', sql`contract_address = LOWER(contract_address)`),
+  check('chk_tracked_contracts_type_valid', sql`contract_type IN ('factory', 'deal_v1', 'deal_v2')`),
+]);
+
+export type TrackedDealContractRow = typeof trackedDealContracts.$inferSelect;
+export type NewTrackedDealContractRow = typeof trackedDealContracts.$inferInsert;
+
+/**
+ * 23. DEAL REPLAY JOBS TABLE (B.12.3.22 Durable Historical Deal Replay)
+ * PostgreSQL-backed durable replay queue for deal contracts discovered behind an advanced scanner cursor.
+ * Tracks deterministic progress, worker leases, retries, and contract ABI generations.
+ */
+export type DealReplayJobStatus = 'pending' | 'processing' | 'completed' | 'failed';
+export type DealReplayGeneration = 'v2' | 'v1' | 'legacy';
+export type DealReplayContractType = 'deal_v1' | 'deal_v2';
+
+export const dealReplayJobs = pgTable('deal_replay_jobs', {
+  id: text('id').primaryKey(), // `${chainId}:${contractAddress.toLowerCase()}`
+  chainId: integer('chain_id').notNull(),
+  contractAddress: text('contract_address').notNull(),
+  contractType: text('contract_type').$type<DealReplayContractType>().notNull(),
+  generation: text('generation').$type<DealReplayGeneration>().notNull(),
+  fromBlock: numeric('from_block', { precision: 78, scale: 0 }).notNull(),
+  toBlock: numeric('to_block', { precision: 78, scale: 0 }).notNull(),
+  lastProcessedBlock: numeric('last_processed_block', { precision: 78, scale: 0 }),
+  status: text('status').$type<DealReplayJobStatus>().default('pending').notNull(),
+  retryCount: integer('retry_count').default(0).notNull(),
+  maxRetries: integer('max_retries').default(5).notNull(),
+  claimToken: text('claim_token'),
+  claimExpiresAt: timestamp('claim_expires_at', { withTimezone: true }),
+  lastError: text('last_error'),
+  nextRetryAt: timestamp('next_retry_at', { withTimezone: true }).defaultNow().notNull(),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('uq_deal_replay_jobs_chain_contract').on(table.chainId, table.contractAddress),
+  index('idx_deal_replay_jobs_status_retry').on(table.status, table.nextRetryAt),
+  index('idx_deal_replay_jobs_contract').on(table.chainId, table.contractAddress),
+  check('chk_deal_replay_jobs_addr_lower', sql`contract_address = LOWER(contract_address)`),
+  check('chk_deal_replay_jobs_status_valid', sql`status IN ('pending', 'processing', 'completed', 'failed')`),
+  check('chk_deal_replay_jobs_generation_valid', sql`generation IN ('v2', 'v1', 'legacy')`),
+  check('chk_deal_replay_jobs_type_valid', sql`contract_type IN ('deal_v1', 'deal_v2')`),
+]);
+
+export type DealReplayJobRow = typeof dealReplayJobs.$inferSelect;
+export type NewDealReplayJobRow = typeof dealReplayJobs.$inferInsert;
+
+/**
+ * 24. NOTIFICATION PREFERENCES TABLE (B.12.3.26)
+ * Wallet-scoped notification delivery preferences for deal lifecycle events.
+ * Sensible defaults: all categories default to true.
+ */
+export const notificationPreferences = pgTable('notification_preferences', {
+  walletAddress: text('wallet_address').primaryKey(),
+  dealProposalsAndConfirmations: boolean('deal_proposals_and_confirmations').default(true).notNull(),
+  milestoneSubmissionsAndRevisions: boolean('milestone_submissions_and_revisions').default(true).notNull(),
+  paymentsAndCompletions: boolean('payments_and_completions').default(true).notNull(),
+  disputesAndResolutions: boolean('disputes_and_resolutions').default(true).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  check('chk_notif_pref_wallet_lower', sql`wallet_address = LOWER(wallet_address)`),
+]);
+
+export type NotificationPreferencesRow = typeof notificationPreferences.$inferSelect;
+export type NewNotificationPreferencesRow = typeof notificationPreferences.$inferInsert;
+
+/**
+ * 25. OTP RATE LIMITS TABLE (B.12.3.27)
+ * Durable tracking of verification code requests across email and wallet boundaries.
+ * Prevents direct API bypass, session resetting, and brute-force email spamming.
+ */
+export const otpRateLimits = pgTable('otp_rate_limits', {
+  key: text('key').primaryKey(), // "email:<normalized>" or "wallet:<normalized>"
+  lastRequestedAt: timestamp('last_requested_at', { withTimezone: true }).notNull(),
+  requestCount: integer('request_count').default(1).notNull(),
+  windowStart: timestamp('window_start', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  check('chk_otp_rate_limits_key_lower', sql`key = LOWER(key)`),
+]);
+
+export type OtpRateLimitRow = typeof otpRateLimits.$inferSelect;
+export type NewOtpRateLimitRow = typeof otpRateLimits.$inferInsert;
 

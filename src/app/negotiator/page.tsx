@@ -380,16 +380,12 @@ function NegotiatorContent() {
     };
   }, [draftState, identitiesMap, namesMap, avatarsMap]);
 
-  const [pendingSellerWallet, setPendingSellerWallet] = useState('');
-  const [pendingDeal, setPendingDeal] = useState<{ title: string; amount: string }>({ title: 'Negotiated Deal', amount: '' });
-
   // In-memory concurrency and wallet privacy refs
   const currentWalletRef = useRef<string | null>(null);
   const sessionGenerationRef = useRef<number>(0);
   const activeConversationIdRef = useRef<string | null>(null);
   const deletedConvIdsRef = useRef<Set<string>>(new Set());
 
-  const notifiedRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const skipSmoothScrollRef = useRef(false);
@@ -710,28 +706,6 @@ function NegotiatorContent() {
       }
     }
   };
-
-  useEffect(() => {
-    if (accepted && !notifiedRef.current) {
-      notifiedRef.current = true;
-      void ensureAuthenticated()
-        .then((token) => fetch('/api/notify', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            event: 'deal_confirmed',
-            recipientWallet: pendingSellerWallet,
-            recipientName: 'seller',
-            dealTitle: pendingDeal.title,
-            dealAmount: pendingDeal.amount,
-          }),
-        }))
-        .catch(() => {});
-    }
-  }, [accepted, pendingSellerWallet, pendingDeal, ensureAuthenticated]);
 
   const requestAiResponse = async (
     convId: string,

@@ -153,6 +153,15 @@ function mapMilestoneVerification(r: any) {
 // ---------------------------------------------------------------------------
 
 export async function getAll(collection: string): Promise<any[]> {
+  if (process.env.NODE_ENV !== 'production') {
+    if (collection === 'users' && _testUsersList) {
+      return _testUsersList();
+    }
+    if (collection === 'verifications' && _testVerificationsStore) {
+      return Array.from(_testVerificationsStore.values());
+    }
+  }
+
   const db = getDb();
 
   switch (collection) {
@@ -189,7 +198,36 @@ export async function getAll(collection: string): Promise<any[]> {
   }
 }
 
+let _testUserLookup: ((wallet: string) => Promise<any | null>) | null = null;
+let _testUsersList: (() => Promise<any[]>) | null = null;
+let _testVerificationsStore: Map<string, any> | null = null;
+
+export function setTestUserLookup(fn: ((wallet: string) => Promise<any | null>) | null) {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('Test user lookup hook is prohibited in production environment');
+  }
+  _testUserLookup = fn;
+}
+
+export function setTestUsersList(fn: (() => Promise<any[]>) | null) {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('Test users list hook is prohibited in production environment');
+  }
+  _testUsersList = fn;
+}
+
+export function setTestVerificationsStore(store: Map<string, any> | null) {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('Test verifications store hook is prohibited in production environment');
+  }
+  _testVerificationsStore = store;
+}
+
 export async function getById(collection: string, id: string): Promise<any | null> {
+  if (process.env.NODE_ENV !== 'production' && collection === 'users' && _testUserLookup) {
+    return _testUserLookup(id);
+  }
+
   const db = getDb();
 
   switch (collection) {
@@ -590,6 +628,14 @@ export async function createCanonicalPaymentReceiptMessage(data: {
 }
 
 export async function create(collection: string, data: any): Promise<any> {
+  if (process.env.NODE_ENV !== 'production') {
+    if (collection === 'verifications' && _testVerificationsStore) {
+      const item = { ...data, id: data.id || genId(collection) };
+      _testVerificationsStore.set(item.id, item);
+      return item;
+    }
+  }
+
   const db = getDb();
   const id = data.id || genId(collection);
   const now = new Date();
@@ -780,6 +826,15 @@ export async function create(collection: string, data: any): Promise<any> {
 }
 
 export async function update(collection: string, id: string, data: any): Promise<any | null> {
+  if (process.env.NODE_ENV !== 'production') {
+    if (collection === 'verifications' && _testVerificationsStore) {
+      const existing = _testVerificationsStore.get(id) || {};
+      const updated = { ...existing, ...data };
+      _testVerificationsStore.set(id, updated);
+      return updated;
+    }
+  }
+
   const db = getDb();
   const now = new Date();
 
@@ -921,6 +976,12 @@ export async function update(collection: string, id: string, data: any): Promise
 }
 
 export async function remove(collection: string, id: string): Promise<boolean> {
+  if (process.env.NODE_ENV !== 'production') {
+    if (collection === 'verifications' && _testVerificationsStore) {
+      return _testVerificationsStore.delete(id);
+    }
+  }
+
   const db = getDb();
 
   switch (collection) {

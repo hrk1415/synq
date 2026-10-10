@@ -184,6 +184,7 @@ function LegacyDealDetailView({ dealAddress }: { dealAddress: `0x${string}` }) {
       cancelHashRef.current = null;
       void sendNotification({
         event: 'deal_cancelled',
+        dealId: rawDealAddress || dealAddress,
         recipientWallet: recipient,
         recipientName: role,
         dealTitle: String(deal.title || ''),
@@ -521,6 +522,9 @@ function LegacyDealDetailView({ dealAddress }: { dealAddress: `0x${string}` }) {
       setSubmitPending(false);
       void sendNotification({
         event: 'work_submitted',
+        dealId: rawDealAddress || dealAddress,
+        milestone: submitMeta.milestone,
+        txHash: hash,
         recipientWallet: submitMeta.buyer,
         recipientName: 'buyer',
         dealTitle: submitMeta.title,
@@ -529,7 +533,7 @@ function LegacyDealDetailView({ dealAddress }: { dealAddress: `0x${string}` }) {
         note: `Milestone ${submitMeta.milestone + 1}`,
       });
     }
-  }, [submitPending, submitAfterHash, submitMeta, deal.txReceipt.isSuccess, deal.txReceipt.data, sendNotification]);
+  }, [submitPending, submitAfterHash, submitMeta, deal.txReceipt.isSuccess, deal.txReceipt.data, sendNotification, rawDealAddress, dealAddress]);
 
   useEffect(() => {
     if (!approvePending || !deal.txReceipt.isSuccess) return;
@@ -539,6 +543,9 @@ function LegacyDealDetailView({ dealAddress }: { dealAddress: `0x${string}` }) {
 
     void sendNotification({
       event: 'payment_released',
+      dealId: rawDealAddress || dealAddress,
+      milestone: approveMeta.milestone,
+      txHash: hash,
       recipientWallet: approveMeta.seller,
       recipientName: 'seller',
       dealTitle: approveMeta.dealTitle,
@@ -549,6 +556,8 @@ function LegacyDealDetailView({ dealAddress }: { dealAddress: `0x${string}` }) {
     if (approveMeta.completesDeal) {
       void sendNotification({
         event: 'deal_completed',
+        dealId: rawDealAddress || dealAddress,
+        txHash: hash,
         recipientWallet: approveMeta.buyer,
         recipientName: 'buyer',
         dealTitle: approveMeta.dealTitle,
@@ -556,13 +565,15 @@ function LegacyDealDetailView({ dealAddress }: { dealAddress: `0x${string}` }) {
       });
       void sendNotification({
         event: 'deal_completed_seller',
+        dealId: rawDealAddress || dealAddress,
+        txHash: hash,
         recipientWallet: approveMeta.seller,
         recipientName: 'seller',
         dealTitle: approveMeta.dealTitle,
         dealAmount: approveMeta.dealAmount,
       });
     }
-  }, [approvePending, approveAfterHash, approveMeta, deal.txReceipt.isSuccess, deal.txReceipt.data, sendNotification]);
+  }, [approvePending, approveAfterHash, approveMeta, deal.txReceipt.isSuccess, deal.txReceipt.data, sendNotification, rawDealAddress, dealAddress]);
 
   useEffect(() => {
     msList.forEach((milestone: any, index: number) => {

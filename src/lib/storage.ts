@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { assertStorageAccessAllowed } from '../db/guard';
 
 let storageClient: SupabaseClient | null = null;
 
@@ -14,6 +15,8 @@ function storageConfig() {
   if (!url || !serviceRoleKey || !bucket) {
     throw new Error('SynqChat attachment storage is not configured');
   }
+
+  assertStorageAccessAllowed(url, serviceRoleKey, { operation: 'storage' });
 
   let parsedUrl: URL | null = null;
   try { parsedUrl = new URL(url); } catch { /* reported structurally below */ }

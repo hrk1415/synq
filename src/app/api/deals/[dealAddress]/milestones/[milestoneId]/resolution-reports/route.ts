@@ -64,6 +64,34 @@ export async function POST(req: NextRequest, context: RouteContext) {
       evidenceReferences,
     });
 
+    try {
+      const { getDealOutboxRepository } = await import('@/lib/deals/outbox-db');
+      const { SEPOLIA_CHAIN_ID } = await import('@/lib/contracts/addresses');
+      const { readStandardV2DealData } = await import('@/lib/deals/v2-deal');
+      const { sepoliaPublicClient } = await import('@/lib/chain');
+      const dealData = await readStandardV2DealData(rawDealAddress as `0x${string}`, sepoliaPublicClient).catch(() => null);
+      if (dealData) {
+        const outboxRepo = getDealOutboxRepository();
+        for (const recipient of [dealData.client, dealData.freelancer]) {
+          const eventId = `outbox:${SEPOLIA_CHAIN_ID}:${rawDealAddress.toLowerCase()}:resolution_report_filed:${recipient.toLowerCase()}:${phase}:${result.justificationHash}`;
+          await outboxRepo.enqueue({
+            id: eventId,
+            chainId: SEPOLIA_CHAIN_ID,
+            dealId: rawDealAddress,
+            event: 'resolution_report_filed',
+            recipientWallet: recipient,
+            payload: {
+              dealId: rawDealAddress,
+              milestoneIndex: milestoneId,
+              phase,
+            },
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[resolution-reports] Outbox enqueue warning:', e);
+    }
+
     return NextResponse.json(
       {
         success: true,

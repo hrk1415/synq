@@ -62,6 +62,29 @@ export async function POST(req: NextRequest, context: RouteContext) {
       signature: signature as `0x${string}`,
     });
 
+    try {
+      const { getDealOutboxRepository } = await import('@/lib/deals/outbox-db');
+      const { SEPOLIA_CHAIN_ID } = await import('@/lib/contracts/addresses');
+      const outboxRepo = getDealOutboxRepository();
+      const eventId = `outbox:${SEPOLIA_CHAIN_ID}:${rawDealAddress.toLowerCase()}:mutual_settlement_proposed:${proposal.counterpartyWallet.toLowerCase()}:${proposal.proposalNonce}`;
+      await outboxRepo.enqueue({
+        id: eventId,
+        chainId: SEPOLIA_CHAIN_ID,
+        dealId: rawDealAddress,
+        event: 'mutual_settlement_proposed',
+        recipientWallet: proposal.counterpartyWallet,
+        payload: {
+          dealId: rawDealAddress,
+          milestoneIndex: milestoneId,
+          proposerWallet: authWallet,
+          freelancerAmount,
+          clientAmount,
+        },
+      });
+    } catch (e) {
+      console.warn('[settlements] Outbox enqueue warning:', e);
+    }
+
     return NextResponse.json(
       {
         success: true,

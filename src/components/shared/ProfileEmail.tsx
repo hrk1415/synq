@@ -27,6 +27,15 @@ export default function ProfileEmail({
   const [busy, setBusy] = useState(false);
   const [info, setInfo] = useState('');
   const [error, setError] = useState('');
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const interval = setInterval(() => {
+      setResendCooldown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [resendCooldown]);
 
   const refresh = useCallback(() => {
     if (!address) { setEmail(null); onEmailChange?.(null); return; }
@@ -55,7 +64,7 @@ export default function ProfileEmail({
 
   useEffect(() => {
     const cleanup = refresh();
-    setMode('view'); setCode(''); setInfo(''); setError('');
+    setMode('view'); setCode(''); setInfo(''); setError(''); setResendCooldown(0);
     return cleanup;
   }, [refresh]);
 
@@ -75,7 +84,7 @@ export default function ProfileEmail({
       });
       const d = await res.json();
       if (!res.ok) setError(d.error || 'Could not send the code.');
-      else { setInfo(d.message || 'Code sent.'); setMode('code'); }
+      else { setInfo(d.message || 'Code sent.'); setMode('code'); setResendCooldown(60); }
     } catch (err: any) {
       setError(err?.message || 'Network error. Try again.');
     }
@@ -234,7 +243,17 @@ export default function ProfileEmail({
             <Button type="button" size="sm" onClick={verify} disabled={busy || code.length !== 6} className="gap-1.5">
               {busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Verify &amp; link
             </Button>
-            <Button type="button" size="sm" variant="ghost" onClick={() => { setMode('email'); setCode(''); }}>Back</Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={requestCode}
+              disabled={busy || resendCooldown > 0}
+              className="text-xs text-zinc-300 disabled:text-zinc-600"
+            >
+              {resendCooldown > 0 ? `Resend (${resendCooldown}s)` : 'Resend'}
+            </Button>
+            <Button type="button" size="sm" variant="ghost" onClick={() => { setMode('email'); setCode(''); setResendCooldown(0); }}>Back</Button>
           </div>
         </div>
       )}

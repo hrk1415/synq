@@ -37,6 +37,7 @@ import { formatUnits } from 'viem';
 import { shortenAddress } from '@/lib/utils';
 import { Avatar } from '@/components/shared/Avatar';
 import ProfileEmail from '@/components/shared/ProfileEmail';
+import NotificationSettingsSection from '@/components/shared/NotificationSettingsSection';
 import { ChainGuard } from '@/components/shared/ChainGuard';
 import { resizeImageToDataUrl } from '@/lib/image';
 import { ProviderProfileModal } from '@/components/marketplace/ProviderProfileModal';
@@ -1165,17 +1166,23 @@ export default function SettingsPage() {
                     </button>
                   )}
                 </div>
-                <div
-                  className="flex items-center gap-1.5 min-w-0 max-w-[220px] sm:max-w-[280px]"
-                  title="Private email"
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('synq:open-email-bind'));
+                    }
+                  }}
+                  className="flex items-center gap-1.5 min-w-0 max-w-[220px] sm:max-w-[280px] text-left hover:opacity-80 transition-opacity group"
+                  title={linkedEmail ? 'Manage notification email' : 'Connect email for deal notifications'}
                 >
-                  <Mail size={13} className={`shrink-0 ${linkedEmail ? 'text-zinc-400' : 'text-zinc-500'}`} />
+                  <Mail size={13} className={`shrink-0 ${linkedEmail ? 'text-emerald-400' : 'text-blue-400'}`} />
                   {linkedEmail ? (
-                    <span className="text-zinc-300 truncate font-mono">{linkedEmail}</span>
+                    <span className="text-zinc-300 truncate font-mono group-hover:text-white transition-colors">{linkedEmail}</span>
                   ) : (
-                    <span className="text-zinc-500 truncate">No email connected</span>
+                    <span className="text-blue-400 truncate text-xs font-medium hover:underline underline-offset-2">Link notification email</span>
                   )}
-                </div>
+                </button>
               </div>
             </div>
           </div>
@@ -1300,6 +1307,13 @@ export default function SettingsPage() {
             </div>
           )}
         </div>
+
+        <Separator className="bg-zinc-800/80" />
+
+        {/* ==================================================
+            EMAIL & NOTIFICATION PREFERENCES (B.12.3.26)
+        ================================================== */}
+        <NotificationSettingsSection address={address} onEmailChange={setLinkedEmail} />
 
         <Separator className="bg-zinc-800/80" />
 

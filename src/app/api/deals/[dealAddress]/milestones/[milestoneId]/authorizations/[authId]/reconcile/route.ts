@@ -49,6 +49,37 @@ export async function POST(req: NextRequest, context: RouteContext) {
       txHash,
     });
 
+    try {
+      const { getDealOutboxRepository } = await import('@/lib/deals/outbox-db');
+      const { SEPOLIA_CHAIN_ID } = await import('@/lib/contracts/addresses');
+      const { readStandardV2DealData } = await import('@/lib/deals/v2-deal');
+      const { sepoliaPublicClient } = await import('@/lib/chain');
+      const dealAddress = result.authorization.dealAddress;
+      const milestoneIndex = result.authorization.milestoneId;
+      const dealData = await readStandardV2DealData(dealAddress as `0x${string}`, sepoliaPublicClient).catch(() => null);
+      if (dealData) {
+        const outboxRepo = getDealOutboxRepository();
+        for (const recipient of [dealData.client, dealData.freelancer]) {
+          const eventId = `outbox:${SEPOLIA_CHAIN_ID}:${dealAddress.toLowerCase()}:resolution_finalized:${recipient.toLowerCase()}:${authId}`;
+          await outboxRepo.enqueue({
+            id: eventId,
+            chainId: SEPOLIA_CHAIN_ID,
+            dealId: dealAddress,
+            event: 'resolution_finalized',
+            recipientWallet: recipient,
+            payload: {
+              dealId: dealAddress,
+              milestoneIndex,
+              authorizationId: authId,
+              txHash: result.executionTxHash,
+            },
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[authorizations/reconcile] Outbox enqueue warning:', e);
+    }
+
     return NextResponse.json(
       {
         success: true,

@@ -55,6 +55,32 @@ export async function POST(req: NextRequest, context: RouteContext) {
       txHash,
     });
 
+    try {
+      const { getDealOutboxRepository } = await import('@/lib/deals/outbox-db');
+      const { SEPOLIA_CHAIN_ID } = await import('@/lib/contracts/addresses');
+      const outboxRepo = getDealOutboxRepository();
+      // Notify both participants of executed mutual settlement
+      for (const recipient of [proposal.proposerWallet, proposal.counterpartyWallet]) {
+        const eventId = `outbox:${SEPOLIA_CHAIN_ID}:${rawDealAddress.toLowerCase()}:mutual_settlement_executed:${recipient.toLowerCase()}:${proposal.proposalNonce}`;
+        await outboxRepo.enqueue({
+          id: eventId,
+          chainId: SEPOLIA_CHAIN_ID,
+          dealId: rawDealAddress,
+          event: 'mutual_settlement_executed',
+          recipientWallet: recipient,
+          payload: {
+            dealId: rawDealAddress,
+            milestoneIndex: milestoneId,
+            freelancerAmount: proposal.freelancerAmount,
+            clientAmount: proposal.clientAmount,
+            txHash,
+          },
+        });
+      }
+    } catch (e) {
+      console.warn('[settlements/reconcile] Outbox enqueue warning:', e);
+    }
+
     return NextResponse.json(
       {
         success: true,

@@ -269,6 +269,7 @@ export async function reconcileProposalWithReceipt(
     dealAddress: verified.dealAddress,
     txHash: verified.txHash,
     terminalType: verified.status,
+    deploymentBlock: verified.blockNumber,
   });
 
   if (!updated) {

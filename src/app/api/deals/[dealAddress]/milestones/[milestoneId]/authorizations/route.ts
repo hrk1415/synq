@@ -57,6 +57,58 @@ export async function POST(req: NextRequest, context: RouteContext) {
       validUntilSeconds: body?.validUntilSeconds,
     });
 
+    try {
+      const { getDealOutboxRepository } = await import('@/lib/deals/outbox-db');
+      const { SEPOLIA_CHAIN_ID } = await import('@/lib/contracts/addresses');
+      const { synqResolutionCommitteeReadABI } = await import('@/lib/deals/v2-resolution-report');
+      const { sepoliaPublicClient } = await import('@/lib/chain');
+
+      const committeeAddress = result.authorization.committeeAddress as `0x${string}`;
+      let committeeSigners: readonly string[] = [];
+      try {
+        const fetched = await sepoliaPublicClient.readContract({
+          address: committeeAddress,
+          abi: synqResolutionCommitteeReadABI,
+          functionName: 'getSigners',
+        }) as readonly string[];
+        if (Array.isArray(fetched)) {
+          committeeSigners = fetched;
+        }
+      } catch {
+        // Fallback for offline environments or testing
+        if (Array.isArray(body?.committeeSigners)) {
+          committeeSigners = body.committeeSigners;
+        }
+      }
+
+      // Notify other committee signers whose cryptographic signatures are needed
+      const signersToNotify = committeeSigners.filter(
+        (s) => typeof s === 'string' && s.toLowerCase() !== authWallet.toLowerCase(),
+      );
+
+      if (signersToNotify.length > 0) {
+        const outboxRepo = getDealOutboxRepository();
+        for (const recipient of signersToNotify) {
+          const eventId = `outbox:${SEPOLIA_CHAIN_ID}:${rawDealAddress.toLowerCase()}:committee_auth_requested:${recipient.toLowerCase()}:${result.authorization.id}`;
+          await outboxRepo.enqueue({
+            id: eventId,
+            chainId: SEPOLIA_CHAIN_ID,
+            dealId: rawDealAddress,
+            event: 'committee_authorization_requested',
+            recipientWallet: recipient,
+            payload: {
+              dealId: rawDealAddress,
+              milestoneIndex: milestoneId,
+              authorizationId: result.authorization.id,
+              note: `Authorization ID: ${result.authorization.id}`,
+            },
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[authorizations] Outbox enqueue warning:', e);
+    }
+
     return NextResponse.json(
       {
         success: true,

@@ -11,6 +11,12 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
+    "db:staging:check": "npx tsx scripts/staging-check.ts",
+    "db:staging:ping": "npx tsx scripts/staging-ping.ts",
+    "db:staging:migrate": "npx tsx scripts/staging-migrate.ts",
+    "staging:services:check": "npx tsx scripts/staging-services-check.ts",
+    "staging:storage:verify": "npx tsx scripts/staging-storage-verify.ts",
+    "staging:dev": "npx tsx scripts/staging-dev.ts",
     "db:import-legacy": "npx tsx scripts/migrate-db-json.ts",
     "db:verify-import": "npx tsx scripts/verify-postgres-import.ts"
   },

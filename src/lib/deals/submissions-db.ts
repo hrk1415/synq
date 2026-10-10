@@ -17,7 +17,7 @@ import {
   EvidenceValidationError,
 } from '@/lib/deals/v2-evidence';
 import { sepoliaPublicClient } from '@/lib/chain';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, desc } from 'drizzle-orm';
 
 export class SubmissionValidationError extends Error {
   constructor(message: string) {
@@ -79,6 +79,12 @@ export interface IMilestoneSubmissionRepository {
       updatedAt: Date;
     }
   ): Promise<MilestoneSubmissionRow>;
+
+  getLatestConfirmed(
+    dealAddress: string,
+    freelancerWallet: string,
+    milestoneId?: number,
+  ): Promise<MilestoneSubmissionRow | null>;
 }
 
 export class DrizzleMilestoneSubmissionRepository implements IMilestoneSubmissionRepository {
@@ -146,6 +152,33 @@ export class DrizzleMilestoneSubmissionRepository implements IMilestoneSubmissio
       .where(eq(milestoneSubmissions.id, id))
       .returning();
     return updated[0];
+  }
+
+  async getLatestConfirmed(
+    dealAddress: string,
+    freelancerWallet: string,
+    milestoneId?: number,
+  ): Promise<MilestoneSubmissionRow | null> {
+    try {
+      const db = getDb();
+      const conditions = [
+        eq(milestoneSubmissions.dealAddress, dealAddress.toLowerCase()),
+        eq(milestoneSubmissions.freelancerWallet, freelancerWallet.toLowerCase()),
+        eq(milestoneSubmissions.status, 'confirmed'),
+      ];
+      if (milestoneId !== undefined) {
+        conditions.push(eq(milestoneSubmissions.milestoneId, milestoneId));
+      }
+      const rows = await db
+        .select()
+        .from(milestoneSubmissions)
+        .where(and(...conditions))
+        .orderBy(desc(milestoneSubmissions.version))
+        .limit(1);
+      return rows[0] ?? null;
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -244,9 +277,35 @@ export class InMemoryMilestoneSubmissionRepository implements IMilestoneSubmissi
   clear() {
     this.records.clear();
   }
+
+  async getLatestConfirmed(
+    dealAddress: string,
+    freelancerWallet: string,
+    milestoneId?: number,
+  ): Promise<MilestoneSubmissionRow | null> {
+    const normDeal = dealAddress.toLowerCase();
+    const normFreelancer = freelancerWallet.toLowerCase();
+    const matching: MilestoneSubmissionRow[] = [];
+    for (const record of this.records.values()) {
+      if (
+        record.dealAddress.toLowerCase() === normDeal &&
+        record.freelancerWallet.toLowerCase() === normFreelancer &&
+        record.status === 'confirmed' &&
+        (milestoneId === undefined || record.milestoneId === milestoneId)
+      ) {
+        matching.push(record);
+      }
+    }
+    matching.sort((a, b) => b.version - a.version);
+    return matching[0] ?? null;
+  }
 }
 
 let activeSubmissionRepo: IMilestoneSubmissionRepository = new DrizzleMilestoneSubmissionRepository();
+
+export function getMilestoneSubmissionRepository(): IMilestoneSubmissionRepository {
+  return activeSubmissionRepo;
+}
 
 export function setMilestoneSubmissionRepository(repo: IMilestoneSubmissionRepository) {
   activeSubmissionRepo = repo;

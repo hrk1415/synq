@@ -107,6 +107,14 @@ export async function POST(req: NextRequest) {
       console.error('[POST /api/deals/proposals] SynqChat receipt delivery error:', deliveryErr);
     }
 
+    // 7b. Deliver automatic email notification to freelancer (proposal_received)
+    try {
+      const { dispatchProposalCreatedNotification } = await import('@/lib/deals/deal-lifecycle-notifications');
+      await dispatchProposalCreatedNotification(created);
+    } catch (notifErr: any) {
+      console.warn('[POST /api/deals/proposals] Notification dispatch warning:', notifErr?.message || notifErr);
+    }
+
     // 8. Return 201 Created with sanitized decimal-string proposal
     return NextResponse.json(
       {

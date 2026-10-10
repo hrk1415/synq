@@ -50,6 +50,16 @@ export async function POST(req: NextRequest, context: RouteContext) {
     // 4. Reconcile proposal lifecycle state against verified on-chain receipt
     const result = await reconcileProposalWithReceipt(proposalId, txHash.trim(), authWallet);
 
+    // 4b. If proposal was newly transitioned to ACCEPTED, dispatch deal_confirmed email
+    if (result.status === 'ACCEPTED' && !result.alreadyReconciled) {
+      try {
+        const { dispatchProposalAcceptedNotification } = await import('@/lib/deals/deal-lifecycle-notifications');
+        await dispatchProposalAcceptedNotification(result.proposal, result.dealAddress, txHash.trim());
+      } catch (notifErr: any) {
+        console.warn('[POST /api/deals/proposals/reconcile] deal_confirmed dispatch warning:', notifErr?.message || notifErr);
+      }
+    }
+
     return NextResponse.json(
       {
         proposal: serializeDealProposal(result.proposal),

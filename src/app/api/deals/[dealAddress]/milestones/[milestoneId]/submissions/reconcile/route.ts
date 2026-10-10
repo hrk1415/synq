@@ -57,6 +57,37 @@ export async function POST(req: NextRequest, context: RouteContext) {
       txHash,
     });
 
+    // Dispatch work_submitted email to client
+    if (result.submission && result.submission.status === 'confirmed') {
+      try {
+        const { readStandardV2DealData } = await import('@/lib/deals/v2-deal');
+        const { sepoliaPublicClient } = await import('@/lib/chain');
+        const { getDealProposalByDealAddress } = await import('@/lib/deals/proposals-db');
+
+        const deal = await readStandardV2DealData(rawDealAddress.toLowerCase() as `0x${string}`, sepoliaPublicClient);
+        const proposal = await getDealProposalByDealAddress(rawDealAddress);
+        const msAmount = deal.milestones[milestoneId]?.amount;
+        const manifestObj = result.submission.manifest as any;
+        const evidenceSummary = typeof manifestObj?.summary === 'string'
+          ? manifestObj.summary
+          : (Array.isArray(manifestObj?.links) && manifestObj.links[0] ? String(manifestObj.links[0]) : undefined);
+
+        const { dispatchWorkSubmittedNotification } = await import('@/lib/deals/deal-lifecycle-notifications');
+        await dispatchWorkSubmittedNotification({
+          dealAddress: rawDealAddress,
+          milestoneIndex: milestoneId,
+          version,
+          clientWallet: deal.client,
+          dealTitle: proposal?.title || undefined,
+          milestoneAmount: msAmount,
+          evidenceSummary,
+          txHash,
+        });
+      } catch (notifErr: any) {
+        console.warn('[POST /api/deals/.../submissions/reconcile] work_submitted dispatch warning:', notifErr?.message || notifErr);
+      }
+    }
+
     return NextResponse.json(
       {
         success: true,

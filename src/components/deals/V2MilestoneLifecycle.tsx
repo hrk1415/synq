@@ -876,6 +876,56 @@ export function V2MilestoneLifecycle({ dealData, refetchDealData }: V2MilestoneL
         throw new Error(eventVerification.error || 'Milestone approval event verification failed');
       }
 
+      // Dispatch automatic notifications for payment release and deal completion
+      try {
+        const token = await ensureAuthenticated();
+        const notifyBase = {
+          dealId: dealData.dealAddress,
+          milestone: currentIndex,
+          txHash,
+        };
+        await fetch('/api/notify', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            ...notifyBase,
+            event: 'payment_released',
+          }),
+        }).catch((e) => console.warn('[V2MilestoneLifecycle] payment_released notify warning:', e));
+
+        const isFinal = currentIndex === dealData.milestones.length - 1;
+        if (isFinal) {
+          await fetch('/api/notify', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              ...notifyBase,
+              event: 'deal_completed',
+            }),
+          }).catch((e) => console.warn('[V2MilestoneLifecycle] deal_completed notify warning:', e));
+
+          await fetch('/api/notify', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              ...notifyBase,
+              event: 'deal_completed_seller',
+            }),
+          }).catch((e) => console.warn('[V2MilestoneLifecycle] deal_completed_seller notify warning:', e));
+        }
+      } catch (notifyErr) {
+        console.warn('[V2MilestoneLifecycle] Post-approval notify dispatch warning:', notifyErr);
+      }
+
       try {
         await refetchDealData();
       } catch (refreshErr) {
