@@ -5,7 +5,6 @@ import { signToken, verifyToken, getUserFromRequest } from '@/lib/auth';
 import { getAll, getById, create, update, remove, query } from '@/lib/db';
 import { sendEmailVerificationCode } from '@/lib/notify';
 import { checkAndRecordOtpRateLimit } from '@/lib/auth-rate-limit';
-import { logStagingOtpIfAllowed } from '@/lib/staging-otp';
 
 const SIG_MAX_AGE_MS = 5 * 60 * 1000;
 const CODE_TTL_MIN = 10;
@@ -203,7 +202,6 @@ export async function POST(req: NextRequest) {
       });
 
       const mail = await sendEmailVerificationCode(normalized, plainCode, CODE_TTL_MIN);
-      const isStagingOtp = logStagingOtpIfAllowed(plainCode, mail.mode === 'smtp');
       return Response.json({
         requiresVerification: true,
         email: normalized,
@@ -211,9 +209,7 @@ export async function POST(req: NextRequest) {
         delivery: mail.mode,
         message: mail.mode === 'smtp'
           ? `A 6-digit code was sent to ${normalized}. POST { type: "email_verify", email, code } to sign in.`
-          : isStagingOtp
-            ? 'Staging test mode: Check your local server terminal for the verification code.'
-            : 'Email delivery is unavailable. Configure SMTP and request a new code.',
+          : 'Email delivery is unavailable. Configure SMTP and request a new code.',
         ...(mail.error ? { deliveryError: mail.error } : {}),
       });
     }
@@ -337,15 +333,12 @@ export async function POST(req: NextRequest) {
         createdAt: new Date().toISOString(),
       });
       const mail = await sendEmailVerificationCode(normalized, plainCode, CODE_TTL_MIN);
-      const isStagingOtp = logStagingOtpIfAllowed(plainCode, mail.mode === 'smtp');
       return Response.json({
         codeSent: true,
         email: normalized,
         delivery: mail.mode,
         message: mail.mode === 'log'
-          ? (isStagingOtp
-              ? 'Staging test mode: Check your local server terminal for the verification code.'
-              : 'Email delivery is unavailable. Configure SMTP and request a new code.')
+          ? 'Email delivery is unavailable. Configure SMTP and request a new code.'
           : `A 6-digit code was sent to ${normalized}.`,
         ...(mail.error ? { deliveryError: mail.error } : {}),
       });
@@ -433,6 +426,23 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   } catch (e: any) {
-    return Response.json({ error: e.message || 'Auth failed' }, { status: 500 });
+    console.error('[auth] Authentication error:', e);
+    const msg = String(e?.message || '');
+    if (msg.includes('DatabaseAccessViolationError') || msg.includes('DbGuard') || msg.includes('DATABASE_URL')) {
+      return Response.json(
+        {
+          error: 'Database configuration error: database access blocked by safety guard. Please verify local environment configuration.',
+          code: 'DATABASE_CONFIGURATION_ERROR',
+        },
+        { status: 500 },
+      );
+    }
+    return Response.json(
+      {
+        error: 'Authentication service temporarily unavailable. Please try again later.',
+        code: 'AUTH_SERVER_ERROR',
+      },
+      { status: 500 },
+    );
   }
 }

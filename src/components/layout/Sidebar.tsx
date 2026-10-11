@@ -207,7 +207,7 @@ export default function Sidebar() {
       >
         <div className={cn("flex items-center h-16 border-b border-zinc-800/50 relative", collapsed ? "justify-center px-0" : "px-6")}>
           <Link href="/" className="flex items-center gap-3 outline-none">
-            <img src="/synq-logo.png" alt="Synq" className="w-8 h-8 rounded-lg object-contain mix-blend-lighten" />
+            <img src="/newlogopng.png" alt="Synq" className="w-8 h-8 rounded-lg object-contain" />
             {!collapsed && (
               <span className={cn(pressStart2P.className, "text-base font-normal text-white tracking-tight")}>
                 Synq

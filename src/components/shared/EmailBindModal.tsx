@@ -50,7 +50,7 @@ function clearWalletDismissed(wallet: string) {
  */
 export default function EmailBindModal() {
   const { address, isConnected } = useAccount();
-  const { ensureAuthenticated } = useAuthSession();
+  const { ensureAuthenticated, getToken } = useAuthSession();
   const [open, setOpen] = useState(false);
   const [checking, setChecking] = useState(false);
   const [step, setStep] = useState<'email' | 'code' | 'done'>('email');
@@ -127,15 +127,10 @@ export default function EmailBindModal() {
 
     // Retrieve cached auth token if already exists, without forcing sign-in prompt on mount
     let authHeader: HeadersInit = {};
-    try {
-      const raw = window.sessionStorage.getItem('synq_auth_session');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed?.wallet?.toLowerCase() === currentWallet && parsed?.token) {
-          authHeader = { Authorization: `Bearer ${parsed.token}` };
-        }
-      }
-    } catch {}
+    const cachedToken = getToken();
+    if (cachedToken) {
+      authHeader = { Authorization: `Bearer ${cachedToken}` };
+    }
 
     fetch(`/api/auth?address=${address}&mode=email_status`, { headers: authHeader })
       .then((r) => {

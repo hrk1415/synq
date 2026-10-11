@@ -1,12 +1,7 @@
 import type { NextConfig } from 'next';
-import { loadStagingEnv } from './src/lib/staging-env';
-
-if (process.env.SYNQ_ENV === 'staging') {
-  loadStagingEnv(process.cwd());
-}
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  distDir: process.env.NEXT_DIST_DIR || '.next',
 };
 
 export default nextConfig;

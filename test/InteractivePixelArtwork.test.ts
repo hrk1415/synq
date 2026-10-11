@@ -760,7 +760,7 @@ describe('SYNQ — Interactive Pixel Artwork Prototype Suite (Phase 7: Monochrom
 
     // 1. Production landing logo removed, but sidebar brand mark preserved
     assert.ok(!currentLandingContent.includes('src="/logo.jpg"'), 'Production landing top-left logo must be removed');
-    assert.match(currentSidebarContent, /\/synq-logo\.png/, 'Sidebar brand logo must remain intact');
+    assert.match(currentSidebarContent, /\/newlogopng\.png|\/synq-logo\.png/, 'Sidebar brand logo must remain intact');
 
     // 2. Centered CTA on landing: Layer 5.5 public indicator and Layer 6 secret Enter occupy identical centered coordinates
     assert.match(currentLandingContent, /bottom-7\s+md:bottom-9\s+left-1\/2\s+-translate-x-1\/2\s+w-\[160px\]\s+h-\[44px\]\s+flex\s+items-center\s+justify-center/, 'Public indicator container must be centered at bottom-7 md:bottom-9 left-1/2 -translate-x-1/2');

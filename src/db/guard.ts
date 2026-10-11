@@ -62,7 +62,9 @@ export type DbGuardDecisionReason =
   | 'PRODUCTION_DEPLOYMENT_AUTHORIZED'
   | 'LOCAL_DATABASE_ALLOWED'
   | 'EXPLICIT_REMOTE_STAGING_ALLOWED'
+  | 'EXPLICIT_DEV_APPLICATION_ALLOWED'
   | 'PROTECTED_PROJECT_BLOCKED'
+  | 'PROTECTED_PROJECT_MIGRATION_BLOCKED'
   | 'REMOTE_DATABASE_FAIL_CLOSED'
   | 'GENERIC_BOOLEAN_STAGING_DISALLOWED'
   | 'PROTECTED_STAGING_TARGET_FORBIDDEN'
@@ -154,6 +156,49 @@ export function isIntentionalProductionAuthorized(
 
   // If a specific project ref is targeted, it must match the authorized production project ref
   if (targetProjectRef && authorizedProductionRef !== targetProjectRef) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Validates whether the environment has intentional local development authorization
+ * for the original Supabase project.
+ *
+ * Rules:
+ * 1. SYNQ_FORCE_LOCAL_GUARD=true always overrides and blocks dev authorization.
+ * 2. SYNQ_AUTHORIZED_DEV_PROJECT_REF must be explicitly set and match the target project reference.
+ * 3. The target project reference must be recognized in PROTECTED_SUPABASE_PROJECT_REFS ('chzpqxgrkspmqwmqphpd').
+ * 4. Strictly limited to 'application' and 'storage' operations.
+ *    Migrations, maintenance scripts, workers, and unspecified operations remain blocked.
+ */
+export function isIntentionalDevAuthorized(
+  env: Record<string, string | undefined>,
+  targetProjectRef?: string | null,
+  operation?: 'application' | 'migration' | 'script' | 'worker' | 'storage',
+): boolean {
+  if (env.SYNQ_FORCE_LOCAL_GUARD === 'true') {
+    return false;
+  }
+
+  const authorizedDevRef = env.SYNQ_AUTHORIZED_DEV_PROJECT_REF?.trim().toLowerCase();
+  if (!authorizedDevRef) {
+    return false;
+  }
+
+  // Only permit 'application' and 'storage' operations in dev mode
+  if (operation !== 'application' && operation !== 'storage') {
+    return false;
+  }
+
+  // Target project reference must match the authorized dev project reference exactly
+  if (!targetProjectRef || authorizedDevRef !== targetProjectRef.toLowerCase()) {
+    return false;
+  }
+
+  // Must match one of the protected Supabase project references (e.g. 'chzpqxgrkspmqwmqphpd')
+  if (!PROTECTED_SUPABASE_PROJECT_REFS.includes(authorizedDevRef)) {
     return false;
   }
 
@@ -322,6 +367,19 @@ export function evaluateDatabaseAccess(
     };
   }
 
+  // 4B. Intentional Local Development Authorization Check (Application only)
+  if (isIntentionalDevAuthorized(env, identity.projectRef, options?.operation)) {
+    return {
+      allowed: true,
+      reason: 'EXPLICIT_DEV_APPLICATION_ALLOWED',
+      sanitizedHost,
+      detectedProjectRef: identity.projectRef,
+      isLocal: false,
+      isProtectedProject,
+      isProductionAuthorized: false,
+    };
+  }
+
   // 5. Rule: The protected live project can NEVER be configured as an approved staging target
   const approvedProjectRef = env.SYNQ_APPROVED_STAGING_PROJECT_REF?.trim().toLowerCase();
   const approvedTarget = env.SYNQ_APPROVED_STAGING_TARGET?.trim().toLowerCase();
@@ -345,6 +403,23 @@ export function evaluateDatabaseAccess(
 
   // 6. If the target is the protected live project and not intentionally authorized for production: HARD BLOCK!
   if (isProtectedProject) {
+    const authorizedDevRef = env.SYNQ_AUTHORIZED_DEV_PROJECT_REF?.trim().toLowerCase();
+    const isDevProjectMatch = Boolean(
+      authorizedDevRef && identity.projectRef && authorizedDevRef === identity.projectRef.toLowerCase(),
+    );
+
+    if (isDevProjectMatch && options?.operation === 'migration') {
+      return {
+        allowed: false,
+        reason: 'PROTECTED_PROJECT_MIGRATION_BLOCKED',
+        sanitizedHost,
+        detectedProjectRef: identity.projectRef || 'chzpqxgrkspmqwmqphpd',
+        isLocal: false,
+        isProtectedProject: true,
+        isProductionAuthorized: false,
+      };
+    }
+
     return {
       allowed: false,
       reason: 'PROTECTED_PROJECT_BLOCKED',
@@ -491,6 +566,11 @@ export function assertDatabaseAccessAllowed(
   if (result.allowed) return;
 
   switch (result.reason) {
+    case 'PROTECTED_PROJECT_MIGRATION_BLOCKED':
+      throw new DatabaseAccessViolationError(
+        `[DbGuard] BLOCKED: Migrations and DDL schema modifications against the original Supabase project (${result.detectedProjectRef || 'chzpqxgrkspmqwmqphpd'}) are strictly prohibited in local development mode. SYNQ_AUTHORIZED_DEV_PROJECT_REF only permits runtime application queries.`,
+      );
+
     case 'PROTECTED_PROJECT_BLOCKED':
       throw new DatabaseAccessViolationError(
         `[DbGuard] BLOCKED: DATABASE_URL targets protected live Alpha Supabase project (chzpqxgrkspmqwmqphpd). Local operations are prohibited from connecting to this database. To authorize production access in a genuine deployment, explicit intentional configuration is required (SYNQ_ENVIRONMENT=production, SYNQ_AUTHORIZED_PRODUCTION_PROJECT_REF=chzpqxgrkspmqwmqphpd, and NODE_ENV=production).`,
@@ -578,6 +658,16 @@ export function assertStorageAccessAllowed(
 
   // 3. Inspect service role key JWT payload (if provided)
   const keyProjectRef = extractJwtProjectRef(rawKey);
+
+  // 3B. Allow if intentionally authorized for local development (Storage operation)
+  if (isIntentionalDevAuthorized(env, urlProjectRef, options?.operation ?? 'storage')) {
+    if (urlProjectRef && keyProjectRef && urlProjectRef !== keyProjectRef) {
+      throw new Error(
+        `[DbGuard] BLOCKED: Mismatch between SUPABASE_URL project (${urlProjectRef}) and service role key credential project (${keyProjectRef}). Possible credential confusion.`,
+      );
+    }
+    return;
+  }
 
   // 4. Check for protected project references
   const lowerUrl = rawUrl.toLowerCase();

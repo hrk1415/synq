@@ -88,6 +88,7 @@ export interface MailStatus {
   missing: string[];
   fallbackRecipient?: string;
   hint: string;
+  localMailpit?: boolean;
 }
 
 const maskUser = (u: string) => {
@@ -116,15 +117,33 @@ export function getMailStatus(): MailStatus {
     ? String(process.env.SMTP_SECURE) === 'true'
     : (guess?.secure ?? port === 465);
 
+  const isLocalMailpit = process.env.SYNQ_LOCAL_MAILPIT === 'true';
   const missing: string[] = [];
-  if (!user) missing.push('SMTP_USER');
-  if (!pass) missing.push('SMTP_PASS');
-  if (user && pass && !host) missing.push('SMTP_HOST');
 
-  // In staging environment, real SMTP delivery is disabled by default and
-  // strictly requires explicit authorization via SYNQ_STAGING_ALLOW_SMTP=true
-  if (process.env.SYNQ_ENV === 'staging' && process.env.SYNQ_STAGING_ALLOW_SMTP !== 'true') {
-    missing.push('SYNQ_STAGING_ALLOW_SMTP');
+  if (isLocalMailpit) {
+    if (process.env.NODE_ENV === 'production') {
+      missing.push('SYNQ_LOCAL_MAILPIT_NOT_ALLOWED_IN_PRODUCTION');
+    }
+    if (process.env.SYNQ_ENV === 'staging') {
+      missing.push('SYNQ_LOCAL_MAILPIT_NOT_ALLOWED_IN_STAGING');
+    }
+    if (explicitHost !== '127.0.0.1') {
+      missing.push('SMTP_HOST_MUST_BE_127.0.0.1');
+    }
+    if (port !== 1025) {
+      missing.push('SMTP_PORT_MUST_BE_1025');
+    }
+    // In local Mailpit mode, SMTP_USER and SMTP_PASS are intentionally not required.
+  } else {
+    if (!user) missing.push('SMTP_USER');
+    if (!pass) missing.push('SMTP_PASS');
+    if (user && pass && !host) missing.push('SMTP_HOST');
+
+    // In staging environment, real SMTP delivery is disabled by default and
+    // strictly requires explicit authorization via SYNQ_STAGING_ALLOW_SMTP=true
+    if (process.env.SYNQ_ENV === 'staging' && process.env.SYNQ_STAGING_ALLOW_SMTP !== 'true') {
+      missing.push('SYNQ_STAGING_ALLOW_SMTP');
+    }
   }
 
   const live = missing.length === 0;
@@ -134,14 +153,15 @@ export function getMailStatus(): MailStatus {
     host: host || undefined,
     port: host ? port : undefined,
     secure: host ? secure : undefined,
-    user: user ? maskUser(user) : undefined,
-    from: process.env.SMTP_FROM || user || undefined,
+    user: (!isLocalMailpit && user) ? maskUser(user) : undefined,
+    from: process.env.SMTP_FROM || (!isLocalMailpit && user ? user : undefined) || 'no-reply@synq.app',
     hostSource,
     missing,
     fallbackRecipient: process.env.NOTIFY_FALLBACK_EMAIL || undefined,
     hint: live
-      ? `Live delivery via ${host}:${port}.`
+      ? (isLocalMailpit ? `Local Mailpit delivery via ${host}:${port}.` : `Live delivery via ${host}:${port}.`)
       : `Email delivery is unavailable. Set ${missing.join(' and ')} in the server environment to deliver email.`,
+    localMailpit: isLocalMailpit,
   };
 }
 
@@ -204,6 +224,28 @@ export function getTestTransporter(): nodemailer.Transporter | null {
   return _testTransporter;
 }
 
+/**
+ * Resolves Nodemailer transport options.
+ * In local Mailpit mode, credentials are never loaded and host/port must strictly be 127.0.0.1:1025.
+ */
+export function getTransporterOptions(status: MailStatus) {
+  const isLocalMailpit = process.env.SYNQ_LOCAL_MAILPIT === 'true';
+  if (isLocalMailpit && (status.host !== '127.0.0.1' || status.port !== 1025)) {
+    throw new Error('Local Mailpit mode requires SMTP_HOST=127.0.0.1 and SMTP_PORT=1025');
+  }
+
+  return {
+    host: status.host,
+    port: status.port,
+    secure: status.secure,
+    auth: isLocalMailpit
+      ? undefined
+      : (process.env.SMTP_USER || process.env.SMTP_PASS
+          ? { user: process.env.SMTP_USER as string, pass: process.env.SMTP_PASS as string }
+          : undefined),
+  };
+}
+
 async function sendMail(to: string, subject: string, html: string, text: string): Promise<MailResult> {
   const status = getMailStatus();
 
@@ -219,13 +261,9 @@ async function sendMail(to: string, subject: string, html: string, text: string)
   }
 
   try {
-    const transporter = _testTransporter || nodemailer.createTransport({
-      host: status.host,
-      port: status.port,
-      secure: status.secure,
-      auth: { user: process.env.SMTP_USER as string, pass: process.env.SMTP_PASS as string },
-    });
-    const from = process.env.SMTP_FROM || process.env.SMTP_USER || 'no-reply@synq.app';
+    const isLocalMailpit = process.env.SYNQ_LOCAL_MAILPIT === 'true';
+    const transporter = _testTransporter || nodemailer.createTransport(getTransporterOptions(status));
+    const from = process.env.SMTP_FROM || (!isLocalMailpit ? process.env.SMTP_USER : undefined) || 'no-reply@synq.app';
     const info = await transporter.sendMail({
       from,
       to,

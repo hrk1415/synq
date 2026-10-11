@@ -82,7 +82,7 @@ export function Header({ className, navItems = defaultNavItems }: HeaderProps) {
           href="/dashboard"
           className="flex items-center gap-2.5 group focus:outline-none"
         >
-          <img src="/synq-logo.png" alt="Synq" className="w-9 h-9 rounded-xl object-contain mix-blend-lighten group-hover:scale-105 transition-transform" />
+          <img src="/newlogopng.png" alt="Synq" className="w-9 h-9 rounded-xl object-contain group-hover:scale-105 transition-transform" />
           <div className="flex flex-col">
             <div className="flex items-center gap-1.5">
               <span className="text-lg font-bold text-white tracking-tight group-hover:text-indigo-200 transition-colors">

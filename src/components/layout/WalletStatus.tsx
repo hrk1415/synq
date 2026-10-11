@@ -2,13 +2,14 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { useAccount, useConnect, useDisconnect, useBalance, useReadContract, useConnectors, type Connector } from 'wagmi';
+import { useAccount, useAccountEffect, useConnect, useDisconnect, useBalance, useReadContract, useConnectors, type Connector } from 'wagmi';
+import { useAuthSession, getStoredSession, clearAuthSession } from '@/hooks/useAuthSession';
 import Link from 'next/link';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
-import { Wallet, ChevronDown, ChevronRight, LogOut, Copy, Check, X, Loader2, AlertTriangle, ArrowRightLeft } from 'lucide-react';
+import { Wallet, ChevronDown, ChevronRight, LogOut, Copy, Check, X, Loader2, AlertTriangle, ArrowRightLeft, ShieldCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSynqIdentity } from '@/hooks/useSynqIdentity';
-import { useSepoliaNetwork } from '@/hooks/useSepoliaNetwork';
+import { useSepoliaNetwork, isRejected, clearRejectedSwitchSession, hasRejectedSwitchSession, getConnectorChainId } from '@/hooks/useSepoliaNetwork';
 import { SEPOLIA_CHAIN_ID, SYNQ_V2_SEPOLIA_CONFIG } from '@/lib/contracts/addresses';
 import { erc20ABI } from '@/lib/contracts/abis';
 import { formatUnits } from 'viem';
@@ -195,9 +196,37 @@ export interface WalletStatusProps {
 
 export default function WalletStatus({ onOpenChange, className }: WalletStatusProps = {}) {
   const [mounted, setMounted] = useState(false);
-  const { address, isConnected, connector } = useAccount();
+  const { address, isConnected, connector, chainId } = useAccount();
   const { connectAsync } = useConnect();
   const { disconnect } = useDisconnect();
+  const { ensureAuthenticated } = useAuthSession();
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [authError, setAuthError] = useState('');
+
+  const checkAuth = useCallback(() => {
+    if (!address) {
+      setIsAuthenticated(false);
+      return;
+    }
+    setIsAuthenticated(Boolean(getStoredSession(address)));
+  }, [address]);
+
+  useEffect(() => {
+    checkAuth();
+  }, [checkAuth]);
+
+  useAccountEffect({
+    onDisconnect() {
+      if (address) clearAuthSession(address);
+      if (connector) clearRejectedSwitchSession(connector.uid);
+      autoSwitchSessionRef.current = null;
+      setIsAuthenticated(false);
+      setIsVerifying(false);
+      setAuthError('');
+      setConnectionError('');
+    },
+  });
   const {
     networkReady,
     isWrongNetwork,
@@ -303,7 +332,7 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
   }, []);
 
   // One automatic Sepolia request per established account/connector session.
-  // Mark ready sessions too, so a later manual chain change never opens a prompt.
+  // Suppressed during explicit connection flows or if switch was already rejected/handled.
   useEffect(() => {
     if (!isConnected || !address || !connector) {
       autoSwitchSessionRef.current = null;
@@ -311,9 +340,22 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
     }
     const sessionKey = `${connector.uid}:${address.toLowerCase()}`;
     if (autoSwitchSessionRef.current === sessionKey) return;
+
+    const connKey = connector.uid || connector.id || 'default_connector';
+    if (hasRejectedSwitchSession(connKey)) {
+      autoSwitchSessionRef.current = sessionKey;
+      return;
+    }
+
     autoSwitchSessionRef.current = sessionKey;
-    if (!networkReady) void requestSepolia().catch(() => {});
-  }, [address, connector, isConnected, networkReady, requestSepolia]);
+    if (!networkReady) {
+      void getConnectorChainId(connector, chainId).then((actualChainId) => {
+        if (actualChainId !== undefined && actualChainId !== SEPOLIA_CHAIN_ID && !hasRejectedSwitchSession(connKey)) {
+          void requestSepolia(connector).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+  }, [address, connector, isConnected, networkReady, requestSepolia, chainId]);
 
   const [displayName, setDisplayName] = useState<string>('');
   const [avatarSrc, setAvatarSrc] = useState<string | null>(null);
@@ -443,12 +485,88 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
   const gridItems = React.useMemo(() => buildGridWalletItems(connectors), [connectors]);
 
 
-  const handleConnect = async (targetConnector: Connector) => {
-    setConnecting(targetConnector.uid || targetConnector.id);
-    setConnectionError('');
+  const handleVerifyWallet = async () => {
+    if (!address) return;
+    setIsVerifying(true);
+    setAuthError('');
     try {
-      await connectAsync({ connector: targetConnector });
-      handleCloseModal();
+      await ensureAuthenticated(address);
+      setIsAuthenticated(true);
+    } catch (err: any) {
+      const msg = err?.message || 'Verification failed';
+      if (!msg.includes('cancelled') && !msg.includes('rejected')) {
+        setAuthError(msg);
+      }
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
+  const handleConnect = async (targetConnector: Connector) => {
+    const connId = targetConnector.uid || targetConnector.id;
+    setConnecting(connId);
+    setConnectionError('');
+    setAuthError('');
+    try {
+      const res = await connectAsync({ connector: targetConnector });
+      let connectedAddr = res?.accounts?.[0] || address;
+      if (connectedAddr) {
+        // Immediately claim session key to prevent background auto-switch race
+        const sessionKey = `${targetConnector.uid}:${connectedAddr.toLowerCase()}`;
+        autoSwitchSessionRef.current = sessionKey;
+
+        // 1. Check actual provider chain state before prompting switch or signing
+        let currentChain: number | undefined;
+        try {
+          currentChain = await getConnectorChainId(targetConnector, chainId);
+        } catch {
+          currentChain = undefined;
+        }
+
+        if (currentChain !== SEPOLIA_CHAIN_ID) {
+          try {
+            await requestSepolia(targetConnector);
+          } catch (netErr: any) {
+            handleCloseModal();
+            const msg = netErr?.message || '';
+            if (!isRejected(netErr)) {
+              setConnectionError(msg || 'Unable to switch to Ethereum Sepolia');
+            }
+            return;
+          }
+        }
+
+        // 2. Account verification check before signature
+        const activeAccounts = await targetConnector.getAccounts().catch(() => []);
+        const activeAddr = activeAccounts?.[0];
+        if (activeAddr && activeAddr.toLowerCase() !== connectedAddr.toLowerCase()) {
+          connectedAddr = activeAddr;
+        }
+
+        // 3. Authenticate if no existing session
+        const existing = getStoredSession(connectedAddr);
+        if (!existing) {
+          setIsVerifying(true);
+          try {
+            await ensureAuthenticated(connectedAddr);
+            setIsAuthenticated(true);
+            handleCloseModal();
+          } catch (authErr: any) {
+            handleCloseModal();
+            const msg = authErr?.message || '';
+            if (!msg.includes('cancelled') && !msg.includes('rejected')) {
+              setConnectionError(msg || 'Wallet verification failed');
+            }
+          } finally {
+            setIsVerifying(false);
+          }
+        } else {
+          setIsAuthenticated(true);
+          handleCloseModal();
+        }
+      } else {
+        handleCloseModal();
+      }
     } catch (e: any) {
       if (!(e?.message?.includes('rejected') || e?.code === 4001)) {
         setConnectionError(`Connection failed: ${e?.message || 'Unknown error'}`);
@@ -460,8 +578,9 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
 
   const handleSwitchToSepolia = async () => {
     setConnectionError('');
+    if (connector) clearRejectedSwitchSession(connector.uid);
     try {
-      await requestSepolia();
+      await requestSepolia(connector);
     } catch (error) {
       setConnectionError(error instanceof Error ? error.message : 'Unable to switch to Ethereum Sepolia.');
     }
@@ -484,7 +603,9 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
     onOpenChange?.(next);
   };
 
-  if (mounted && isConnected) {
+  const isConnecting = connecting !== null || isVerifying;
+
+  if (mounted && isConnected && !isConnecting) {
     return (
       <div className="relative">
         <button
@@ -500,6 +621,13 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
               <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
               <span className="text-xs sm:text-sm text-[#242424] font-medium">
                 {isWrongNetwork ? 'Wrong Network' : 'Network Not Verified'}
+              </span>
+            </div>
+          ) : !isAuthenticated ? (
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+              <span className="text-xs sm:text-sm text-[#242424] font-medium">
+                Verify Wallet
               </span>
             </div>
           ) : (
@@ -574,6 +702,32 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
                     </div>
                   )}
 
+                  {/* State 4 Recovery Banner (if network is ready but unauthenticated) */}
+                  {networkReady && !isAuthenticated && (
+                    <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25 space-y-2">
+                      <div className="flex items-center gap-1.5 text-[7.5px] text-amber-300 leading-tight">
+                        <ShieldCheck size={12} className="shrink-0 text-amber-400" />
+                        <span className="truncate">Wallet Verification Needed</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleVerifyWallet}
+                        disabled={isVerifying}
+                        className="w-full flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg bg-white text-[#242424] hover:bg-zinc-100 disabled:opacity-50 transition-colors text-[8px] font-medium select-none"
+                      >
+                        {isVerifying ? (
+                          <Loader2 size={11} className="animate-spin text-[#242424]" />
+                        ) : (
+                          <ShieldCheck size={11} className="text-[#242424]" />
+                        )}
+                        <span>{isVerifying ? 'Verifying...' : 'Verify Wallet'}</span>
+                      </button>
+                      {authError && (
+                        <p className="text-[7px] text-red-300 truncate">{authError}</p>
+                      )}
+                    </div>
+                  )}
+
                   {/* Header: Display Name, Username, Network Status */}
                   <div className="flex items-start justify-between gap-2 pb-3 border-b border-[#404040]">
                     <div className="min-w-0 flex-1">
@@ -592,17 +746,19 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
                     </div>
                   </div>
 
-                  {/* Two Equally Prominent Balance Rows: USDC & ETH */}
-                  <div className="pb-3 border-b border-[#404040] flex flex-col gap-2.5">
-                    <BalanceRow
-                      value={!networkReady ? '--' : isUsdcLoading ? '...' : formatUsdcValue(usdcRawBalance)}
-                      symbol="USDC"
-                    />
-                    <BalanceRow
-                      value={!networkReady ? '--' : !balance ? '...' : formatEthValue(balance)}
-                      symbol="ETH"
-                    />
-                  </div>
+                  {/* If authenticated: Two Equally Prominent Balance Rows: USDC & ETH */}
+                  {isAuthenticated && (
+                    <div className="pb-3 border-b border-[#404040] flex flex-col gap-2.5">
+                      <BalanceRow
+                        value={!networkReady ? '--' : isUsdcLoading ? '...' : formatUsdcValue(usdcRawBalance)}
+                        symbol="USDC"
+                      />
+                      <BalanceRow
+                        value={!networkReady ? '--' : !balance ? '...' : formatEthValue(balance)}
+                        symbol="ETH"
+                      />
+                    </div>
+                  )}
 
                   {/* Address with Full Address Copy */}
                   <div className="pb-3 border-b border-[#404040] flex items-center justify-between gap-2">
@@ -625,31 +781,49 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
                     </button>
                   </div>
 
-                  {/* Actions: Swap & Disconnect in 35:65 Ratio Grid */}
-                  <div
-                    className="grid grid-cols-[minmax(0,35fr)_minmax(0,65fr)] gap-2 w-full pt-1"
-                    style={{ gridTemplateColumns: 'minmax(0, 35fr) minmax(0, 65fr)' }}
-                  >
-                    <Link
-                      href="/swap"
-                      onClick={handleClose}
-                      className="w-full flex items-center justify-center gap-1 sm:gap-1.5 h-9 px-1.5 sm:px-2 rounded-xl bg-white text-[#242424] hover:bg-zinc-100 transition-colors text-[8px] sm:text-[8.5px] font-normal tracking-tight select-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white whitespace-nowrap overflow-hidden"
+                  {/* Actions: Swap & Disconnect (if authenticated) or Disconnect alone (if unverified) */}
+                  {isAuthenticated ? (
+                    <div
+                      className="grid grid-cols-[minmax(0,35fr)_minmax(0,65fr)] gap-2 w-full pt-1"
+                      style={{ gridTemplateColumns: 'minmax(0, 35fr) minmax(0, 65fr)' }}
                     >
-                      <ArrowRightLeft size={11} className="shrink-0 text-[#242424]" />
-                      <span>Swap</span>
-                    </Link>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        disconnect();
-                        handleClose();
-                      }}
-                      className="w-full flex items-center justify-center gap-1 sm:gap-1.5 h-9 px-1.5 sm:px-2 rounded-xl bg-white text-[#242424] hover:bg-zinc-100 transition-colors text-[8px] sm:text-[8.5px] font-normal tracking-tight select-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white whitespace-nowrap overflow-hidden"
-                    >
-                      <LogOut size={11} className="shrink-0 text-[#242424]" />
-                      <span>Disconnect</span>
-                    </button>
-                  </div>
+                      <Link
+                        href="/swap"
+                        onClick={handleClose}
+                        className="w-full flex items-center justify-center gap-1 sm:gap-1.5 h-9 px-1.5 sm:px-2 rounded-xl bg-white text-[#242424] hover:bg-zinc-100 transition-colors text-[8px] sm:text-[8.5px] font-normal tracking-tight select-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white whitespace-nowrap overflow-hidden"
+                      >
+                        <ArrowRightLeft size={11} className="shrink-0 text-[#242424]" />
+                        <span>Swap</span>
+                      </Link>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (address) clearAuthSession(address);
+                          disconnect();
+                          handleClose();
+                        }}
+                        className="w-full flex items-center justify-center gap-1 sm:gap-1.5 h-9 px-1.5 sm:px-2 rounded-xl bg-white text-[#242424] hover:bg-zinc-100 transition-colors text-[8px] sm:text-[8.5px] font-normal tracking-tight select-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white whitespace-nowrap overflow-hidden"
+                      >
+                        <LogOut size={11} className="shrink-0 text-[#242424]" />
+                        <span>Disconnect</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="w-full pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (address) clearAuthSession(address);
+                          disconnect();
+                          handleClose();
+                        }}
+                        className="w-full flex items-center justify-center gap-1 sm:gap-1.5 h-9 px-1.5 sm:px-2 rounded-xl bg-white text-[#242424] hover:bg-zinc-100 transition-colors text-[8px] sm:text-[8.5px] font-normal tracking-tight select-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white whitespace-nowrap overflow-hidden"
+                      >
+                        <LogOut size={11} className="shrink-0 text-[#242424]" />
+                        <span>Disconnect</span>
+                      </button>
+                    </div>
+                  )}
                 </motion.div>
               </div>
             )}
@@ -662,17 +836,19 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
 
   return (
     <div className="relative">
-      {connecting !== null ? (
+      {isConnecting ? (
         <button
           ref={buttonRef}
           disabled
           className={cn(
-            'flex items-center gap-2.5 h-10 px-4 rounded-xl border border-zinc-200/90 bg-[#FFFFFF] text-[#242424] opacity-90 shadow-sm text-sm font-medium transition-all select-none cursor-wait',
+            'flex items-center gap-2.5 h-10 px-4 rounded-xl border border-zinc-200/90 bg-[#FFFFFF] text-[#242424] opacity-90 shadow-sm text-sm font-medium transition-all select-none cursor-wait min-w-[170px]',
             className
           )}
         >
           <Loader2 size={15} className="animate-spin text-[#242424]/70 shrink-0" />
-          <span className="text-[#242424]/80 font-medium">Connecting...</span>
+          <span className="text-[#242424]/80 font-medium">
+            {isVerifying ? 'Verifying Wallet...' : 'Connecting...'}
+          </span>
         </button>
       ) : (
         <button
@@ -800,7 +976,9 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
                   {/* Footer */}
                   <div className="px-6 py-3.5 border-t border-[#404040] shrink-0">
                     <p className={cn(pressStart2P.className, "text-[8px] text-zinc-400 text-center leading-relaxed tracking-tight select-none")}>
-                      By connecting, you agree to Synq&apos;s Terms of Service
+                      {isVerifying
+                        ? 'Approve signature in your wallet to continue...'
+                        : "By connecting, you agree to Synq's Terms of Service"}
                     </p>
                   </div>
                 </div>

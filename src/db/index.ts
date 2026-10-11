@@ -19,6 +19,7 @@ function createDbClient() {
     throw new Error('Database client must only be executed on the server side.');
   }
 
+
   const connectionString = process.env.DATABASE_URL;
   assertDatabaseAccessAllowed(connectionString, { operation: 'application' });
 

@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { AlertTriangle, Loader2, ArrowRightLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useSepoliaNetwork } from '@/hooks/useSepoliaNetwork';
+import { useSepoliaNetwork, clearRejectedSwitchSession } from '@/hooks/useSepoliaNetwork';
 
 /**
  * Tells the user their wallet is on a network where Synq has no contracts, and
@@ -37,7 +37,10 @@ export function ChainGuard({ what = 'Synq contracts are' }: { what?: string }) {
         size="sm"
         className="gap-1.5 shrink-0"
         disabled={isSwitching}
-        onClick={() => void requestSepolia().catch(() => undefined)}
+        onClick={() => {
+          clearRejectedSwitchSession();
+          void requestSepolia().catch(() => undefined);
+        }}
       >
         {isSwitching ? <Loader2 size={14} className="animate-spin" /> : <ArrowRightLeft size={14} />}
         Switch to Sepolia

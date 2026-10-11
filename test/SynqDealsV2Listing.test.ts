@@ -576,4 +576,88 @@ describe('SYNQ Standard V2 /deals Listing Architecture Suite', () => {
       assert.strictEqual(content.includes('filterOptions'), true);
     });
   });
+
+  // Requirement AA: Hydration Mismatch Safety (/deals page)
+  describe('AA. Hydration Mismatch Safety (/deals page)', () => {
+    const dealsPagePath = path.join(process.cwd(), 'src', 'app', 'deals', 'page.tsx');
+    const content = fs.readFileSync(dealsPagePath, 'utf8');
+
+    it('AA1: DealsPage declares mounted state and marks true on mount', () => {
+      assert.match(
+        content,
+        /const\s+\[mounted,\s*setMounted\]\s*=\s*useState\(false\);/,
+        'Must initialize mounted to false'
+      );
+      assert.match(
+        content,
+        /useEffect\(\(\)\s*=>\s*\{\s*setMounted\(true\);\s*\},?\s*\[\]\);/,
+        'Must set mounted to true in empty-dependency useEffect'
+      );
+    });
+
+    it('AA2: DealsPage derives effectiveAddress with mounted and account restoring checks', () => {
+      assert.match(
+        content,
+        /const\s+isAccountRestoring\s*=\s*status\s*===\s*'connecting'\s*\|\|\s*status\s*===\s*'reconnecting';/,
+        'Must detect account restoring states'
+      );
+      assert.match(
+        content,
+        /const\s+effectiveAddress\s*=\s*\(mounted\s*&&\s*isConnected\s*&&\s*!!address\s*&&\s*!isAccountRestoring\)\s*\?\s*address\s*:\s*undefined;/,
+        'effectiveAddress must be undefined when unmounted or restoring'
+      );
+    });
+
+    it('AA3: DealsPage guards wallet requirement with effectiveAddress (not raw address)', () => {
+      assert.match(
+        content,
+        /\{!effectiveAddress\s*\?\s*\(/,
+        'Must gate wallet check with !effectiveAddress to keep SSR and initial client hydration identical'
+      );
+      assert.doesNotMatch(
+        content,
+        /\{!address\s*\?\s*\(\s*<Card/,
+        'Must not use raw !address directly for conditional card rendering'
+      );
+    });
+
+    it('AA4: Grid container is protected behind effectiveAddress and loading guard', () => {
+      assert.match(
+        content,
+        /:\s*\(isLoading\s*\|\|\s*!lastFetchedAddressRef\.current\)\s*&&\s*deals\.length\s*===\s*0\s*\?\s*\(/,
+        'Must guard initial loading state before rendering grid'
+      );
+      assert.strictEqual(
+        content.includes('className="grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 pt-1"'),
+        true,
+        'Grid container classes must be preserved'
+      );
+    });
+
+    it('AA5: Simulated hydration invariant: SSR and initial client pass produce identical effectiveAddress', () => {
+      // Server pass (mounted = false, address = undefined)
+      const serverMounted = false;
+      const serverAddress = undefined;
+      const serverConnected = false;
+      const serverRestoring = false;
+      const serverEffective = (serverMounted && serverConnected && !!serverAddress && !serverRestoring) ? serverAddress : undefined;
+
+      // Initial client pass (before useEffect runs: mounted = false, address rehydrated from localStorage)
+      const clientInitialMounted = false;
+      const clientInitialAddress = '0xD2D4d415a4730b1490c9Ce27944529B83ff76319';
+      const clientInitialConnected = true;
+      const clientInitialRestoring = false;
+      const clientInitialEffective = (clientInitialMounted && clientInitialConnected && !!clientInitialAddress && !clientInitialRestoring) ? clientInitialAddress : undefined;
+
+      // Both MUST be undefined during hydration
+      assert.strictEqual(serverEffective, undefined, 'Server effective address must be undefined');
+      assert.strictEqual(clientInitialEffective, undefined, 'Client initial effective address must be undefined');
+      assert.strictEqual(serverEffective, clientInitialEffective, 'Hydration invariant: server and initial client must be identical');
+
+      // Post-mount client pass (useEffect ran: mounted = true)
+      const clientMounted = true;
+      const clientMountedEffective = (clientMounted && clientInitialConnected && !!clientInitialAddress && !clientInitialRestoring) ? clientInitialAddress : undefined;
+      assert.strictEqual(clientMountedEffective, clientInitialAddress, 'Post-mount client must resolve to active address');
+    });
+  });
 });

@@ -43,7 +43,10 @@ const filterOptions = [
 ];
 
 export default function DealsPage() {
-  const { address } = useAccount();
+  const [mounted, setMounted] = useState(false);
+  const { address, isConnected, status } = useAccount();
+  const isAccountRestoring = status === 'connecting' || status === 'reconnecting';
+  const effectiveAddress = (mounted && isConnected && !!address && !isAccountRestoring) ? address : undefined;
   const { getToken } = useAuthSession();
   const [deals, setDeals] = useState<DiscoveredV2Deal[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -54,6 +57,10 @@ export default function DealsPage() {
   const filterRef = useRef<HTMLDivElement>(null);
   const isFetchingRef = useRef(false);
   const lastFetchedAddressRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Click-outside & Escape key handling for Filter Dropdown
   useEffect(() => {
@@ -77,7 +84,8 @@ export default function DealsPage() {
   // Authoritative Standard V2 Deal Discovery & State Fetching
   const loadDeals = useCallback(
     async (force = false) => {
-      if (!address) {
+      const targetAddress = effectiveAddress || address;
+      if (!targetAddress) {
         setDeals([]);
         setIsLoading(false);
         setLoadError(null);
@@ -99,7 +107,7 @@ export default function DealsPage() {
         const { clientDeals, freelancerDeals } = await fetchUserDealAddressesFromFactory(
           sepoliaPublicClient,
           SYNQ_V2_SEPOLIA_CONFIG.factory,
-          address,
+          targetAddress,
         );
 
         // 2. Case-insensitive merge and deduplication
@@ -107,7 +115,7 @@ export default function DealsPage() {
 
         if (uniqueAddresses.length === 0) {
           setDeals([]);
-          lastFetchedAddressRef.current = address.toLowerCase();
+          lastFetchedAddressRef.current = targetAddress.toLowerCase();
           return;
         }
 
@@ -139,7 +147,7 @@ export default function DealsPage() {
         // 5. Enrich with metadata while preserving authoritative on-chain contract state
         const enriched = enrichDealsWithMetadata(uniqueAddresses, onChainStates, metadataMap);
         setDeals(enriched);
-        lastFetchedAddressRef.current = address.toLowerCase();
+        lastFetchedAddressRef.current = targetAddress.toLowerCase();
       } catch (err: any) {
         console.error('[DealsPage] Error loading Standard V2 deals:', err);
         setLoadError(err?.message || 'Failed to query deals from Sepolia RPC.');
@@ -148,16 +156,17 @@ export default function DealsPage() {
         setIsLoading(false);
       }
     },
-    [address, getToken],
+    [address, effectiveAddress, getToken],
   );
 
   useEffect(() => {
-    if (address && address.toLowerCase() !== lastFetchedAddressRef.current) {
+    if (!mounted) return;
+    if (effectiveAddress && effectiveAddress.toLowerCase() !== lastFetchedAddressRef.current) {
       loadDeals();
-    } else if (!address) {
+    } else if (!effectiveAddress) {
       loadDeals();
     }
-  }, [address, loadDeals]);
+  }, [effectiveAddress, mounted, loadDeals]);
 
   // Extract counterparties for identity lookup
   const uniqueCounterpartyAddresses = useMemo(() => {
@@ -295,13 +304,13 @@ export default function DealsPage() {
         </div>
       </div>
 
-      {!address ? (
+      {!effectiveAddress ? (
         <Card className="bg-zinc-900/60 border-zinc-800">
           <CardContent className="p-12 text-center">
             <p className="text-zinc-400">Connect your wallet to view your deals.</p>
           </CardContent>
         </Card>
-      ) : isLoading && deals.length === 0 ? (
+      ) : (isLoading || !lastFetchedAddressRef.current) && deals.length === 0 ? (
         <div className="flex items-center justify-center py-20">
           <Loader2 size={24} className="animate-spin text-blue-400" />
         </div>
@@ -309,7 +318,7 @@ export default function DealsPage() {
         <div className="grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 pt-1">
           {filtered.map((deal, i) => {
             const statusStr = String(deal.state);
-            const userAddr = address?.toLowerCase();
+            const userAddr = (effectiveAddress || address)?.toLowerCase();
             const clientAddr = deal.client.toLowerCase();
             const freelancerAddr = deal.freelancer.toLowerCase();
 

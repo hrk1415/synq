@@ -1,14 +1,7 @@
 import { loadEnvConfig } from '@next/env';
 import { defineConfig } from 'drizzle-kit';
 import { assertDatabaseAccessAllowed } from './src/db/guard';
-import { loadStagingEnv } from './src/lib/staging-env';
-
-if (process.env.SYNQ_ENV === 'staging') {
-  // Staging operations explicitly load .env.staging.local and forbid silent fallback to .env.local
-  loadStagingEnv(process.cwd());
-} else {
-  loadEnvConfig(process.cwd());
-}
+loadEnvConfig(process.cwd());
 
 // Drizzle-kit commands:
 // 'generate' builds schema migrations offline without database connections.

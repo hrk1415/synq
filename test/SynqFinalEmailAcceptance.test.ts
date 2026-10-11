@@ -38,10 +38,7 @@ import {
   setMilestoneSubmissionRepository,
   resetMilestoneSubmissionRepository,
 } from '../src/lib/deals/submissions-db';
-import { checkStagingServices } from '../scripts/staging-services-check';
-import { runStagingDevPreflight } from '../scripts/staging-dev';
-import { isStagingOtpConsoleAllowed, logStagingOtpIfAllowed } from '../src/lib/staging-otp';
-import { APPROVED_STAGING_PROJECT_REF } from '../src/lib/staging-env';
+
 import * as db from '../src/lib/db';
 import { signToken } from '../src/lib/auth';
 
@@ -395,70 +392,7 @@ describe('SYNQ — B.12.3.62: Final Email Notification Acceptance', () => {
     assert.equal(capturedEmails.length, 0, 'Zero emails dispatched on failed verification');
   });
 
-  // =========================================================================
-  // Requirement 6: SMTP authorization, OTP console suppression, and disabled workers intact
-  // =========================================================================
-  it('Req 6a: Staging services check confirms safe log-only mode and disabled workers by default', () => {
-    const report = checkStagingServices({
-      overrideEnv: {
-        SYNQ_ENV: 'staging',
-        SYNQ_STAGING_ALLOW_SMTP: 'false',
-        SMTP_USER: '',
-        SMTP_PASS: '',
-      },
-    });
-    assert.equal(report.email.live, false);
-    assert.equal(report.email.mode, 'log');
-    assert.equal(report.email.isSafeLogOnly, true);
-    assert.equal(report.email.stagingSmtpAllowed, false);
-    assert.equal(report.backgroundWorkers.allDisabledByDefault, true);
-  });
 
-  it('Req 6b: Console OTP suppression is strictly enforced when live SMTP is authorized', () => {
-    const allowed = isStagingOtpConsoleAllowed(
-      {
-        SYNQ_ENV: 'staging',
-        NODE_ENV: 'development',
-        SYNQ_STAGING_OTP_CONSOLE: 'true',
-        SYNQ_STAGING_ALLOW_SMTP: 'true',
-        SYNQ_APPROVED_STAGING_PROJECT_REF: APPROVED_STAGING_PROJECT_REF,
-        DATABASE_URL: `postgres://user:pass@db.${APPROVED_STAGING_PROJECT_REF}.supabase.co:5432/postgres`,
-      },
-      false,
-    );
-    assert.equal(allowed, false, 'Console OTP must be prohibited when real SMTP is authorized');
-
-    let logged = '';
-    const result = logStagingOtpIfAllowed(
-      '654321',
-      false,
-      {
-        SYNQ_ENV: 'staging',
-        NODE_ENV: 'development',
-        SYNQ_STAGING_OTP_CONSOLE: 'true',
-        SYNQ_STAGING_ALLOW_SMTP: 'true',
-        SYNQ_APPROVED_STAGING_PROJECT_REF: APPROVED_STAGING_PROJECT_REF,
-        DATABASE_URL: `postgres://user:pass@db.${APPROVED_STAGING_PROJECT_REF}.supabase.co:5432/postgres`,
-      },
-      (msg) => { logged = msg; },
-    );
-    assert.equal(result, false);
-    assert.equal(logged, '');
-  });
-
-  it('Req 6c: Background workers latch to disabled and preflight rejects worker enablement in staging', () => {
-    assert.throws(
-      () => runStagingDevPreflight({
-        overrideEnv: {
-          SYNQ_STAGING_ALLOW_SMTP: 'true',
-          SMTP_USER: 'synq-staging-test@gmail.com',
-          SMTP_PASS: '16charapppasswrd',
-          ENABLE_OUTBOX_PROCESSOR: 'true',
-        },
-      }),
-      /Background workers must be disabled in staging/,
-    );
-  });
 
   // =========================================================================
   // Requirement 7: Preferences are evaluated for the recipient, not the sender

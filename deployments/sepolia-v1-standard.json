@@ -4,10 +4,14 @@
   "version": "synq-deal-v1-standard",
   "status": "standard-ready",
   "deployedAt": "2026-10-03T01:48:04.634Z",
+  "deploymentBlock": 11832783,
+  "deploymentTxHash": "0x5f5cb3d115d0f8b159e0b0d249679b6f8cf8f507766deae109a4763e605b0330",
   "deployer": "0xD2D4d415a4730b1490c9Ce27944529B83ff76319",
   "contracts": {
     "dealImplementation": "0x2a3C8A880398FF6DD8e6F9976c8BE6C8aBef2435",
     "factory": "0x7482c3439Aa6065066c7759b87eeD25a403CbB03",
+    "factoryDeploymentBlock": 11832783,
+    "factoryDeploymentTxHash": "0x5f5cb3d115d0f8b159e0b0d249679b6f8cf8f507766deae109a4763e605b0330",
     "primaryResolver": "0x50Ee032d382B49A687EBDa08c5192fb7c5b9e392",
     "emergencyResolver": "0x9F45E79288f1766553E88C45CD5B254CD4662854"
   },

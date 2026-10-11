@@ -252,6 +252,27 @@ export default function FrontPage() {
         .cta-square-c {
           animation: cta-square-spin-c 5.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
         }
+        @keyframes brand-square-spin-a {
+          0% { transform: rotate(0deg); }
+          22% { transform: rotate(90deg); }
+          42% { transform: rotate(90deg); }
+          72% { transform: rotate(270deg); }
+          86% { transform: rotate(270deg); }
+          100% { transform: rotate(360deg); }
+        }
+        @keyframes brand-square-spin-b {
+          0% { transform: rotate(0deg); }
+          26% { transform: rotate(0deg); }
+          50% { transform: rotate(180deg); }
+          78% { transform: rotate(180deg); }
+          100% { transform: rotate(360deg); }
+        }
+        .brand-square-a {
+          animation: brand-square-spin-a 5.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+        }
+        .brand-square-b {
+          animation: brand-square-spin-b 6.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+        }
         @keyframes wallet-square-spin-a {
           0% { transform: rotate(0deg); }
           20% { transform: rotate(90deg); }
@@ -396,6 +417,8 @@ export default function FrontPage() {
           .cta-square-a,
           .cta-square-b,
           .cta-square-c,
+          .brand-square-a,
+          .brand-square-b,
           .wallet-square-a,
           .wallet-square-b,
           .wallet-square-c,
@@ -410,6 +433,23 @@ export default function FrontPage() {
 
       {/* Exit Fade Container: Smoothly fades all landing elements into #242424 charcoal during 500-1000ms */}
       <div className={`w-full h-full relative synq-landing-exit-fade ${exitPhase === 'fading' ? 'is-fading' : ''}`}>
+
+      {/* Header UI: Top-left Public Indicator — Two Animated White Squares (□ □) */}
+      <div
+        className="absolute top-6 left-6 md:top-8 md:left-10 z-20 pointer-events-none select-none h-10 w-10 md:w-11 flex items-center justify-center synq-intro-indicators"
+        aria-hidden="true"
+      >
+        <div className="flex items-center justify-center gap-2">
+          <div
+            className="brand-square-a w-[10px] h-[10px] rounded-[3px] bg-white will-change-transform"
+            title="Brand indicator"
+          />
+          <div
+            className="brand-square-b w-[10px] h-[10px] rounded-[3px] bg-white will-change-transform"
+            title="Brand indicator"
+          />
+        </div>
+      </div>
 
       {/* Header UI: Top-right Public Indicator — Six Animated White Squares (□ □ □ □ □ □) */}
       {!walletDropdownOpen && (
@@ -638,7 +678,7 @@ export default function FrontPage() {
         </div>
       </div>
 
-      {/* Layer 6: Secret Layer — Rainbow Enter Button Revealed Spatially Through Liquid Lens Window */}
+      {/* Layer 6: Secret Layer — Revealed Spatially Through Liquid Lens Window */}
       <div
         className="absolute inset-0 pointer-events-none select-none z-30"
         style={{
@@ -648,6 +688,23 @@ export default function FrontPage() {
         }}
         aria-hidden={!lensActive}
       >
+        {/* Top-left Secret Brand Logo: replaces the two cubes in the same position */}
+        <div className="absolute top-6 left-6 md:top-8 md:left-10 h-10 w-10 md:w-11 flex items-center justify-center pointer-events-auto">
+          <Link
+            href="/"
+            className="flex items-center justify-center outline-none group"
+            aria-label="Synq Home"
+          >
+            <div className="flex items-center justify-center bg-[#242424] rounded-lg translate-x-[6px]">
+              <img
+                src="/newlogopng.png"
+                alt="Synq"
+                className="w-12 h-12 md:w-14 md:h-14 object-contain drop-shadow group-hover:scale-105 transition-transform shrink-0"
+              />
+            </div>
+          </Link>
+        </div>
+
         <div className="absolute bottom-7 md:bottom-9 left-1/2 -translate-x-1/2 w-[160px] h-[44px] pointer-events-auto">
           <Link
             href="/negotiator?new=1"
