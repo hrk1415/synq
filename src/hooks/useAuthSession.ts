@@ -262,9 +262,11 @@ export function useAuthSession() {
     clearAuthSession(address);
   }, [address]);
 
+  const getToken = useCallback(() => getStoredSession(address), [address]);
+
   return {
     ensureAuthenticated,
     clearSession,
-    getToken: () => getStoredSession(address),
+    getToken,
   };
 }
