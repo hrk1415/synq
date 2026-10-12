@@ -1,0 +1,30 @@
+{
+  "network": "sepolia",
+  "chainId": 11155111,
+  "version": "synq-premium-protection-v1",
+  "status": "deployed",
+  "deployedAt": "2026-10-05T23:22:27.704Z",
+  "deployer": "0xD2D4d415a4730b1490c9Ce27944529B83ff76319",
+  "contracts": {
+    "protectionPool": "0xA1f4991597869ba11EbD94edED4d69960063cbc2",
+    "protectionManager": "0xEbD3654548371f2dc2d1420226b99983a42e2FE8",
+    "protectionCommittee": "0x8e77aFf09Dd37EEa35d2931Ac1aA624abBF94e12"
+  },
+  "dependencies": {
+    "standardV2Manifest": "deployments/sepolia-v2-standard.json",
+    "factory": "0x9b7C5B529A420d015a85fD77040eF63b0e6cbdb0",
+    "canonicalUsdc": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238"
+  },
+  "parameters": {
+    "coverageRateBps": 2000,
+    "premiumFeeBps": 200
+  },
+  "governance": {
+    "committeeSigners": [
+      "0x6f270e8c6de66fb53a97e59e3e89e2a02290e7fa",
+      "0x17cd3b3b214191805eb92baa31518c7ea76078b3",
+      "0x0491c59adc81774deeab0777dc9eceb1ea882f34"
+    ],
+    "threshold": 2
+  }
+}

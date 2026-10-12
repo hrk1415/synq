@@ -3,11 +3,14 @@
 import { useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { nexotiqDealABI } from '@/lib/contracts/abis';
 import { useEffect, useMemo } from 'react';
+import { useSepoliaNetwork } from '@/hooks/useSepoliaNetwork';
+import { SEPOLIA_CHAIN_ID } from '@/lib/contracts/addresses';
 
 export function useDealContract(dealAddress: `0x${string}` | undefined) {
   const config = {
     address: dealAddress,
     abi: nexotiqDealABI,
+    chainId: SEPOLIA_CHAIN_ID,
   } as const;
 
   const { data: buyer, refetch: refetchBuyer } = useReadContract({ ...config, functionName: 'buyer', query: { enabled: !!dealAddress } });
@@ -25,10 +28,11 @@ export function useDealContract(dealAddress: `0x${string}` | undefined) {
   const { data: milestones, refetch: refetchMilestones } = useReadContract({ ...config, functionName: 'getMilestones', query: { enabled: !!dealAddress } });
   const { data: dispute, refetch: refetchDispute } = useReadContract({ ...config, functionName: 'dispute', query: { enabled: !!dealAddress } });
 
+  const { ensureSepolia, networkReady, isSwitching, error: networkError } = useSepoliaNetwork();
   const write = useWriteContract();
-  const { data: txHash, writeContract, isPending } = write;
+  const { data: txHash, writeContractAsync, isPending, error: writeError } = write;
 
-  const txReceipt = useWaitForTransactionReceipt({ hash: txHash });
+  const txReceipt = useWaitForTransactionReceipt({ hash: txHash, chainId: SEPOLIA_CHAIN_ID });
 
   const refetchAll = useMemo(() => () => {
     refetchBuyer();
@@ -57,16 +61,22 @@ export function useDealContract(dealAddress: `0x${string}` | undefined) {
     }
   }, [txReceipt.isSuccess, txReceipt.data?.transactionHash, refetchAll]);
 
-  function safeWrite(params: Record<string, unknown>) {
+  async function safeWrite(params: Record<string, unknown>) {
     if (!dealAddress) return;
-    writeContract({ ...params, address: dealAddress, abi: nexotiqDealABI } as any);
+    try {
+      await ensureSepolia();
+      return await writeContractAsync({ ...params, address: dealAddress, abi: nexotiqDealABI } as any);
+    } catch {
+      return undefined;
+    }
   }
 
   return {
     buyer, seller, title, description, totalValue, deadline,
     status, currentMilestone, riskScore, protectionEnabled,
     escrowBalance, asset, milestones, dispute,
-    writeContract, isPending: isPending || txReceipt.isLoading, txReceipt, refetchAll,
+    networkReady, isSwitching, error: networkError ?? writeError,
+    isPending: isPending || txReceipt.isLoading || isSwitching, txReceipt, refetchAll,
     addMilestone: (t: string, d: string, a: bigint, dd: bigint) => safeWrite({ functionName: 'addMilestone', args: [t, d, a, dd] }),
     fundEscrow: (v: bigint) => safeWrite({ functionName: 'fundEscrow', value: v }),
     startMilestone: (id: bigint) => safeWrite({ functionName: 'startMilestone', args: [id] }),

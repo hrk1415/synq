@@ -1,0 +1,32 @@
+{
+  "network": "sepolia",
+  "chainId": 11155111,
+  "status": "deployed",
+  "deploymentTxHash": "0xaedc87224a617f713123120594735b18cb8ae21d83036948c889bd9a4160f32c",
+  "deployedAt": "2026-10-06T03:24:49.563Z",
+  "owner": "0xD2D4d415a4730b1490c9Ce27944529B83ff76319",
+  "contracts": {
+    "protectionPool": "0xA1f4991597869ba11EbD94edED4d69960063cbc2",
+    "protectionCommittee": "0x8e77aFf09Dd37EEa35d2931Ac1aA624abBF94e12",
+    "protectionManager": "0x462D1b8c1047d05FbE61e15809f4E6A26B12ED00",
+    "previousProtectionManagerV1": "0xEbD3654548371f2dc2d1420226b99983a42e2FE8"
+  },
+  "dependencies": {
+    "canonicalFactoryV2": "0x9b7C5B529A420d015a85fD77040eF63b0e6cbdb0",
+    "canonicalUsdc": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238"
+  },
+  "parameters": {
+    "premiumFeeBps": 200,
+    "coverageRateBps": 2000,
+    "maxPremiumFeeBps": 3000,
+    "maxMilestones": 16
+  },
+  "governance": {
+    "committeeSigners": [
+      "0x6f270e8c6de66fb53a97e59e3e89e2a02290e7fa",
+      "0x17cd3b3b214191805eb92baa31518c7ea76078b3",
+      "0x0491c59adc81774deeab0777dc9eceb1ea882f34"
+    ],
+    "threshold": 2
+  }
+}

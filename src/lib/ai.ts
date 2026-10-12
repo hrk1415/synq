@@ -1,13 +1,27 @@
 import OpenAI from 'openai';
-import { getPublicClient } from './chain';
+import { sepoliaPublicClient } from './chain';
 import { nexotiqDirectoryABI } from './contracts/abis';
-import { CONTRACT_ADDRESSES, chainKeyForId } from './contracts/addresses';
+import { CONTRACT_ADDRESSES } from './contracts/addresses';
+import { getFreelancerCompletedDealsBatch } from './deals/freelancerStats';
+import type {
+  PaymentConsultationDecision,
+  PaymentStructureRecommendation,
+  PaymentPlanningFactor,
+  DealAnalyzerDecision,
+  ScopeClarityAssessment,
+  ScopePlanningFactor,
+  DeadlineFeasibilityDecision,
+  DeadlineAssessability,
+  DeadlinePressure,
+  DeadlinePlanningDriver,
+  DeadlineNextStep,
+} from './synq-knowledge';
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1';
 const GROQ_MODEL = 'openai/gpt-oss-20b';
 const FALLBACK_MODEL = 'gpt-4';
 
-function getClient(): { client: OpenAI; model: string } | null {
+function getClient(): { client: OpenAI; model: string; provider: 'groq' | 'openai' } | null {
   const groqKey = process.env.GROQ_API_KEY;
   const openaiKey = process.env.OPENAI_API_KEY;
 
@@ -16,6 +30,7 @@ function getClient(): { client: OpenAI; model: string } | null {
       return {
         client: new OpenAI({ apiKey: groqKey, baseURL: GROQ_API_URL }),
         model: GROQ_MODEL,
+        provider: 'groq',
       };
     } catch { /* fall through */ }
   }
@@ -25,6 +40,7 @@ function getClient(): { client: OpenAI; model: string } | null {
       return {
         client: new OpenAI({ apiKey: openaiKey }),
         model: FALLBACK_MODEL,
+        provider: 'openai',
       };
     } catch { /* fall through */ }
   }
@@ -73,6 +89,572 @@ export async function getAISuggestions(prompt: string): Promise<string> {
     console.error('AI API error:', error);
     return mockSuggestions;
   }
+}
+
+export async function getNegotiatorAICompletion(
+  systemPrompt: string,
+  userMessages: Array<{ role: 'user' | 'assistant'; content: string }>
+): Promise<string | null> {
+  const ai = getClient();
+  if (!ai) return null;
+
+  const responseFormat =
+    ai.provider === 'groq' && ai.model === GROQ_MODEL
+      ? {
+          type: 'json_schema' as const,
+          json_schema: {
+            name: 'negotiator_response',
+            strict: true,
+            schema: {
+              type: 'object',
+              properties: {
+                message: {
+                  type: 'string',
+                },
+                intent: {
+                  type: 'string',
+                },
+              },
+              required: ['message', 'intent'],
+              additionalProperties: false,
+            },
+          },
+        }
+      : { type: 'json_object' as const };
+
+  try {
+    const completion = await ai.client.chat.completions.create({
+      model: ai.model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        ...userMessages,
+      ],
+      response_format: responseFormat,
+      temperature: 0.3,
+      max_completion_tokens: 1536,
+    });
+
+    return completion.choices[0]?.message?.content || null;
+  } catch (error) {
+    console.error('Negotiator AI API error:', error);
+    return null;
+  }
+}
+
+export async function getPaymentConsultationDecision(
+  systemPrompt: string,
+  userPrompt: string
+): Promise<PaymentConsultationDecision | null> {
+  const ai = getClient();
+  if (!ai) {
+    console.warn('[Negotiator R2 Payment] client_unavailable');
+    return null;
+  }
+
+  const paymentConsultationJsonSchema = {
+    type: 'json_schema' as const,
+    json_schema: {
+      name: 'payment_consultation_decision',
+      strict: true,
+      schema: {
+        type: 'object',
+        properties: {
+          recommendedStructure: {
+            type: 'string',
+            enum: [
+              'FIFTY_FIFTY',
+              'SINGLE_RELEASE',
+              'CUSTOM_MILESTONES',
+              'INSUFFICIENT_CONTEXT',
+            ],
+          },
+          reasonFactors: {
+            type: 'array',
+            items: {
+              type: 'string',
+              enum: [
+                'TWO_MAJOR_STAGES',
+                'MULTIPLE_DISTINCT_DELIVERABLES',
+                'SINGLE_FINAL_DELIVERABLE',
+                'STAGED_PROJECT',
+                'SIMPLE_ONE_STEP_SCOPE',
+                'UNCLEAR_DELIVERABLE_STRUCTURE',
+              ],
+            },
+          },
+        },
+        required: ['recommendedStructure', 'reasonFactors'],
+        additionalProperties: false,
+      },
+    },
+  };
+
+  const responseFormat =
+    ai.provider === 'groq' && ai.model === GROQ_MODEL
+      ? paymentConsultationJsonSchema
+      : { type: 'json_object' as const };
+
+  let rawContent: string | null = null;
+  try {
+    const completion = await ai.client.chat.completions.create({
+      model: ai.model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      response_format: responseFormat,
+      temperature: 0.3,
+      max_tokens: 300,
+    });
+
+    rawContent = completion.choices[0]?.message?.content || null;
+  } catch (error) {
+    console.warn('[Negotiator R2 Payment] provider_error', {
+      errorName: error instanceof Error ? error.name : 'UnknownError',
+    });
+    return null;
+  }
+
+  if (!rawContent) {
+    console.warn('[Negotiator R2 Payment] empty_completion');
+    return null;
+  }
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(rawContent);
+  } catch {
+    console.warn('[Negotiator R2 Payment] json_parse_failed', {
+      completionLength: typeof rawContent === 'string' ? rawContent.length : 0,
+    });
+    return null;
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    console.warn('[Negotiator R2 Payment] invalid_response_shape', {
+      parsedType: Array.isArray(parsed) ? 'array' : typeof parsed,
+    });
+    return null;
+  }
+
+  const validStructures = new Set<string>([
+    'FIFTY_FIFTY',
+    'SINGLE_RELEASE',
+    'CUSTOM_MILESTONES',
+    'INSUFFICIENT_CONTEXT',
+  ]);
+  const validFactors = new Set<string>([
+    'TWO_MAJOR_STAGES',
+    'MULTIPLE_DISTINCT_DELIVERABLES',
+    'SINGLE_FINAL_DELIVERABLE',
+    'STAGED_PROJECT',
+    'SIMPLE_ONE_STEP_SCOPE',
+    'UNCLEAR_DELIVERABLE_STRUCTURE',
+  ]);
+
+  if (
+    typeof parsed.recommendedStructure !== 'string' ||
+    !validStructures.has(parsed.recommendedStructure)
+  ) {
+    console.warn('[Negotiator R2 Payment] invalid_recommended_structure', {
+      hasRecommendedStructureKey: 'recommendedStructure' in parsed,
+      structureType: typeof parsed.recommendedStructure,
+    });
+    return null;
+  }
+
+  if (!Array.isArray(parsed.reasonFactors)) {
+    console.warn('[Negotiator R2 Payment] invalid_reason_factors', {
+      hasReasonFactorsKey: 'reasonFactors' in parsed,
+      reasonFactorsIsArray: false,
+    });
+    return null;
+  }
+
+  const hasInvalidFactor = parsed.reasonFactors.some(
+    (f: unknown) => typeof f !== 'string' || !validFactors.has(f)
+  );
+  if (hasInvalidFactor) {
+    console.warn('[Negotiator R2 Payment] invalid_reason_factors', {
+      reasonFactorsIsArray: true,
+      factorCount: parsed.reasonFactors.length,
+      hasInvalidFactorValue: true,
+    });
+    return null;
+  }
+
+  return {
+    recommendedStructure: parsed.recommendedStructure as PaymentStructureRecommendation,
+    reasonFactors: parsed.reasonFactors as PaymentPlanningFactor[],
+  };
+}
+
+export async function getDealAnalyzerDecision(
+  systemPrompt: string,
+  userPrompt: string
+): Promise<DealAnalyzerDecision | null> {
+  const ai = getClient();
+  if (!ai) {
+    console.warn('[Negotiator R4 Analyzer] client_unavailable');
+    return null;
+  }
+
+  const dealAnalyzerJsonSchema = {
+    type: 'json_schema' as const,
+    json_schema: {
+      name: 'deal_analyzer_decision',
+      strict: true,
+      schema: {
+        type: 'object',
+        properties: {
+          scopeClarity: {
+            type: 'string',
+            enum: ['CLEAR_ENOUGH', 'NEEDS_MORE_DETAIL', 'INSUFFICIENT_SCOPE'],
+          },
+          flaggedItemIndexes: {
+            type: 'array',
+            items: {
+              type: 'integer',
+            },
+          },
+          planningFactors: {
+            type: 'array',
+            items: {
+              type: 'string',
+              enum: [
+                'CLARIFY_EXPECTED_OUTPUTS',
+                'CLARIFY_SCOPE_BOUNDARIES',
+                'CLARIFY_HANDOFF_EXPECTATIONS',
+                'CLARIFY_REVIEW_EXPECTATIONS',
+                'CONSIDER_STAGE_PLANNING',
+              ],
+            },
+          },
+        },
+        required: ['scopeClarity', 'flaggedItemIndexes', 'planningFactors'],
+        additionalProperties: false,
+      },
+    },
+  };
+
+  const responseFormat =
+    ai.provider === 'groq' && ai.model === GROQ_MODEL
+      ? dealAnalyzerJsonSchema
+      : { type: 'json_object' as const };
+
+  let rawContent: string | null = null;
+  try {
+    const completion = await ai.client.chat.completions.create({
+      model: ai.model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      response_format: responseFormat,
+      temperature: 0.2,
+      max_completion_tokens: 1024,
+    });
+
+    rawContent = completion.choices[0]?.message?.content || null;
+  } catch (error) {
+    const errorName = error instanceof Error ? error.name : 'UnknownError';
+    const status =
+      typeof error === 'object' &&
+      error !== null &&
+      'status' in error &&
+      typeof (error as { status: unknown }).status === 'number'
+        ? (error as { status: number }).status
+        : null;
+
+    const errorObj =
+      typeof error === 'object' && error !== null
+        ? (error as Record<string, unknown>)
+        : null;
+    const nestedErrorObj =
+      errorObj && typeof errorObj.error === 'object' && errorObj.error !== null
+        ? (errorObj.error as Record<string, unknown>)
+        : null;
+
+    const errorCode =
+      errorObj && typeof errorObj.code === 'string'
+        ? errorObj.code
+        : nestedErrorObj && typeof nestedErrorObj.code === 'string'
+        ? nestedErrorObj.code
+        : null;
+
+    const errorType =
+      errorObj && typeof errorObj.type === 'string'
+        ? errorObj.type
+        : nestedErrorObj && typeof nestedErrorObj.type === 'string'
+        ? nestedErrorObj.type
+        : null;
+
+    console.warn('[Negotiator R4 Analyzer] provider_error', {
+      errorName,
+      status,
+      errorCode,
+      errorType,
+    });
+    return null;
+  }
+
+  if (!rawContent) {
+    console.warn('[Negotiator R4 Analyzer] empty_completion');
+    return null;
+  }
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(rawContent);
+  } catch {
+    console.warn('[Negotiator R4 Analyzer] json_parse_failed');
+    return null;
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    console.warn('[Negotiator R4 Analyzer] invalid_response_shape');
+    return null;
+  }
+
+  const validClarity = new Set<string>([
+    'CLEAR_ENOUGH',
+    'NEEDS_MORE_DETAIL',
+    'INSUFFICIENT_SCOPE',
+  ]);
+  const validFactors = new Set<string>([
+    'CLARIFY_EXPECTED_OUTPUTS',
+    'CLARIFY_SCOPE_BOUNDARIES',
+    'CLARIFY_HANDOFF_EXPECTATIONS',
+    'CLARIFY_REVIEW_EXPECTATIONS',
+    'CONSIDER_STAGE_PLANNING',
+  ]);
+
+  if (
+    typeof parsed.scopeClarity !== 'string' ||
+    !validClarity.has(parsed.scopeClarity)
+  ) {
+    console.warn('[Negotiator R4 Analyzer] invalid_scope_clarity');
+    return null;
+  }
+
+  if (!Array.isArray(parsed.flaggedItemIndexes)) {
+    console.warn('[Negotiator R4 Analyzer] invalid_flagged_indexes');
+    return null;
+  }
+
+  const hasInvalidIndex = parsed.flaggedItemIndexes.some(
+    (idx: unknown) => typeof idx !== 'number' || !Number.isInteger(idx)
+  );
+  if (hasInvalidIndex) {
+    console.warn('[Negotiator R4 Analyzer] invalid_flagged_indexes');
+    return null;
+  }
+
+  if (!Array.isArray(parsed.planningFactors)) {
+    console.warn('[Negotiator R4 Analyzer] invalid_planning_factors');
+    return null;
+  }
+
+  const hasInvalidFactor = parsed.planningFactors.some(
+    (f: unknown) => typeof f !== 'string' || !validFactors.has(f)
+  );
+  if (hasInvalidFactor) {
+    console.warn('[Negotiator R4 Analyzer] invalid_planning_factors');
+    return null;
+  }
+
+  return {
+    scopeClarity: parsed.scopeClarity as ScopeClarityAssessment,
+    flaggedItemIndexes: parsed.flaggedItemIndexes as number[],
+    planningFactors: parsed.planningFactors as ScopePlanningFactor[],
+  };
+}
+
+export async function getDeadlineFeasibilityDecision(
+  systemPrompt: string,
+  userPrompt: string
+): Promise<DeadlineFeasibilityDecision | null> {
+  const ai = getClient();
+  if (!ai) {
+    console.warn('[Negotiator Deadline Feasibility] client_unavailable');
+    return null;
+  }
+
+  const responseFormat =
+    ai.provider === 'groq' && ai.model === GROQ_MODEL
+      ? {
+          type: 'json_schema' as const,
+          json_schema: {
+            name: 'deadline_feasibility_decision',
+            strict: true,
+            schema: {
+              type: 'object',
+              properties: {
+                assessability: { type: 'string', enum: ['ASSESSABLE', 'INSUFFICIENT_SCOPE', 'NO_DEADLINE'] },
+                pressure: { type: 'string', enum: ['PLAUSIBLE', 'TIGHT', 'UNCERTAIN'] },
+                drivers: {
+                  type: 'array',
+                  items: {
+                    type: 'string',
+                    enum: [
+                      'MULTIPLE_DELIVERABLES',
+                      'AMBIGUOUS_SCOPE',
+                      'DEPENDENCIES_UNSPECIFIED',
+                      'REVIEW_EXPECTATIONS_UNSPECIFIED',
+                      'HANDOFF_UNSPECIFIED',
+                      'NO_CLEAR_PRESSURE_SIGNAL',
+                    ],
+                  },
+                },
+                nextStep: {
+                  type: 'string',
+                  enum: [
+                    'KEEP_AS_WORKING_TARGET',
+                    'CLARIFY_SCOPE',
+                    'DISCUSS_MORE_TIME',
+                    'BREAK_DOWN_DELIVERABLES',
+                    'ASK_FOR_DEADLINE',
+                  ],
+                },
+              },
+              required: ['assessability', 'pressure', 'drivers', 'nextStep'],
+              additionalProperties: false,
+            },
+          },
+        }
+      : { type: 'json_object' as const };
+
+  let rawContent: string | null = null;
+  try {
+    const completion = await ai.client.chat.completions.create({
+      model: ai.model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      response_format: responseFormat,
+      temperature: 0.2,
+      max_completion_tokens: 1024,
+    });
+    rawContent = completion.choices[0]?.message?.content || null;
+  } catch (error) {
+    const errorName = error instanceof Error ? error.name : 'UnknownError';
+    const status =
+      typeof error === 'object' &&
+      error !== null &&
+      'status' in error &&
+      typeof (error as { status: unknown }).status === 'number'
+        ? (error as { status: number }).status
+        : null;
+
+    const errorObj =
+      typeof error === 'object' && error !== null
+        ? (error as Record<string, unknown>)
+        : null;
+    const nestedErrorObj =
+      errorObj && typeof errorObj.error === 'object' && errorObj.error !== null
+        ? (errorObj.error as Record<string, unknown>)
+        : null;
+
+    const errorCode =
+      errorObj && typeof errorObj.code === 'string'
+        ? errorObj.code
+        : nestedErrorObj && typeof nestedErrorObj.code === 'string'
+        ? nestedErrorObj.code
+        : null;
+
+    const errorType =
+      errorObj && typeof errorObj.type === 'string'
+        ? errorObj.type
+        : nestedErrorObj && typeof nestedErrorObj.type === 'string'
+        ? nestedErrorObj.type
+        : null;
+
+    console.warn('[Negotiator Deadline Feasibility] provider_error', {
+      errorName,
+      status,
+      errorCode,
+      errorType,
+    });
+    return null;
+  }
+
+  if (!rawContent) {
+    console.warn('[Negotiator Deadline Feasibility] empty_completion');
+    return null;
+  }
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(rawContent);
+  } catch (error) {
+    console.warn('[Negotiator Deadline Feasibility] json_parse_failed', {
+      errorName: error instanceof Error ? error.name : 'UnknownError',
+    });
+    return null;
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    console.warn('[Negotiator Deadline Feasibility] invalid_response_shape');
+    return null;
+  }
+
+  const assessabilityValues = new Set(['ASSESSABLE', 'INSUFFICIENT_SCOPE', 'NO_DEADLINE']);
+  const pressureValues = new Set(['PLAUSIBLE', 'TIGHT', 'UNCERTAIN']);
+  const driverValues = new Set([
+    'MULTIPLE_DELIVERABLES',
+    'AMBIGUOUS_SCOPE',
+    'DEPENDENCIES_UNSPECIFIED',
+    'REVIEW_EXPECTATIONS_UNSPECIFIED',
+    'HANDOFF_UNSPECIFIED',
+    'NO_CLEAR_PRESSURE_SIGNAL',
+  ]);
+  const nextStepValues = new Set([
+    'KEEP_AS_WORKING_TARGET',
+    'CLARIFY_SCOPE',
+    'DISCUSS_MORE_TIME',
+    'BREAK_DOWN_DELIVERABLES',
+    'ASK_FOR_DEADLINE',
+  ]);
+
+  if (typeof parsed.assessability !== 'string' || !assessabilityValues.has(parsed.assessability)) {
+    console.warn('[Negotiator Deadline Feasibility] invalid_assessability', {
+      assessabilityType: typeof parsed.assessability,
+    });
+    return null;
+  }
+  if (typeof parsed.pressure !== 'string' || !pressureValues.has(parsed.pressure)) {
+    console.warn('[Negotiator Deadline Feasibility] invalid_pressure', {
+      pressureType: typeof parsed.pressure,
+    });
+    return null;
+  }
+  if (!Array.isArray(parsed.drivers)) {
+    console.warn('[Negotiator Deadline Feasibility] invalid_drivers', {
+      driversIsArray: false,
+    });
+    return null;
+  }
+  if (parsed.drivers.some((value: unknown) => typeof value !== 'string' || !driverValues.has(value))) {
+    console.warn('[Negotiator Deadline Feasibility] invalid_drivers', {
+      driversIsArray: true,
+      hasInvalidDriverValue: true,
+    });
+    return null;
+  }
+  if (typeof parsed.nextStep !== 'string' || !nextStepValues.has(parsed.nextStep)) {
+    console.warn('[Negotiator Deadline Feasibility] invalid_next_step', {
+      nextStepType: typeof parsed.nextStep,
+    });
+    return null;
+  }
+
+  return {
+    assessability: parsed.assessability as DeadlineAssessability,
+    pressure: parsed.pressure as DeadlinePressure,
+    drivers: parsed.drivers as DeadlinePlanningDriver[],
+    nextStep: parsed.nextStep as DeadlineNextStep,
+  };
 }
 
 const defaultRisk = {
@@ -124,11 +706,6 @@ Rules:
 
 const fallbackPayment = { recipient: 'unknown', amount: 0, asset: 'ETH', reason: '' };
 
-const DIRECTORY_BY_CHAIN: Record<number, string> = {
-  31337: CONTRACT_ADDRESSES.hardhat.NexotiqDirectory,
-  11155111: CONTRACT_ADDRESSES.sepolia.NexotiqDirectory,
-};
-
 const SELLER_STOPWORDS = new Set([
   'find', 'suggest', 'sell', 'seller', 'freelancer', 'marketplace', 'needed', 'need', 'for', 'the', 'a', 'an', 'of', 'to', 'in', 'on', 'me', 'please', 'koto', 'ki', 'amar', 'jonno', 'deo', 'dekh', 'kore', 'daw', 'diben', 'chain', 'want', 'i', 'my', 'help', 'get', 'recommend', 'best', 'good', 'any',
 ]);
@@ -137,13 +714,10 @@ function tokenizeSellerQuery(s: string) {
   return s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((t) => t.length >= 2 && !SELLER_STOPWORDS.has(t));
 }
 
-export async function findSellers(prompt: string, chainId: number = 11155111): Promise<any> {
+export async function findSellers(prompt: string): Promise<any> {
   try {
-    const directoryAddress = (DIRECTORY_BY_CHAIN[chainId] || DIRECTORY_BY_CHAIN[11155111]) as `0x${string}`;
-    const client = getPublicClient(chainId) || getPublicClient(11155111);
-    if (!client) throw new Error('unsupported chain');
-    const profiles = (await client.readContract({
-      address: directoryAddress,
+    const profiles = (await sepoliaPublicClient.readContract({
+      address: CONTRACT_ADDRESSES.sepolia.NexotiqDirectory as `0x${string}`,
       abi: nexotiqDirectoryABI,
       functionName: 'getAllProfiles',
     })) as any[];
@@ -153,9 +727,38 @@ export async function findSellers(prompt: string, chainId: number = 11155111): P
       return { type: 'sellers', sellers: [], message: 'No on-chain profiles registered in the Deal Port yet. Ask sellers to register on the Deal Port page first.' };
     }
 
+    const sellerWallets = sellers.map((p) => String(p.wallet));
+    let completedMap: Record<string, number> = {};
+    try {
+      completedMap = await getFreelancerCompletedDealsBatch(sellerWallets);
+    } catch {
+      /* degrade gracefully: 0 experience bonus */
+    }
+
+    let marketProfilesMap: Record<string, any> = {};
+    if (typeof window === 'undefined') {
+      try {
+        const dynamicImport = new Function('specifier', 'return import(specifier)');
+        const dbModule = await dynamicImport('@/lib/db');
+        const allMarkets = await dbModule.getAll('marketProfiles');
+        if (Array.isArray(allMarkets)) {
+          for (const mp of allMarkets) {
+            if (mp?.walletAddress) {
+              marketProfilesMap[String(mp.walletAddress).toLowerCase()] = mp;
+            }
+          }
+        }
+      } catch {
+        /* degrade gracefully */
+      }
+    }
+
     const terms = tokenizeSellerQuery(prompt);
     const scored = sellers.map((p) => {
       let score = 0;
+      const walletLower = String(p.wallet).toLowerCase();
+      const completedDealsCount = completedMap[walletLower] || 0;
+
       const cat = String(p.category || '').toLowerCase();
       const skills = (p.skills || []).map((s: string) => String(s).toLowerCase());
       const haystack = [String(p.name || '').toLowerCase(), String(p.bio || '').toLowerCase(), ...skills].join(' ');
@@ -165,29 +768,46 @@ export async function findSellers(prompt: string, chainId: number = 11155111): P
         else if (cat.includes(t)) score += 8;
       }
       if (p.available) score += 3;
-      score += Math.min(Number(p.completedDeals || 0) * 2, 8);
-      return { p, score };
+      score += Math.min(completedDealsCount * 2, 8);
+      return { p, score, completedDealsCount };
     }).sort((a, b) => b.score - a.score);
 
     const top = scored.slice(0, 5);
     const topScore = top[0]?.score || 0;
-    const withScore = top.map(({ p, score }) => ({
-      wallet: String(p.wallet),
-      name: String(p.name || 'Anonymous'),
-      category: String(p.category || '-'),
-      skills: (p.skills || []).slice(0, 4).map((s: string) => String(s)),
-      rate: String(p.rate || '0'),
-      bio: String(p.bio || '').slice(0, 100),
-      available: !!p.available,
-      match: topScore > 0 ? Math.min(Math.round((score / topScore) * 100), 99) : 50,
-    }));
+    const withScore = top.map(({ p, score, completedDealsCount }) => {
+      const wLower = String(p.wallet).toLowerCase();
+      const mp = marketProfilesMap[wLower];
+      const validPricing =
+        mp?.startingRateAmount &&
+        mp?.startingRateType &&
+        (mp.startingRateType === 'PER_PROJECT' || mp.startingRateType === 'PER_HOUR')
+          ? {
+              amount: String(mp.startingRateAmount),
+              currency: 'USDC' as const,
+              rateType: mp.startingRateType as 'PER_PROJECT' | 'PER_HOUR',
+            }
+          : null;
+
+      return {
+        wallet: String(p.wallet),
+        name: String(p.name || 'Anonymous'),
+        category: String(p.category || '-'),
+        skills: (p.skills || []).slice(0, 4).map((s: string) => String(s)),
+        rate: String(p.rate || '0'),
+        pricing: validPricing,
+        bio: String(p.bio || '').slice(0, 100),
+        available: !!p.available,
+        completedDeals: completedDealsCount,
+        match: topScore > 0 ? Math.min(Math.round((score / topScore) * 100), 99) : 50,
+      };
+    });
 
     return {
       type: 'sellers',
       sellers: withScore,
       message: withScore.length > 0
-        ? `Found ${withScore.length} matching ${withScore.length === 1 ? 'seller' : 'sellers'} in Synq's Deal Port based on your request. Select one to create a deal.`
-        : 'I could not find matching sellers for that request. Try describing a skill or service (e.g. "React developer" or "smart contract audit").',
+        ? `I found ${withScore.length} matching ${withScore.length === 1 ? 'freelancer' : 'freelancers'} in Deal Port based on the current deal requirements.`
+        : 'I could not find matching freelancers for that request. Try describing a skill or service (e.g. "React developer" or "smart contract audit").',
     };
   } catch (e: any) {
     try {

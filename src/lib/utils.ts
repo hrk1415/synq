@@ -102,3 +102,7 @@ export function evidenceUrl(evidence: string): string | null {
   if (ipfsMatch) return `https://ipfs.io/ipfs/${ipfsMatch[1]}`;
   return null;
 }
+
+export function normalizeWallet(wallet: string): string {
+  return String(wallet || '').trim().toLowerCase();
+}

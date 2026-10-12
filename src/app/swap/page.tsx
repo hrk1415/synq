@@ -1,15 +1,16 @@
 'use client';
 
 import { useMemo, useEffect, useState, useCallback } from 'react';
-import { useAccount, useChainId, useBalance, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useAccount, useBalance, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { parseEther, parseUnits, formatUnits } from 'viem';
 import { ChevronDown, ArrowUpDown, Loader2, CheckCircle, ExternalLink, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { TokenIcon } from '@/components/shared/TokenIcon';
-import { chainKeyForId, getTokenInfo, TOKENS } from '@/lib/contracts/addresses';
+import { getTokenInfo, SEPOLIA_CHAIN_ID, TOKENS } from '@/lib/contracts/addresses';
 import { UNISWAP_V2_SEPOLIA, uniswapV2RouterABI } from '@/lib/contracts/uniswap';
 import { erc20ABI } from '@/lib/contracts/abis';
-import { getPublicClient, getExplorerUrl } from '@/lib/chain';
+import { getSepoliaExplorerUrl, sepoliaPublicClient } from '@/lib/chain';
+import { useSepoliaNetwork } from '@/hooks/useSepoliaNetwork';
 
 const WETH = UNISWAP_V2_SEPOLIA.weth;
 const USDC = '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238' as `0x${string}`;
@@ -17,7 +18,7 @@ const ZERO = '0x0000000000000000000000000000000000000000' as `0x${string}`;
 
 export default function SwapPage() {
   const { address, isConnected } = useAccount();
-  const chainId = useChainId();
+  const { networkReady, isSwitching, ensureSepolia } = useSepoliaNetwork();
   const [from, setFrom] = useState(ZERO);
   const [to, setTo] = useState(USDC);
   const [amount, setAmount] = useState('');
@@ -27,29 +28,26 @@ export default function SwapPage() {
   const [marketPrice, setMarketPrice] = useState<number | null>(null);
   const [marketPriceLoading, setMarketPriceLoading] = useState(false);
 
-  const isLocal = chainKeyForId(chainId) === 'hardhat';
-  const isSepolia = chainKeyForId(chainId) === 'sepolia';
-  const isUnsupported = !isLocal && !isSepolia;
+  const isSepolia = true;
+  const isUnsupported = false;
 
   const tokens = useMemo(() => {
-    const key = chainKeyForId(chainId);
-    const list = TOKENS[key] ? Object.entries(TOKENS[key]).map(([addr, t]) => ({
+    const list = Object.entries(TOKENS.sepolia).map(([addr, t]) => ({
       address: addr as `0x${string}`,
       symbol: t.symbol,
       decimals: t.decimals,
-    })) : [];
-    return list.length > 0 ? list : [{ address: ZERO as `0x${string}`, symbol: 'ETH', decimals: 18 }];
-  }, [chainId]);
+    }));
+    return list;
+  }, []);
 
-  const fromInfo = getTokenInfo(chainKeyForId(chainId), from);
-  const toInfo = getTokenInfo(chainKeyForId(chainId), to);
+  const fromInfo = getTokenInfo('sepolia', from);
+  const toInfo = getTokenInfo('sepolia', to);
 
   useEffect(() => {
-    const key = chainKeyForId(chainId);
-    const entries = TOKENS[key] ? Object.entries(TOKENS[key]) : [];
+    const entries = Object.entries(TOKENS.sepolia);
     if (entries.length > 1 && !entries.some(([a]) => a === to)) setTo(entries[1][0] as `0x${string}`);
     if (entries.length > 0 && !entries.some(([a]) => a === from)) setFrom(entries[0][0] as `0x${string}`);
-  }, [chainId, to, from]);
+  }, [to, from]);
 
   const isEthIn = from === ZERO;
   const path = useMemo(() => (isEthIn ? [WETH, USDC] : [USDC, WETH]), [isEthIn]);
@@ -59,7 +57,7 @@ export default function SwapPage() {
     return isEthIn ? parseEther(amount) : parseUnits(amount, 6);
   }, [amount, isEthIn]);
 
-  const client = useMemo(() => getPublicClient(chainId), [chainId]);
+  const client = sepoliaPublicClient;
 
   const fetchQuote = useCallback(async () => {
     setQuote(null);
@@ -86,21 +84,22 @@ export default function SwapPage() {
     return () => clearTimeout(t);
   }, [isSepolia, fetchQuote]);
 
-  const { data: ethBalance } = useBalance({ address });
+  const { data: ethBalance } = useBalance({ address, chainId: SEPOLIA_CHAIN_ID });
   const { data: tokenBalance } = useReadContract({
     address: from,
     abi: erc20ABI,
     functionName: 'balanceOf',
     args: address ? [address] : undefined,
+    chainId: SEPOLIA_CHAIN_ID,
     query: { enabled: !!address && !isEthIn && !!from },
   });
   const fromBalanceRaw = isEthIn ? ethBalance?.value : tokenBalance;
   const fromBalanceLabel = useMemo(() => {
-    if (!address || fromBalanceRaw === undefined || fromBalanceRaw === null) return '';
+    if (!address || !fromInfo || fromBalanceRaw === undefined || fromBalanceRaw === null) return '';
     return `${Number(formatUnits(fromBalanceRaw, fromInfo.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 })} ${fromInfo.symbol}`;
   }, [address, fromBalanceRaw, fromInfo]);
   const setMax = () => {
-    if (fromBalanceRaw === undefined || fromBalanceRaw === null || fromBalanceRaw === 0n) return;
+    if (!fromInfo || fromBalanceRaw === undefined || fromBalanceRaw === null || fromBalanceRaw === 0n) return;
     setAmount(formatUnits(fromBalanceRaw, fromInfo.decimals));
   };
 
@@ -146,15 +145,16 @@ export default function SwapPage() {
 
   const write = useWriteContract();
   const txHash = write.data as `0x${string}` | undefined;
-  const receipt = useWaitForTransactionReceipt({ hash: txHash });
+  const receipt = useWaitForTransactionReceipt({ hash: txHash, chainId: SEPOLIA_CHAIN_ID });
 
   const swap = async () => {
     if (!address || quote === null) return;
     setError('');
     try {
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800);
+      await ensureSepolia();
       if (isEthIn) {
-        await write.writeContract({
+        await write.writeContractAsync({
           address: UNISWAP_V2_SEPOLIA.router,
           abi: uniswapV2RouterABI,
           functionName: 'swapExactETHForTokens',
@@ -162,7 +162,7 @@ export default function SwapPage() {
           value: amountIn,
         });
       } else {
-        await write.writeContract({
+        await write.writeContractAsync({
           address: UNISWAP_V2_SEPOLIA.router,
           abi: uniswapV2RouterABI,
           functionName: 'swapExactTokensForETH',
@@ -177,7 +177,8 @@ export default function SwapPage() {
   const approve = async () => {
     setError('');
     try {
-      await write.writeContract({
+      await ensureSepolia();
+      await write.writeContractAsync({
         address: from,
         abi: erc20ABI,
         functionName: 'approve',
@@ -188,8 +189,8 @@ export default function SwapPage() {
     }
   };
 
-  const busy = write.isPending || receipt.isLoading;
-  const explorerUrl = txHash ? getExplorerUrl(chainId, 'tx', txHash) : null;
+  const busy = isSwitching || write.isPending || receipt.isLoading;
+  const explorerUrl = txHash ? getSepoliaExplorerUrl('tx', txHash) : null;
 
   const flip = () => { const f = from; setFrom(to); setTo(f); setAmount(''); setQuote(null); };
 
@@ -207,7 +208,7 @@ export default function SwapPage() {
   };
 
   const outValue = useMemo(() => {
-    if (quote !== null) return formatUnits(quote, toInfo.decimals);
+    if (quote !== null && toInfo) return formatUnits(quote, toInfo.decimals);
     if (marketValue) return String(marketValue.outUsdc);
     return null;
   }, [quote, marketValue, toInfo]);
@@ -239,7 +240,7 @@ export default function SwapPage() {
             <p className="text-[11px] uppercase tracking-wider text-zinc-600 mb-3">You pay</p>
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
-                <TokenIcon symbol={fromInfo.symbol} size={44} />
+                <TokenIcon symbol={fromInfo?.symbol ?? ''} size={44} />
                 <div className="min-w-0">
                   <select
                     value={from}
@@ -250,7 +251,7 @@ export default function SwapPage() {
                       <option key={t.address} value={t.address}>{t.symbol}</option>
                     ))}
                   </select>
-                  <p className="text-xs text-zinc-500 truncate">{fromBalanceLabel || `${fromInfo.symbol} balance`}</p>
+                  <p className="text-xs text-zinc-500 truncate">{fromBalanceLabel || (fromInfo ? `${fromInfo.symbol} balance` : 'Unsupported network')}</p>
                 </div>
               </div>
               <button
@@ -309,7 +310,7 @@ export default function SwapPage() {
             <p className="text-[11px] uppercase tracking-wider text-zinc-600 mb-3">You receive</p>
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
-                <TokenIcon symbol={toInfo.symbol} size={44} />
+                <TokenIcon symbol={toInfo?.symbol ?? ''} size={44} />
                 <div className="min-w-0">
                   <select
                     value={to}
@@ -320,7 +321,7 @@ export default function SwapPage() {
                       <option key={t.address} value={t.address}>{t.symbol}</option>
                     ))}
                   </select>
-                  <p className="text-xs text-zinc-500 truncate">Receive {toInfo.symbol}{quote === null && marketValue ? ' · estimated' : ''}</p>
+                  <p className="text-xs text-zinc-500 truncate">Receive {toInfo?.symbol ?? ''}{quote === null && marketValue ? ' · estimated' : ''}</p>
                 </div>
               </div>
               <span className="text-3xl font-bold text-white tabular-nums break-all text-right">
@@ -332,7 +333,7 @@ export default function SwapPage() {
               <div className="mt-3 space-y-0.5 text-right">
                 {quote !== null && (
                   <p className="text-[11px] text-zinc-600">
-                    Pool quote · min received {Number(formatUnits(minOut, toInfo.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 })} {toInfo.symbol} (0.5% slippage)
+                    Pool quote · min received {toInfo ? Number(formatUnits(minOut, toInfo.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 }) : '-'} {toInfo?.symbol ?? ''} (0.5% slippage)
                   </p>
                 )}
                 {marketValue && quote === null && (
@@ -372,13 +373,13 @@ export default function SwapPage() {
             </div>
           )}
 
-          {isSepolia && needsApprove ? (
+          {networkReady && needsApprove ? (
             <Button onClick={approve} disabled={busy} className="w-full h-13 font-semibold text-base rounded-2xl">
-              {busy ? <Loader2 size={18} className="animate-spin" /> : `Approve ${fromInfo.symbol}`}
+              {busy ? <Loader2 size={18} className="animate-spin" /> : `Approve ${fromInfo?.symbol ?? 'token'}`}
             </Button>
           ) : (
-            <Button onClick={swap} disabled={!isSepolia || quote === null || !amount || Number(amount) <= 0 || busy || from === to} className="w-full h-13 font-semibold text-base rounded-2xl">
-              {busy ? <Loader2 size={18} className="animate-spin" /> : from === to ? 'Select different tokens' : !isSepolia ? (isLocal ? 'Swaps are disabled on local network — use Sepolia' : 'Connect on Sepolia to swap') : quote === null ? 'Enter an amount' : `Swap ${fromInfo.symbol} for ${toInfo.symbol}`}
+            <Button onClick={swap} disabled={!networkReady || quote === null || !amount || Number(amount) <= 0 || busy || from === to} className="w-full h-13 font-semibold text-base rounded-2xl">
+              {busy ? <Loader2 size={18} className="animate-spin" /> : from === to ? 'Select different tokens' : !networkReady ? 'Connect on Sepolia to swap' : quote === null ? 'Enter an amount' : `Swap ${fromInfo?.symbol ?? ''} for ${toInfo?.symbol ?? ''}`}
             </Button>
           )}
         </>

@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import { NextRequest } from 'next/server';
+import { normalizeWallet } from '@/lib/utils';
 
 const DEV_SECRET = 'nexotiq-dev-secret-key-change-in-production';
 
@@ -44,6 +45,14 @@ export function getUserFromRequest(req: NextRequest): { userId: string; walletAd
   if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
   const token = authHeader.slice(7);
   return verifyToken(token);
+}
+
+/** Returns the normalized wallet proven by the request's bearer token. */
+export function getAuthenticatedWallet(req: NextRequest): string | null {
+  const authUser = getUserFromRequest(req);
+  const raw = authUser?.walletAddress;
+  if (!raw || !/^0x[0-9a-fA-F]{40}$/.test(raw)) return null;
+  return normalizeWallet(raw);
 }
 
 export function unauthorized() {

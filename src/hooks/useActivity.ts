@@ -1,11 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { parseAbiItem } from 'viem';
-import { useAccount, useChainId } from 'wagmi';
-import { getFactoryAddress } from '@/hooks/useFactoryContract';
-import { getProtectionAddress } from '@/hooks/useProtectionContract';
-import { getPublicClient } from '@/lib/chain';
+import { useAccount } from 'wagmi';
+import { sepoliaPublicClient } from '@/lib/chain';
+import { CONTRACT_ADDRESSES } from '@/lib/contracts/addresses';
 
 export interface ActivityItem {
   id: string;
@@ -42,11 +41,10 @@ function fmtAmount(value?: bigint) {
 
 export function useActivity(limit = 30) {
   const { address } = useAccount();
-  const chainId = useChainId();
   const [items, setItems] = useState<ActivityItem[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const client = useMemo(() => getPublicClient(chainId), [chainId]);
+  const client = sepoliaPublicClient;
 
   const refetch = useCallback(async () => {
     if (!address || !client) {
@@ -68,7 +66,7 @@ export function useActivity(limit = 30) {
 
       const latest = await c.getBlockNumber();
       const fromBlock = latest > MAX_HISTORY_BLOCKS ? latest - MAX_HISTORY_BLOCKS : 0n;
-      const factory = getFactoryAddress(chainId);
+      const factory = CONTRACT_ADDRESSES.sepolia.NexotiqFactory as `0x${string}`;
       const out: ActivityItem[] = [];
       const dealIds = new Set<string>();
 
@@ -140,7 +138,7 @@ export function useActivity(limit = 30) {
         }
       }
 
-      const protectionAddress = getProtectionAddress(chainId);
+      const protectionAddress = CONTRACT_ADDRESSES.sepolia.NexotiqProtection as `0x${string}`;
       if (protectionAddress) {
         try {
           const logs = await client.getLogs({ address: protectionAddress, event: coverageEvent, args: { buyer: address }, fromBlock, toBlock: 'latest' });
@@ -167,7 +165,7 @@ export function useActivity(limit = 30) {
       setItems([]);
     }
     setLoading(false);
-  }, [address, chainId, client, limit]);
+  }, [address, client, limit]);
 
   useEffect(() => {
     refetch();

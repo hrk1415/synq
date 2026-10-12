@@ -2,18 +2,21 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Wallet, CheckCircle, Bot, User, Loader2, AlertTriangle } from 'lucide-react';
+import { Send, Wallet, CheckCircle, Bot, User, Loader2, AlertTriangle, ArrowRightLeft } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
-import { useAccount, useChainId, useSendTransaction, useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi';
+import { useAccount, useSendTransaction, useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi';
 import { parseEther, parseUnits, isAddress } from 'viem';
 import { erc20ABI } from '@/lib/contracts/abis';
-import { getRegistryAddress, registryABI } from '@/hooks/useRegistryContract';
-import { chainKeyForId } from '@/lib/contracts/addresses';
-import { getExplorerUrl } from '@/lib/chain';
-import { formatTimeAgo, cn } from '@/lib/utils';
+import { registryABI } from '@/hooks/useRegistryContract';
+import { getSepoliaExplorerUrl } from '@/lib/chain';
+import { CONTRACT_ADDRESSES, SEPOLIA_CHAIN_ID } from '@/lib/contracts/addresses';
+import { formatTimeAgo, shortenAddress, cn } from '@/lib/utils';
+import { useSynqIdentity } from '@/hooks/useSynqIdentity';
+import { useSepoliaNetwork } from '@/hooks/useSepoliaNetwork';
+import { useAuthSession } from '@/hooks/useAuthSession';
 
 const USDC_SEPOLIA = '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238' as `0x${string}`;
 
@@ -41,8 +44,9 @@ interface PaymentAssistantProps {
 }
 
 export default function PaymentAssistant({ sellerAddress, category }: PaymentAssistantProps) {
-  const { address } = useAccount();
-  const chainId = useChainId();
+  const { address, isConnected } = useAccount();
+  const { ensureAuthenticated } = useAuthSession();
+  const { networkReady, isWrongNetwork, isSwitching, error: networkError, requestSepolia, ensureSepolia } = useSepoliaNetwork();
   const [input, setInput] = useState('');
   const [isThinking, setIsThinking] = useState(false);
   const [pending, setPending] = useState<PendingPayment | null>(null);
@@ -53,7 +57,6 @@ export default function PaymentAssistant({ sellerAddress, category }: PaymentAss
   const [error, setError] = useState('');
   const [sentPayments, setSentPayments] = useState<SentPayment[]>([]);
 
-  const isSupported = chainKeyForId(chainId) === 'sepolia' || chainKeyForId(chainId) === 'hardhat';
   const isEth = pending?.asset === 'ETH';
   const pendingRawAmount = useMemo(() => {
     if (!pending) return 0n;
@@ -74,10 +77,11 @@ export default function PaymentAssistant({ sellerAddress, category }: PaymentAss
 
   const recipientNeedsLookup = !!pending && !isAddress(pending.recipient) && pending.recipient !== 'unknown';
   const { data: usernameAddr } = useReadContract({
-    address: getRegistryAddress(chainId),
+    address: CONTRACT_ADDRESSES.sepolia.NexotiqRegistry as `0x${string}`,
     abi: registryABI,
     functionName: 'getAddress',
     args: recipientNeedsLookup ? [pending.recipient] : undefined,
+    chainId: SEPOLIA_CHAIN_ID,
     query: { enabled: recipientNeedsLookup },
   });
 
@@ -94,10 +98,12 @@ export default function PaymentAssistant({ sellerAddress, category }: PaymentAss
     setResolvedAddress(null);
   }, [pending, usernameAddr, recipientNeedsLookup]);
 
+  const { displayHandle: recipientHandle } = useSynqIdentity(resolvedAddress || undefined);
+
   const ethTx = useSendTransaction();
   const tokenWrite = useWriteContract();
   const activeHash = (ethTx.data ?? tokenWrite.data) as `0x${string}` | undefined;
-  const receipt = useWaitForTransactionReceipt({ hash: activeHash });
+  const receipt = useWaitForTransactionReceipt({ hash: activeHash, chainId: SEPOLIA_CHAIN_ID });
 
   useEffect(() => {
     if (receipt.isSuccess && pending && activeHash) {
@@ -122,6 +128,17 @@ export default function PaymentAssistant({ sellerAddress, category }: PaymentAss
 
   const handleSend = async () => {
     if (!input.trim() || isThinking) return;
+
+    if (!address || !isConnected) {
+      setMessages(prev => [
+        ...prev,
+        { role: 'user', content: input.trim() },
+        { role: 'ai', content: 'Connect your wallet to use the ChatPay assistant.' },
+      ]);
+      setInput('');
+      return;
+    }
+
     setMessages(prev => [...prev, { role: 'user', content: input }]);
     const userInput = input;
     setInput('');
@@ -131,11 +148,46 @@ export default function PaymentAssistant({ sellerAddress, category }: PaymentAss
     setResolvedAddress(null);
 
     try {
+      let token: string;
+      try {
+        token = await ensureAuthenticated();
+      } catch (authErr: any) {
+        const msg = authErr?.message || 'Authentication required';
+        setMessages(prev => [
+          ...prev,
+          {
+            role: 'ai',
+            content: msg.includes('cancelled') || msg.includes('rejected')
+              ? 'Authentication was cancelled. Sign the message in your wallet to use the payment assistant.'
+              : msg || 'Connect and sign in with your wallet to use the payment assistant.',
+          },
+        ]);
+        setIsThinking(false);
+        return;
+      }
+
       const res = await fetch('/api/ai', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({ type: 'chatpay', prompt: userInput }),
       });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        setMessages(prev => [
+          ...prev,
+          {
+            role: 'ai',
+            content: errorData.error || 'Sorry, the payment assistant is unavailable right now. Please try again.',
+          },
+        ]);
+        setIsThinking(false);
+        return;
+      }
+
       const data = await res.json();
       const parsed = data?.result;
 
@@ -166,10 +218,11 @@ export default function PaymentAssistant({ sellerAddress, category }: PaymentAss
     if (!pending || !resolvedAddress || !address) return;
     setError('');
     try {
+      await ensureSepolia();
       if (isEth) {
-        await ethTx.sendTransaction({ to: resolvedAddress, value: pendingRawAmount });
+        await ethTx.sendTransactionAsync({ to: resolvedAddress, value: pendingRawAmount });
       } else {
-        await tokenWrite.writeContract({
+        await tokenWrite.writeContractAsync({
           address: USDC_SEPOLIA,
           abi: erc20ABI,
           functionName: 'transfer',
@@ -181,14 +234,19 @@ export default function PaymentAssistant({ sellerAddress, category }: PaymentAss
     }
   };
 
-  const explorerUrl = activeHash ? getExplorerUrl(chainId, 'tx', activeHash) : null;
-  const sending = ethTx.isPending || tokenWrite.isPending || receipt.isLoading;
+  const explorerUrl = activeHash ? getSepoliaExplorerUrl('tx', activeHash) : null;
+  const sending = isSwitching || ethTx.isPending || tokenWrite.isPending || receipt.isLoading;
 
   return (
     <div className="space-y-6">
-      {!isSupported && (
-        <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 text-sm text-amber-400 flex items-center gap-2">
-          <AlertTriangle size={14} /> ChatPay works on the Sepolia testnet. Switch your wallet network to continue.
+      {isWrongNetwork && (
+        <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 text-sm text-amber-400 flex flex-wrap items-center gap-2">
+          <AlertTriangle size={14} /> ChatPay requires Ethereum Sepolia.
+          <Button size="sm" variant="outline" disabled={isSwitching} onClick={() => void requestSepolia().catch(() => undefined)} className="ml-auto gap-1.5">
+            {isSwitching ? <Loader2 size={13} className="animate-spin" /> : <ArrowRightLeft size={13} />}
+            Switch to Sepolia
+          </Button>
+          {networkError && <span className="basis-full text-xs text-amber-200/80">{networkError.message}</span>}
         </div>
       )}
 
@@ -284,15 +342,28 @@ export default function PaymentAssistant({ sellerAddress, category }: PaymentAss
                     <div className="space-y-2 text-sm mb-3">
                       <div className="flex justify-between"><span className="text-zinc-400">Recipient</span>
                         <span className="text-white text-right">
-                          {pending.recipient}
-                          {resolvedAddress && resolvedAddress.toLowerCase() !== pending.recipient.toLowerCase() && (
-                            <span className="block text-[10px] font-mono text-zinc-500">{resolvedAddress}</span>
+                          {recipientHandle ? (
+                            <>
+                              <span className="block font-semibold text-white">{recipientHandle}</span>
+                              {resolvedAddress && (
+                                <span className="block text-[10px] font-mono text-zinc-400">{shortenAddress(resolvedAddress)}</span>
+                              )}
+                            </>
+                          ) : (
+                            <>
+                              <span className="block text-white">
+                                {pending.recipient.startsWith('0x') ? shortenAddress(pending.recipient) : pending.recipient}
+                              </span>
+                              {resolvedAddress && resolvedAddress.toLowerCase() !== pending.recipient.toLowerCase() && (
+                                <span className="block text-[10px] font-mono text-zinc-500">{shortenAddress(resolvedAddress)}</span>
+                              )}
+                            </>
                           )}
                         </span>
                       </div>
                       <div className="flex justify-between"><span className="text-zinc-400">Amount</span><span className="text-white font-semibold">{pending.amount} {pending.asset}</span></div>
                       {pending.reason && <div className="flex justify-between"><span className="text-zinc-400">For</span><span className="text-zinc-300 text-right">{pending.reason}</span></div>}
-                      <div className="flex justify-between"><span className="text-zinc-400">Network</span><span className="text-zinc-300">{chainKeyForId(chainId) === 'sepolia' ? 'Ethereum Sepolia' : 'Hardhat Local'}</span></div>
+                      <div className="flex justify-between"><span className="text-zinc-400">Network</span><span className="text-zinc-300">{networkReady ? 'Ethereum Sepolia' : 'Ethereum Sepolia required'}</span></div>
                     </div>
                     {!resolvedAddress && recipientNeedsLookup && (
                       <p className="text-xs text-amber-400 mb-3 flex items-center gap-1">
@@ -302,20 +373,11 @@ export default function PaymentAssistant({ sellerAddress, category }: PaymentAss
                     {error && <p className="text-xs text-red-400 mb-3">{error}</p>}
                     <Separator className="mb-3" />
                     <div className="flex items-center gap-2">
-                      <Button size="sm" onClick={handleConfirm} disabled={!resolvedAddress || !address} className="flex-1">Confirm & Send</Button>
-                      <Button size="sm" variant="outline" onClick={() => { setPending(null); setResolvedAddress(null); }} className="flex-1">Cancel</Button>
-                    </div>
-                  </motion.div>
-                )}
-
-                {activeHash && receipt.isSuccess && (
-                  <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="p-4 rounded-xl border border-green-500/20 bg-green-600/10">
-                    <div className="flex items-center gap-2 mb-2">
-                      <CheckCircle size={18} className="text-green-400" />
+                      <Button size="sm" onClick={handleConfirm} disabled={!resolvedAddress || !address || !networkReady || isSwitching} className="flex-1">Confirm & Send</Button>
                       <span className="text-sm font-medium text-green-400">Transaction Confirmed</span>
                     </div>
                     <div className="flex items-center gap-2 text-xs text-zinc-500">
-                      <span className="font-mono">{activeHash.slice(0, 10)}...{activeHash.slice(-6)}</span>
+                      <span className="font-mono">{activeHash ? `${activeHash.slice(0, 10)}...${activeHash.slice(-6)}` : ''}</span>
                       <Badge variant="success" className="text-[10px]">Confirmed</Badge>
                       {explorerUrl && <a href={explorerUrl} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300">View on Etherscan ↗</a>}
                     </div>
@@ -358,7 +420,7 @@ export default function PaymentAssistant({ sellerAddress, category }: PaymentAss
                 <p className="text-sm text-zinc-500">No payments sent yet. Use the chat to make your first one.</p>
               ) : (
                 sentPayments.map((pay) => {
-                  const url = getExplorerUrl(chainId, 'tx', pay.txHash);
+                  const url = getSepoliaExplorerUrl('tx', pay.txHash);
                   return (
                     <div key={pay.id} className="p-3 rounded-lg bg-zinc-800/30 border border-zinc-800/50">
                       <div className="flex items-center justify-between mb-1">

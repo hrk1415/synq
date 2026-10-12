@@ -2,25 +2,21 @@
 
 import { useReadContract, useWriteContract, useWaitForTransactionReceipt, useBalance } from 'wagmi';
 import { nexotiqProtectionABI } from '@/lib/contracts/abis';
-import { CONTRACT_ADDRESSES, isSupportedChain } from '@/lib/contracts/addresses';
+import { CONTRACT_ADDRESSES, SEPOLIA_CHAIN_ID } from '@/lib/contracts/addresses';
 import { coverageCompatABI, coverageModernABI, toCoverageView } from '@/lib/contracts/protectionCompat';
-import { useChainId } from 'wagmi';
-
-const PROTECTION_BY_CHAIN: Record<number, string> = {
-  31337: CONTRACT_ADDRESSES.hardhat.NexotiqProtection,
-  11155111: CONTRACT_ADDRESSES.sepolia.NexotiqProtection,
-};
+import { useSepoliaNetwork } from '@/hooks/useSepoliaNetwork';
 
 /** undefined on chains with no deployment — see getFactoryAddress for why. */
 export function getProtectionAddress(chainId: number): `0x${string}` | undefined {
-  return PROTECTION_BY_CHAIN[chainId] as `0x${string}` | undefined;
+  return chainId === SEPOLIA_CHAIN_ID
+    ? CONTRACT_ADDRESSES.sepolia.NexotiqProtection as `0x${string}`
+    : undefined;
 }
 
 export function useProtectionContract() {
-  const chainId = useChainId();
-  const protAddress = getProtectionAddress(chainId);
-  const onSupportedChain = isSupportedChain(chainId) && !!protAddress;
-  const config = { address: protAddress, abi: nexotiqProtectionABI } as const;
+  const protAddress = CONTRACT_ADDRESSES.sepolia.NexotiqProtection as `0x${string}`;
+  const onSupportedChain = true;
+  const config = { address: protAddress, abi: nexotiqProtectionABI, chainId: SEPOLIA_CHAIN_ID } as const;
   const enabled = { query: { enabled: onSupportedChain } } as const;
 
   const { data: totalPremiums } = useReadContract({ ...config, functionName: 'totalPremiums', ...enabled });
@@ -33,16 +29,22 @@ export function useProtectionContract() {
    * reports 0.004 ETH against a balance of 0. Showing both is the only honest
    * option until the pool is redeployed.
    */
-  const { data: poolBalance } = useBalance({ address: protAddress, query: { enabled: onSupportedChain } });
+  const { data: poolBalance } = useBalance({ address: protAddress, chainId: SEPOLIA_CHAIN_ID, query: { enabled: onSupportedChain } });
 
+  const { ensureSepolia, networkReady, isSwitching, error: networkError } = useSepoliaNetwork();
   const write = useWriteContract();
-  const { data: txHash, writeContract, isPending } = write;
-  const txReceipt = useWaitForTransactionReceipt({ hash: txHash });
+  const { data: txHash, writeContractAsync, isPending, error: writeError } = write;
+  const txReceipt = useWaitForTransactionReceipt({ hash: txHash, chainId: SEPOLIA_CHAIN_ID });
 
-  const guardWrite = <A extends unknown[]>(fn: (...args: A) => void) => (...args: A) => {
-    if (!onSupportedChain) return;
-    fn(...args);
+  const guardWrite = <A extends unknown[]>(fn: (...args: A) => Promise<unknown>) => async (...args: A) => {
+    try {
+      await ensureSepolia();
+      return await fn(...args);
+    } catch {
+      return undefined;
+    }
   };
+  const writeAddress = CONTRACT_ADDRESSES.sepolia.NexotiqProtection as `0x${string}`;
 
   return {
     protAddress,
@@ -51,17 +53,19 @@ export function useProtectionContract() {
     totalPremiums,
     totalPayouts,
     poolBalance: poolBalance?.value,
-    writeContract,
-    isPending: isPending || txReceipt.isLoading,
+    networkReady,
+    isSwitching,
+    error: networkError ?? writeError,
+    isPending: isPending || txReceipt.isLoading || isSwitching,
     txReceipt,
     payPremium: guardWrite((dealAddress: `0x${string}`, value: bigint) =>
-      writeContract({ ...config, address: protAddress!, functionName: 'payPremium', args: [dealAddress], value })),
+      writeContractAsync({ ...config, address: writeAddress, functionName: 'payPremium', args: [dealAddress], value })),
     fileClaim: guardWrite((dealAddress: `0x${string}`) =>
-      writeContract({ ...config, address: protAddress!, functionName: 'fileClaim', args: [dealAddress] })),
+      writeContractAsync({ ...config, address: writeAddress, functionName: 'fileClaim', args: [dealAddress] })),
     resolveClaim: guardWrite((dealAddress: `0x${string}`, approved: boolean) =>
-      writeContract({ ...config, address: protAddress!, functionName: 'resolveClaim', args: [dealAddress, approved] })),
+      writeContractAsync({ ...config, address: writeAddress, functionName: 'resolveClaim', args: [dealAddress, approved] })),
     withdrawPremiums: guardWrite(() =>
-      writeContract({ ...config, address: protAddress!, functionName: 'withdrawPremiums' })),
+      writeContractAsync({ ...config, address: writeAddress, functionName: 'withdrawPremiums' })),
   };
 }
 
@@ -76,9 +80,9 @@ export function useProtectionContract() {
  * Reads through the version-agnostic ABI shim so the same code works against the
  * pool that is live today and against a redeployed one; see protectionCompat.ts.
  */
-export function useProtectionCoverage(dealAddress: `0x${string}` | undefined, chainId: number) {
-  const protAddress = getProtectionAddress(chainId);
-  const enabled = !!dealAddress && !!protAddress && isSupportedChain(chainId);
+export function useProtectionCoverage(dealAddress: `0x${string}` | undefined) {
+  const protAddress = CONTRACT_ADDRESSES.sepolia.NexotiqProtection as `0x${string}`;
+  const enabled = !!dealAddress;
   const args = dealAddress ? ([dealAddress] as const) : undefined;
 
   const shared = useReadContract({
@@ -86,6 +90,7 @@ export function useProtectionCoverage(dealAddress: `0x${string}` | undefined, ch
     abi: coverageCompatABI,
     functionName: 'getCoverage',
     args,
+    chainId: SEPOLIA_CHAIN_ID,
     query: { enabled },
   });
 
@@ -96,6 +101,7 @@ export function useProtectionCoverage(dealAddress: `0x${string}` | undefined, ch
     abi: coverageModernABI,
     functionName: 'getCoverage',
     args,
+    chainId: SEPOLIA_CHAIN_ID,
     query: { enabled, retry: false },
   });
 

@@ -4,21 +4,21 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center whitespace-nowrap rounded-lg text-sm font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-black disabled:pointer-events-none disabled:opacity-50',
+  'inline-flex items-center justify-center whitespace-nowrap rounded-xl text-sm font-semibold transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[#101010] disabled:pointer-events-none disabled:opacity-40 select-none',
   {
     variants: {
       variant: {
-        default: 'bg-blue-600 text-white hover:bg-blue-500 shadow-lg shadow-blue-600/20',
-        destructive: 'bg-red-600 text-white hover:bg-red-500 shadow-lg shadow-red-600/20',
-        outline: 'border border-zinc-700 bg-transparent text-zinc-100 hover:bg-zinc-800 hover:text-white',
-        secondary: 'bg-zinc-800 text-zinc-100 hover:bg-zinc-700',
-        ghost: 'text-zinc-400 hover:text-white hover:bg-zinc-800/50',
-        link: 'text-blue-400 underline-offset-4 hover:underline',
+        default: 'bg-white text-[#101010] hover:bg-neutral-200 active:bg-neutral-300 shadow-sm',
+        destructive: 'bg-red-600 text-white hover:bg-red-500 active:bg-red-700 shadow-sm',
+        outline: 'border border-white/40 bg-[#1B1B1B] text-white hover:bg-[#252525] hover:border-white/80 active:bg-[#2A2A2A]',
+        secondary: 'bg-[#252525] text-white hover:bg-[#303030] border border-white/20 active:bg-[#383838]',
+        ghost: 'text-[#A3A3A3] hover:text-white hover:bg-white/10 active:bg-white/15',
+        link: 'text-white underline-offset-4 hover:underline hover:text-neutral-200',
       },
       size: {
         default: 'h-10 px-4 py-2',
-        sm: 'h-8 rounded-md px-3 text-xs',
-        lg: 'h-12 rounded-lg px-6 text-base',
+        sm: 'h-8 rounded-lg px-3 text-xs',
+        lg: 'h-12 rounded-xl px-6 text-base',
         icon: 'h-10 w-10',
       },
     },

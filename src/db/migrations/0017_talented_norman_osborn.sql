@@ -1,0 +1,1 @@
+ALTER TABLE "deal_notifications" ADD COLUMN "claim_token" text;
