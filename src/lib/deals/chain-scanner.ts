@@ -431,6 +431,8 @@ export interface ScanBatchResult {
 }
 
 export class BlockchainScanner {
+  private factoriesBootstrapped = false;
+
   constructor(
     private chainId: number,
     private scannerId: string,
@@ -453,6 +455,9 @@ export class BlockchainScanner {
    * Fails closed if factory configuration address is missing or invalid.
    */
   async bootstrapFactories(): Promise<void> {
+    if (this.factoriesBootstrapped) {
+      return;
+    }
     if (this.chainId === 11155111) {
       for (const f of this.supportedFactories) {
         if (!f.address || !/^0x[0-9a-fA-F]{40}$/.test(f.address)) {
@@ -473,6 +478,7 @@ export class BlockchainScanner {
         });
       }
     }
+    this.factoriesBootstrapped = true;
   }
 
   /**
@@ -480,6 +486,7 @@ export class BlockchainScanner {
    * Resolves authoritative factory generation (V2 vs V1 vs Legacy Nexotiq) and fails closed on unknown factories.
    * Ensures active accepted deals are tracked even on cold start with an empty tracked_deal_contracts table.
    * Does NOT alter proposal business status when tracking is skipped.
+   * Fails closed if receipt verification fails or times out, preventing cursor advancement past unverified blocks.
    */
   async rehydrateAcceptedDeals(): Promise<number> {
     let rehydratedCount = 0;
@@ -519,32 +526,50 @@ export class BlockchainScanner {
 
           // Attempt verified receipt recovery if creationBlock is missing but acceptedTxHash is available
           if (creationBlock === 0n && deal.acceptedTxHash && this.rpcClient.getTransactionReceipt) {
+            const receiptStart = performance.now();
+            // Bounded receipt retrieval (6000ms max) to prevent unauthenticated/hung RPC stalling
+            let timer: NodeJS.Timeout | undefined;
+            const timeoutPromise = new Promise<never>((_, reject) => {
+              timer = setTimeout(() => reject(new Error(`Receipt lookup timed out after 6000ms for ${deal.acceptedTxHash}`)), 6000);
+            });
+
+            let receipt: any;
             try {
-              const receipt = await this.rpcClient.getTransactionReceipt({ hash: deal.acceptedTxHash });
-              if (
-                receipt &&
-                receipt.blockNumber &&
-                receipt.status !== 'reverted' &&
-                receipt.status !== 0 &&
-                receipt.status !== 0n
-              ) {
-                const verifiedBlock = BigInt(receipt.blockNumber);
-                const isCreationVerified = verifyReceiptEstablishesDeal(receipt, normAddr, resolution);
-                if (isCreationVerified && verifiedBlock > 0n) {
-                  creationBlock = verifiedBlock;
-                  // Persist back to proposal repository if supported
-                  if (this.proposalRepo.updateStatus) {
-                    await this.proposalRepo.updateStatus(deal.proposalId, 'ACCEPTED', {
-                      deploymentBlock: verifiedBlock.toString(),
-                    });
-                  }
-                }
-              }
+              receipt = await Promise.race([
+                this.rpcClient.getTransactionReceipt({ hash: deal.acceptedTxHash }),
+                timeoutPromise,
+              ]).finally(() => {
+                if (timer) clearTimeout(timer);
+              });
             } catch (receiptErr: any) {
-              console.warn(
-                `[rehydrateAcceptedDeals] Error resolving receipt for proposal ${deal.proposalId}: ${receiptErr?.message || receiptErr}`
+              // Fail closed: if we cannot resolve the creation transaction receipt, we cannot verify the contract's
+              // deployment block. If we were to proceed and advance the cursor, historical events prior to the advanced
+              // cursor could be permanently missed.
+              throw new Error(
+                `[rehydrateAcceptedDeals] Failed to verify creation receipt for accepted deal ${deal.proposalId} (${deal.acceptedTxHash}): ${receiptErr?.message || receiptErr}`
               );
             }
+
+            if (
+              receipt &&
+              receipt.blockNumber &&
+              receipt.status !== 'reverted' &&
+              receipt.status !== 0 &&
+              receipt.status !== 0n
+            ) {
+              const verifiedBlock = BigInt(receipt.blockNumber);
+              const isCreationVerified = verifyReceiptEstablishesDeal(receipt, normAddr, resolution);
+              if (isCreationVerified && verifiedBlock > 0n) {
+                creationBlock = verifiedBlock;
+                // Persist back to proposal repository if supported
+                if (this.proposalRepo.updateStatus) {
+                  await this.proposalRepo.updateStatus(deal.proposalId, 'ACCEPTED', {
+                    deploymentBlock: verifiedBlock.toString(),
+                  });
+                }
+              }
+            }
+            console.log(`[rehydrateAcceptedDeals] Verified receipt for proposal ${deal.proposalId} in ${(performance.now() - receiptStart).toFixed(1)}ms`);
           }
 
           const isUnresolved = creationBlock === 0n;
@@ -601,13 +626,20 @@ export class BlockchainScanner {
           }
           rehydratedCount++;
         } catch (itemErr: any) {
-          // A malformed proposal or upsert failure must not prevent other proposals from being rehydrated
+          // Fail-closed on receipt resolution / RPC errors to prevent cursor advancement past unverified blocks
+          if (itemErr?.message?.includes('Failed to verify creation receipt')) {
+            throw itemErr;
+          }
+          // A malformed proposal data parsing error must not prevent other proposals from being rehydrated
           console.warn(
             `[rehydrateAcceptedDeals] Error processing proposal ${deal.proposalId}: ${itemErr?.message || itemErr}`
           );
         }
       }
     } catch (err: any) {
+      if (err?.message?.includes('Failed to verify creation receipt')) {
+        throw err;
+      }
       console.warn(`[rehydrateAcceptedDeals] Failed to load accepted deals: ${err?.message || err}`);
     }
     return rehydratedCount;
@@ -656,8 +688,14 @@ export class BlockchainScanner {
    * Executes a single bounded scan batch.
    * Returns deterministic status without running an infinite background loop.
    */
-  async scanNextBatch(): Promise<ScanBatchResult> {
+  async scanNextBatch(options?: { correlationId?: string }): Promise<ScanBatchResult> {
+    const reqId = options?.correlationId || Math.random().toString(36).slice(2, 10);
+    const totalStart = performance.now();
+
+    let stageStart = performance.now();
     const cursor = await this.cursorRepo.get(this.chainId, this.scannerId);
+    console.log(`[Scanner:${reqId}] Stage 'cursorRepo.get' took ${(performance.now() - stageStart).toFixed(1)}ms (lastBlock: ${cursor?.lastBlockNumber ?? 'none'})`);
+
     if (!cursor) {
       return {
         scanned: false,
@@ -671,8 +709,15 @@ export class BlockchainScanner {
     }
 
     // 0. Ensure supported factories are seeded, accepted deals rehydrated, and reload durable tracked contracts for cold-start serverless resilience
+    stageStart = performance.now();
     await this.bootstrapFactories();
-    await this.rehydrateAcceptedDeals();
+    console.log(`[Scanner:${reqId}] Stage 'bootstrapFactories' took ${(performance.now() - stageStart).toFixed(1)}ms`);
+
+    stageStart = performance.now();
+    const rehydrated = await this.rehydrateAcceptedDeals();
+    console.log(`[Scanner:${reqId}] Stage 'rehydrateAcceptedDeals' took ${(performance.now() - stageStart).toFixed(1)}ms (rehydratedCount: ${rehydrated})`);
+
+    stageStart = performance.now();
     const persisted = await this.trackedContractsRepo.getAll(this.chainId);
     for (const c of persisted) {
       this.registry.registerContract({
@@ -687,8 +732,12 @@ export class BlockchainScanner {
         },
       });
     }
+    console.log(`[Scanner:${reqId}] Stage 'loadTrackedContracts' took ${(performance.now() - stageStart).toFixed(1)}ms (loaded: ${persisted.length})`);
 
+    stageStart = performance.now();
     const latestHead = await this.rpcClient.getBlockNumber();
+    console.log(`[Scanner:${reqId}] Stage 'rpcGetBlockNumber' took ${(performance.now() - stageStart).toFixed(1)}ms (head: ${latestHead})`);
+
     const range = calculateScanRange({
       currentCursorBlock: cursor.lastBlockNumber,
       latestHeadBlock: latestHead,
@@ -697,6 +746,7 @@ export class BlockchainScanner {
     });
 
     if (!range.shouldScan || range.fromBlock === undefined || range.toBlock === undefined) {
+      console.log(`[Scanner:${reqId}] Range evaluation skipped: ${range.reason || 'No confirmed blocks'}`);
       return {
         scanned: false,
         logsFound: 0,
@@ -710,9 +760,12 @@ export class BlockchainScanner {
 
     const fromBlock = range.fromBlock;
     const toBlock = range.toBlock;
+    console.log(`[Scanner:${reqId}] Scanning range ${fromBlock}..${toBlock} (${toBlock - fromBlock + 1n} blocks)`);
 
     // 1. Verify parent block hash continuity
+    stageStart = performance.now();
     const firstBlock = await this.rpcClient.getBlock({ blockNumber: fromBlock });
+    console.log(`[Scanner:${reqId}] Stage 'rpcGetParentBlock' took ${(performance.now() - stageStart).toFixed(1)}ms (block: ${fromBlock})`);
     const isContinuous = verifyBlockHashContinuity({
       expectedParentHash: cursor.lastBlockHash,
       actualParentHash: firstBlock.parentHash,
@@ -776,11 +829,13 @@ export class BlockchainScanner {
       };
     }
 
+    stageStart = performance.now();
     const rawLogs = await this.rpcClient.getLogs({
       address: trackedAddresses,
       fromBlock,
       toBlock,
     });
+    console.log(`[Scanner:${reqId}] Stage 'rpcGetLogs' took ${(performance.now() - stageStart).toFixed(1)}ms (addresses: ${trackedAddresses.length}, rawLogs: ${rawLogs.length})`);
 
     // 3. Discover newly deployed deal clones from factory events in the batch
     const newContracts: { address: string; deploymentBlock: bigint }[] = [];
@@ -845,11 +900,13 @@ export class BlockchainScanner {
       );
 
       try {
+        const secStart = performance.now();
         secondaryLogs = await this.rpcClient.getLogs({
           address: newCloneAddresses,
           fromBlock: minDeploymentBlock,
           toBlock,
         });
+        console.log(`[Scanner:${reqId}] Stage 'secondaryLogs' took ${(performance.now() - secStart).toFixed(1)}ms (newContracts: ${newContracts.length}, secondaryLogs: ${secondaryLogs.length})`);
       } catch (err: any) {
         // Abort without cursor advancement if secondary log retrieval fails
         return {
@@ -920,9 +977,11 @@ export class BlockchainScanner {
     }
 
     // 7. Persist all required event records before advancing the cursor
+    stageStart = performance.now();
     for (const event of decodedEvents) {
       await this.persistDecodedEvent(event);
     }
+    console.log(`[Scanner:${reqId}] Stage 'eventPersistence' took ${(performance.now() - stageStart).toFixed(1)}ms (events: ${decodedEvents.length})`);
 
     // 8. Check if any newly discovered contract was deployed before fromBlock and needs retroactive replay
     for (const contract of newContracts) {
@@ -944,7 +1003,11 @@ export class BlockchainScanner {
     }
 
     // 9. Atomically advance cursor to toBlock
+    stageStart = performance.now();
     const endBlock = await this.rpcClient.getBlock({ blockNumber: toBlock });
+    console.log(`[Scanner:${reqId}] Stage 'rpcGetEndBlock' took ${(performance.now() - stageStart).toFixed(1)}ms (block: ${toBlock})`);
+
+    stageStart = performance.now();
     const advanceResult = await this.cursorRepo.advance({
       chainId: this.chainId,
       scannerId: this.scannerId,
@@ -952,6 +1015,8 @@ export class BlockchainScanner {
       newBlockNumber: toBlock,
       newBlockHash: endBlock.hash,
     });
+    console.log(`[Scanner:${reqId}] Stage 'cursorAdvance' took ${(performance.now() - stageStart).toFixed(1)}ms (status: ${advanceResult.status})`);
+    console.log(`[Scanner:${reqId}] Total scan execution completed in ${(performance.now() - totalStart).toFixed(1)}ms`);
 
     return {
       scanned: true,

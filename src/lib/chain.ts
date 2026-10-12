@@ -7,16 +7,16 @@ const envRpc = typeof process !== 'undefined'
   : undefined;
 
 const rpcTransports = [
-  ...(envRpc ? [http(envRpc, { batch: true, timeout: 8_000, retryCount: 2 })] : []),
-  http('https://ethereum-sepolia-rpc.publicnode.com', { batch: true, timeout: 8_000, retryCount: 2 }),
-  http('https://11155111.rpc.thirdweb.com', { batch: true, timeout: 8_000, retryCount: 2 }),
-  http('https://gateway.tenderly.co/public/sepolia', { batch: true, timeout: 8_000, retryCount: 2 }),
+  ...(envRpc ? [http(envRpc, { timeout: 8_000, retryCount: 2 })] : []),
+  http('https://ethereum-sepolia-rpc.publicnode.com', { timeout: 6_000, retryCount: 1 }),
+  http('https://11155111.rpc.thirdweb.com', { timeout: 6_000, retryCount: 1 }),
+  http('https://gateway.tenderly.co/public/sepolia', { timeout: 6_000, retryCount: 1 }),
 ];
 
-/** Canonical client for all imperative Synq application reads with resilient public RPC fallback and request batching. */
+/** Canonical client for all imperative Synq application reads with resilient, bounded public RPC fallback. */
 export const sepoliaPublicClient = createPublicClient({
   chain: sepolia,
-  transport: fallback(rpcTransports, { rank: false }),
+  transport: fallback(rpcTransports, { rank: false, retryCount: 0 }),
 });
 
 /** Explorer URLs for Synq application data are always Ethereum Sepolia. */

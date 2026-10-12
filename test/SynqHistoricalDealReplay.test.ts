@@ -347,10 +347,11 @@ describe('SYNQ — B.12.3.22 Durable Historical Deal Replay Suite', () => {
     assert.equal(batchResult.jobsCompleted, 2);
     assert.equal(batchResult.totalEventsProcessed, 2);
 
-    const outboxEvents = await outboxRepo.getPending();
+    const outboxEvents = outboxRepo.getAllEvents();
     const eventTypes = outboxEvents.map((e) => e.event);
     assert.ok(eventTypes.includes('work_submitted'), 'V2 event decoded properly');
     assert.ok(eventTypes.includes('payment_released'), 'Legacy event decoded properly');
+    assert.ok(outboxEvents.every((e) => e.status === 'skipped'), 'Historical replay events must be marked skipped to suppress emails');
   });
 
   // 5. Inclusive creation-block replay
@@ -386,10 +387,11 @@ describe('SYNQ — B.12.3.22 Durable Historical Deal Replay Suite', () => {
     assert.equal(result.jobsCompleted, 1);
     assert.equal(result.totalEventsProcessed, 1);
 
-    const outbox = await outboxRepo.getPending();
+    const outbox = outboxRepo.getAllEvents();
     assert.equal(outbox.length, 1);
     assert.equal(outbox[0].blockNumber, 100n);
     assert.equal(outbox[0].event, 'deal_confirmed');
+    assert.equal(outbox[0].status, 'skipped');
   });
 
   // 6. Multi-batch continuation
@@ -498,9 +500,10 @@ describe('SYNQ — B.12.3.22 Durable Historical Deal Replay Suite', () => {
     assert.equal(result.jobsCompleted, 1);
     assert.equal(result.totalEventsProcessed, 1, 'Only block 170 event must be queried and processed');
 
-    const outbox = await outboxRepo.getPending();
+    const outbox = outboxRepo.getAllEvents();
     assert.equal(outbox.length, 1);
     assert.equal(outbox[0].blockNumber, 170n);
+    assert.equal(outbox[0].status, 'skipped');
   });
 
   // 8. Concurrent workers
@@ -685,7 +688,7 @@ describe('SYNQ — B.12.3.22 Durable Historical Deal Replay Suite', () => {
 
     // Run replay first time
     await replayService.executeNextPendingJobs({ limit: 1 });
-    const countAfterRun1 = (await outboxRepo.getPending()).length;
+    const countAfterRun1 = outboxRepo.getAllEvents().length;
     assert.equal(countAfterRun1, 1);
 
     // Simulate manual re-run of same decoded event
@@ -695,10 +698,10 @@ describe('SYNQ — B.12.3.22 Durable Historical Deal Replay Suite', () => {
       generation: 'v2',
       contractType: 'deal_v2',
     });
-    const enqueueResult = await persistDecodedEventToOutbox(outboxRepo, decoded[0]);
+    const enqueueResult = await persistDecodedEventToOutbox(outboxRepo, decoded[0], { isHistoricalReplay: true });
     assert.equal(enqueueResult, 'duplicate');
 
-    const countAfterRun2 = (await outboxRepo.getPending()).length;
+    const countAfterRun2 = outboxRepo.getAllEvents().length;
     assert.equal(countAfterRun2, 1, 'Outbox must contain exactly 1 event without duplicates');
   });
 
