@@ -311,6 +311,10 @@ export class InMemoryDealOutboxRepository implements IDealOutboxRepository {
   clear(): void {
     this.events.clear();
   }
+
+  getAllEvents(): DealOutboxEvent[] {
+    return Array.from(this.events.values()).map((e) => ({ ...e, payload: { ...e.payload } }));
+  }
 }
 
 export class DrizzleDealOutboxRepository implements IDealOutboxRepository {

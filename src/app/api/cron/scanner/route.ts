@@ -18,6 +18,7 @@ import { sepoliaPublicClient } from '@/lib/chain';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
+export const maxDuration = 300;
 
 /** Retained as an explicit tombstone; cron trigger is POST-only. */
 export async function GET() {
@@ -294,9 +295,13 @@ export async function POST(req: NextRequest) {
       filteredFactories,
     );
 
-    await scanner.bootstrapFactories();
-    await scanner.rehydrateAcceptedDeals();
-    const result = await scanner.scanNextBatch();
+    const correlationId = crypto.randomUUID().slice(0, 8);
+    const routeStart = performance.now();
+    console.log(`[CronScanner:${correlationId}] Starting scanner batch (scope=${scopeDef.scope}, maxBatch=${maxBatch})`);
+
+    const result = await scanner.scanNextBatch({ correlationId });
+
+    console.log(`[CronScanner:${correlationId}] Scanner batch completed in ${(performance.now() - routeStart).toFixed(1)}ms (scanned=${result.scanned}, range=${result.fromBlock ?? 'none'}..${result.toBlock ?? 'none'}, cursorAdvanced=${result.cursorAdvanced})`);
 
     return Response.json({
       status: 'success',
