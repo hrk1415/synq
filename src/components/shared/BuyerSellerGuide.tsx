@@ -86,17 +86,17 @@ function FaqList() {
             initial={{ opacity: 0, x: 16 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: i * 0.05 }}
-            className="rounded-xl bg-zinc-800/30 border border-zinc-800/50 overflow-hidden"
+            className="rounded-xl bg-[#252525] border border-white/20 overflow-hidden"
           >
             <button
               onClick={() => setOpenFaq(isOpen ? null : i)}
               className="w-full flex items-center gap-3 p-3 text-left"
             >
-              <div className="shrink-0 w-7 h-7 rounded-full bg-blue-600/15 border border-blue-500/30 flex items-center justify-center">
-                <HelpCircle size={13} className="text-blue-400" />
+              <div className="shrink-0 w-7 h-7 rounded-full bg-white/10 border border-white/20 flex items-center justify-center">
+                <HelpCircle size={13} className="text-white" />
               </div>
               <span className="flex-1 text-sm font-semibold text-white">{f.q}</span>
-              <ChevronDown size={16} className={cn('shrink-0 text-zinc-500 transition-transform', isOpen && 'rotate-180')} />
+              <ChevronDown size={16} className={cn('shrink-0 text-[#A3A3A3] transition-transform', isOpen && 'rotate-180')} />
             </button>
             <AnimatePresence initial={false}>
               {isOpen && (
@@ -108,7 +108,7 @@ function FaqList() {
                   transition={{ duration: 0.2 }}
                   className="overflow-hidden"
                 >
-                  <p className="text-xs text-zinc-300 px-3 pb-3 pl-[52px]">{f.a}</p>
+                  <p className="text-xs text-[#A3A3A3] px-3 pb-3 pl-[52px] leading-relaxed">{f.a}</p>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -128,17 +128,17 @@ function StepList({ steps }: { steps: Step[] }) {
           initial={{ opacity: 0, x: 16 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ delay: i * 0.08 }}
-          className="flex gap-3 p-3 rounded-xl bg-zinc-800/30 border border-zinc-800/50"
+          className="flex gap-3 p-3 rounded-xl bg-[#252525] border border-white/20"
         >
-          <div className="shrink-0 w-9 h-9 rounded-full bg-blue-600/15 border border-blue-500/30 flex items-center justify-center">
-            <s.icon size={16} className="text-blue-400" />
+          <div className="shrink-0 w-9 h-9 rounded-full bg-white/10 border border-white/20 flex items-center justify-center">
+            <s.icon size={16} className="text-white" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-[10px] text-zinc-400 font-mono">STEP {i + 1}</span>
+              <span className="text-[10px] text-[#A3A3A3] font-mono">STEP {i + 1}</span>
               <span className="text-sm font-semibold text-white">{s.title}</span>
             </div>
-            <p className="text-xs text-zinc-300 mt-0.5">{s.desc}</p>
+            <p className="text-xs text-[#A3A3A3] mt-0.5">{s.desc}</p>
           </div>
         </motion.div>
       ))}
@@ -153,21 +153,21 @@ export function BuyerSellerGuide({ showFaq = false }: { showFaq?: boolean }) {
   const views = showFaq ? VIEWS : VIEWS.filter((v) => v !== 'FAQ');
 
   return (
-    <Card className="border-blue-500/20 bg-gradient-to-b from-blue-600/5 to-transparent">
+    <Card className="border-white/75 bg-[#1B1B1B] shadow-xl">
       <CardHeader>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <HelpCircle size={18} className="text-blue-400" />
-            <CardTitle className="text-lg">How Buyer &amp; Seller Work</CardTitle>
+            <HelpCircle size={18} className="text-white" />
+            <CardTitle className="text-lg text-white">How Buyer &amp; Seller Work</CardTitle>
           </div>
-          <div className="flex gap-1 bg-zinc-800/60 border border-zinc-700/50 rounded-lg p-1">
+          <div className="flex gap-1 bg-[#252525] border border-white/20 rounded-lg p-1">
             {views.map((v) => (
               <button
                 key={v}
                 onClick={() => setView(v)}
                 className={cn(
                   'px-3 py-1 text-xs font-medium rounded-md transition-all',
-                  view === v ? 'bg-blue-600 text-white' : 'text-zinc-300 hover:text-white'
+                  view === v ? 'bg-white text-[#101010] font-semibold shadow-sm' : 'text-[#A3A3A3] hover:text-white'
                 )}
               >
                 {v}
@@ -175,7 +175,7 @@ export function BuyerSellerGuide({ showFaq = false }: { showFaq?: boolean }) {
             ))}
           </div>
         </div>
-        <CardDescription>
+        <CardDescription className="text-[#A3A3A3]">
           The two sides of every deal — what each one does, and how the money flows.
         </CardDescription>
       </CardHeader>
@@ -183,7 +183,7 @@ export function BuyerSellerGuide({ showFaq = false }: { showFaq?: boolean }) {
         <AnimatePresence mode="wait">
           {view === 'Buyer' && (
             <motion.div key="buyer" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              <div className="flex items-center gap-2 mb-3 text-blue-400 text-sm font-semibold">
+              <div className="flex items-center gap-2 mb-3 text-white text-sm font-semibold">
                 <Wallet size={15} /> The Buyer&apos;s Journey — pays, protects, verifies
               </div>
               <StepList steps={buyerSteps} />
@@ -199,7 +199,7 @@ export function BuyerSellerGuide({ showFaq = false }: { showFaq?: boolean }) {
           )}
           {view === 'Full Flow' && (
             <motion.div key="flow" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              <div className="flex items-center gap-2 mb-3 text-violet-400 text-sm font-semibold">
+              <div className="flex items-center gap-2 mb-3 text-white text-sm font-semibold">
                 <Gavel size={15} /> The Escrow Pipeline
               </div>
               <div className="space-y-2">
@@ -211,14 +211,14 @@ export function BuyerSellerGuide({ showFaq = false }: { showFaq?: boolean }) {
                     transition={{ delay: i * 0.08 }}
                     className="flex items-center gap-3"
                   >
-                    <div className="shrink-0 w-8 h-8 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-xs font-bold text-zinc-400">
+                    <div className="shrink-0 w-8 h-8 rounded-full bg-[#252525] border border-white/20 flex items-center justify-center text-xs font-bold text-white">
                       {i + 1}
                     </div>
-                    <div className="flex-1 p-3 rounded-lg bg-zinc-800/30 border border-zinc-800/50">
+                    <div className="flex-1 p-3 rounded-lg bg-[#252525] border border-white/20">
                       <div className="text-sm font-semibold text-white">{f.label}</div>
-                      <div className="text-xs text-zinc-300">{f.side}</div>
+                      <div className="text-xs text-[#A3A3A3]">{f.side}</div>
                     </div>
-                    {i < flowStages.length - 1 && <ArrowRight size={14} className="text-zinc-600 shrink-0" />}
+                    {i < flowStages.length - 1 && <ArrowRight size={14} className="text-[#A3A3A3] shrink-0" />}
                   </motion.div>
                 ))}
               </div>

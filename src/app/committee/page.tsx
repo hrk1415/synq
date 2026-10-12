@@ -1,6 +1,13 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { Press_Start_2P } from 'next/font/google';
+
+const pressStart2P = Press_Start_2P({
+  subsets: ['latin'],
+  weight: '400',
+  display: 'swap',
+});
 import { useAccount } from 'wagmi';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -90,7 +97,7 @@ export default function CommitteePortalPage() {
   if (!isConnected || !address) {
     return (
       <div className="container max-w-md mx-auto py-16 px-4">
-        <Card className="border-zinc-800 bg-zinc-950/60 text-center p-6 space-y-3">
+        <Card className="border border-white/75 bg-[#1B1B1B] text-center p-6 space-y-3 shadow-xl">
           <Scale className="mx-auto h-8 w-8 text-zinc-500" />
           <CardTitle className="text-base font-bold text-white">Committee Portal</CardTitle>
           <CardDescription className="text-xs text-zinc-400">
@@ -117,11 +124,11 @@ export default function CommitteePortalPage() {
 
   return (
     <div className="container max-w-4xl mx-auto py-8 px-4 space-y-6">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-zinc-800 pb-4">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-white/10 pb-4">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold text-white flex items-center gap-2">
-              <Scale className="h-5 w-5 text-indigo-400" /> Resolution Committee Portal
+            <h1 className={`${pressStart2P.className} text-base md:text-lg font-normal text-white flex items-center gap-2.5 tracking-tight`}>
+              <Scale className="h-5 w-5 text-white" /> Resolution Committee Portal
             </h1>
             <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-300 text-[10px]">
               Active Signer
@@ -138,7 +145,7 @@ export default function CommitteePortalPage() {
             variant="outline"
             onClick={fetchQueue}
             disabled={loadingQueue}
-            className="h-8 text-xs border-zinc-700 text-zinc-300 hover:bg-zinc-900 flex items-center gap-1.5"
+            className="h-8 text-xs border border-white/20 bg-[#252525] text-white hover:bg-neutral-800 flex items-center gap-1.5"
           >
             <RefreshCw className={`h-3 w-3 ${loadingQueue ? 'animate-spin' : ''}`} />
             Refresh Queue
@@ -161,14 +168,14 @@ export default function CommitteePortalPage() {
       ) : (
         <div className="space-y-4">
           {/* Tabs */}
-          <div className="flex border-b border-zinc-800">
+          <div className="flex border-b border-white/10">
             <button
               type="button"
               onClick={() => setActiveTab('initial')}
               className={`pb-2 px-4 text-xs font-semibold border-b-2 transition-colors ${
                 activeTab === 'initial'
-                  ? 'border-indigo-500 text-white'
-                  : 'border-transparent text-zinc-400 hover:text-zinc-300'
+                  ? 'border-white text-white'
+                  : 'border-transparent text-[#A3A3A3] hover:text-white'
               }`}
             >
               Needs Initial Review
@@ -178,8 +185,8 @@ export default function CommitteePortalPage() {
               onClick={() => setActiveTab('final')}
               className={`pb-2 px-4 text-xs font-semibold border-b-2 transition-colors ${
                 activeTab === 'final'
-                  ? 'border-indigo-500 text-white'
-                  : 'border-transparent text-zinc-400 hover:text-zinc-300'
+                  ? 'border-white text-white'
+                  : 'border-transparent text-[#A3A3A3] hover:text-white'
               }`}
             >
               Needs Final Review

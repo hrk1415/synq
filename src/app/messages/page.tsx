@@ -24,11 +24,11 @@ export default function MessagesPage() {
               type="button"
               tabIndex={0}
               aria-label="About SynqChat"
-              className="w-5 h-5 rounded-full bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/60 text-zinc-400 hover:text-white text-[11px] font-bold font-mono inline-flex items-center justify-center shrink-0 transition-colors focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+              className="w-5 h-5 rounded-full bg-[#252525] hover:bg-neutral-800 border border-white/20 text-[#A3A3A3] hover:text-white text-[11px] font-bold font-mono inline-flex items-center justify-center shrink-0 transition-colors focus:outline-none focus:ring-1 focus:ring-white/50"
             >
               ?
             </button>
-            <div className="absolute left-0 top-full mt-2 w-72 sm:w-80 p-3 rounded-xl bg-zinc-900 border border-zinc-700/80 text-zinc-200 text-xs leading-relaxed shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto transition-all duration-150 z-30">
+            <div className="absolute left-0 top-full mt-2 w-72 sm:w-80 p-3 rounded-xl bg-[#1B1B1B] border border-white/75 text-[#A3A3A3] text-xs leading-relaxed shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto transition-all duration-150 z-30">
               Message anyone on Synq, share what matters, and stay connected wallet to wallet.
             </div>
           </div>
@@ -37,7 +37,7 @@ export default function MessagesPage() {
 
       {/* Messages reads ?to / ?intent from the URL, so it needs a Suspense boundary. */}
       <div className="min-h-0 flex-1">
-        <Suspense fallback={<div className="flex h-full items-center justify-center"><Loader2 size={24} className="animate-spin text-blue-400" /></div>}>
+        <Suspense fallback={<div className="flex h-full items-center justify-center"><Loader2 size={24} className="animate-spin text-white" /></div>}>
           <Messages />
         </Suspense>
       </div>

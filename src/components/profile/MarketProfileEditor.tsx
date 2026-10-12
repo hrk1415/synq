@@ -29,6 +29,7 @@ import { useDirectoryContract } from '@/hooks/useDirectoryContract';
 import { useSepoliaNetwork } from '@/hooks/useSepoliaNetwork';
 import { useAuthSession } from '@/hooks/useAuthSession';
 import { validateUsdcPricing } from '@/lib/deals/pricing';
+import { ProjectThumbnail } from './ProjectThumbnail';
 
 const SELLER_CATEGORIES = ['Web Development', 'Design', 'Smart Contract', 'Content'];
 const EMPTY_REG = { name: '', category: 'Web Development', skills: '', rate: '', bio: '' };
@@ -120,6 +121,7 @@ export function MarketProfileEditor({
 
   // Active expanded portfolio project editor index (-1 means none)
   const [activeProjIdx, setActiveProjIdx] = useState<number>(-1);
+  const [rawTagsMap, setRawTagsMap] = useState<Record<string, string>>({});
 
   // Reset prefill flag on address change
   useEffect(() => {
@@ -330,10 +332,19 @@ export function MarketProfileEditor({
   };
 
   const removePortfolioProject = (idx: number) => {
+    const key = richForm.portfolio[idx]?.id || String(idx);
     setRichForm((prev) => ({
       ...prev,
       portfolio: prev.portfolio.filter((_, i) => i !== idx),
     }));
+    setRawTagsMap((prev) => {
+      const copy = { ...prev };
+      delete copy[key];
+      return copy;
+    });
+    if (richError === 'Maximum 6 portfolio projects allowed' || richError === 'Maximum 6 projects allowed') {
+      setRichError('');
+    }
     if (activeProjIdx === idx) setActiveProjIdx(-1);
     else if (activeProjIdx > idx) setActiveProjIdx(activeProjIdx - 1);
   };
@@ -385,27 +396,41 @@ export function MarketProfileEditor({
       }
     }
 
-    // Validate portfolio
+    // Validate projects
+    if (richForm.portfolio.length > 6) {
+      setRichError('Maximum 6 projects allowed');
+      return;
+    }
     for (let i = 0; i < richForm.portfolio.length; i++) {
       const p = richForm.portfolio[i];
       if (!p.title.trim()) {
-        setRichError(`Portfolio project #${i + 1} requires a title`);
+        setRichError(`Project #${i + 1} requires a title`);
         return;
       }
       if (p.title.length > 100) {
-        setRichError(`Portfolio project #${i + 1} title exceeds 100 characters limit`);
+        setRichError(`Project #${i + 1} title exceeds 100 characters limit`);
         return;
       }
       if (p.description.length > 600) {
-        setRichError(`Portfolio project #${i + 1} description exceeds 600 characters limit`);
+        setRichError(`Project #${i + 1} description exceeds 600 characters limit`);
         return;
       }
       if (p.image.trim() && !isValidHttpUrl(p.image)) {
-        setRichError(`Portfolio project #${i + 1} image URL must start with http:// or https://`);
+        setRichError(`Project #${i + 1} image URL must start with http:// or https://`);
         return;
       }
       if (p.link.trim() && !isValidHttpUrl(p.link)) {
-        setRichError(`Portfolio project #${i + 1} link URL must start with http:// or https://`);
+        setRichError(`Project #${i + 1} link URL must start with http:// or https://`);
+        return;
+      }
+      for (const t of p.tags || []) {
+        if (t.length > 40) {
+          setRichError(`Project #${i + 1} tag exceeds 40 characters limit`);
+          return;
+        }
+      }
+      if ((p.tags || []).length > 8) {
+        setRichError(`Project #${i + 1} exceeds maximum of 8 tags`);
         return;
       }
     }
@@ -478,6 +503,7 @@ export function MarketProfileEditor({
         });
       }
 
+      setRawTagsMap({});
       setRichSuccess(true);
       setTimeout(() => setRichSuccess(false), 3000);
     } catch (err: any) {
@@ -848,19 +874,23 @@ export function MarketProfileEditor({
         </div>
       </div>
 
-      {/* SECTION 4: PORTFOLIO */}
+      {/* SECTION 4: PROJECTS */}
       <div className="space-y-3 p-3.5 rounded-xl bg-zinc-900/60 border border-zinc-800">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-white uppercase tracking-wider">Portfolio</span>
+            <span className="text-xs font-bold text-white uppercase tracking-wider">Projects</span>
             <span className="text-[10px] font-mono text-zinc-400 bg-zinc-800 rounded px-1.5 py-0.5">
               {richForm.portfolio.length} / 6
             </span>
           </div>
-          {richForm.portfolio.length < 6 && (
+          {richForm.portfolio.length < 6 ? (
             <Button type="button" size="sm" variant="outline" onClick={addPortfolioProject} className="gap-1 text-xs h-7 px-2.5">
               <Plus size={12} /> Add Project
             </Button>
+          ) : (
+            <span className="text-[11px] text-zinc-400 bg-zinc-800/80 px-2 py-0.5 rounded border border-zinc-700/50">
+              Maximum 6 projects reached
+            </span>
           )}
         </div>
 
@@ -876,9 +906,10 @@ export function MarketProfileEditor({
                 className="p-3 rounded-lg bg-zinc-800/40 border border-zinc-700/60 space-y-2.5"
               >
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-blue-400">#{idx + 1}</span>
-                    <span className="text-xs font-semibold text-white">{proj.title || 'Untitled Project'}</span>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-xs font-bold text-blue-400 shrink-0">#{idx + 1}</span>
+                    <ProjectThumbnail src={proj.image} alt={proj.title} size="sm" />
+                    <span className="text-xs font-semibold text-white truncate">{proj.title || 'Untitled Project'}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
@@ -947,20 +978,43 @@ export function MarketProfileEditor({
                     </div>
 
                     <div>
-                      <label className="text-[11px] text-zinc-400 mb-1 block">Project Tags (Comma separated)</label>
-                      <Input
-                        value={proj.tags.join(', ')}
-                        onChange={(e) =>
-                          updatePortfolioProject(idx, {
-                            tags: e.target.value
-                              .split(',')
-                              .map((t) => t.trim())
-                              .filter(Boolean)
-                              .slice(0, 8),
-                          })
-                        }
-                        placeholder="React, Ethers.js, Tailwind"
-                      />
+                      <label className="text-[11px] text-zinc-400 mb-1 flex items-center justify-between">
+                        <span>Project Tags (Comma separated, max 8)</span>
+                        <span className="text-[10px] text-zinc-500">{(proj.tags || []).length} / 8</span>
+                      </label>
+                      {(() => {
+                        const key = proj.id || String(idx);
+                        const val =
+                          rawTagsMap[key] !== undefined
+                            ? rawTagsMap[key]
+                            : (Array.isArray(proj.tags) ? proj.tags.join(', ') : '');
+                        return (
+                          <Input
+                            value={val}
+                            onChange={(e) => {
+                              const text = e.target.value;
+                              setRawTagsMap((prev) => ({ ...prev, [key]: text }));
+                              const parsed = text
+                                .split(',')
+                                .map((t) => t.trim())
+                                .filter(Boolean)
+                                .slice(0, 8);
+                              updatePortfolioProject(idx, { tags: parsed });
+                            }}
+                            onBlur={() => {
+                              const text = rawTagsMap[key] !== undefined ? rawTagsMap[key] : (proj.tags || []).join(', ');
+                              const parsed = text
+                                .split(',')
+                                .map((t) => t.trim())
+                                .filter(Boolean)
+                                .slice(0, 8);
+                              updatePortfolioProject(idx, { tags: parsed });
+                              setRawTagsMap((prev) => ({ ...prev, [key]: parsed.join(', ') }));
+                            }}
+                            placeholder="Smart Contracts, Web Development, AI Chatbot"
+                          />
+                        );
+                      })()}
                     </div>
                   </div>
                 ) : (

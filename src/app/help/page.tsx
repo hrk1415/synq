@@ -3,6 +3,9 @@
 import { HelpCircle, Bot, ShieldCheck, Wallet, FileCheck, Scale, MessageCircle, ExternalLink } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { BuyerSellerGuide } from '@/components/shared/BuyerSellerGuide';
+import { Press_Start_2P } from 'next/font/google';
+
+const pressStart2P = Press_Start_2P({ weight: '400', subsets: ['latin'] });
 
 const faqs = [
   { q: 'What is Synq?', a: 'Synq is an AI-powered on-chain Deal Operating System. It combines AI negotiation, smart escrow, adaptive protection, and conversational payments into one unified experience.' },
@@ -17,22 +20,22 @@ export default function HelpPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-white">Help Center</h1>
-        <p className="text-zinc-400 text-sm mt-1">Learn how to use Synq effectively.</p>
+        <h1 className={`text-xl md:text-2xl font-bold text-white tracking-wider ${pressStart2P.className}`}>Help Center</h1>
+        <p className="text-[#A3A3A3] text-sm mt-2">Learn how to use Synq effectively.</p>
       </div>
 
       <BuyerSellerGuide showFaq />
 
-      <Card>
+      <Card className="bg-[#1B1B1B] border-white/75 shadow-xl">
         <CardHeader>
-          <CardTitle>Frequently Asked Questions</CardTitle>
-          <CardDescription>Quick answers to common questions</CardDescription>
+          <CardTitle className="text-white">Frequently Asked Questions</CardTitle>
+          <CardDescription className="text-[#A3A3A3]">Quick answers to common questions</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {faqs.map((faq, i) => (
-            <div key={i} className="p-4 rounded-lg bg-zinc-800/30 border border-zinc-800/50">
+            <div key={i} className="p-4 rounded-xl bg-[#252525] border border-white/20">
               <h3 className="text-sm font-medium text-white mb-1">{faq.q}</h3>
-              <p className="text-sm text-zinc-300">{faq.a}</p>
+              <p className="text-sm text-[#A3A3A3] leading-relaxed">{faq.a}</p>
             </div>
           ))}
         </CardContent>

@@ -75,7 +75,7 @@ export function HandleMention({
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
           onClick={handleClick}
-          className="inline-flex items-center text-blue-400 hover:text-blue-300 font-semibold underline underline-offset-2 decoration-blue-500/50 hover:decoration-blue-400 cursor-pointer transition-colors px-0.5 rounded focus:outline-none focus:ring-1 focus:ring-blue-500/40"
+          className="inline-flex items-center text-white hover:text-zinc-200 font-semibold underline underline-offset-2 decoration-zinc-400 hover:decoration-white cursor-pointer transition-colors px-0.5 rounded focus:outline-none focus:ring-1 focus:ring-white/40"
         >
           {displayLabel}
         </button>

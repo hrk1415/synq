@@ -400,52 +400,52 @@ export default function DealProposalPage() {
       </div>
 
       {/* Hero Header Card */}
-      <Card className="border-zinc-800 bg-gradient-to-b from-zinc-900/90 to-zinc-950/90 backdrop-blur-md">
+      <Card className="border border-white/75 bg-[#1B1B1B] shadow-xl">
         <CardContent className="pt-6 space-y-4">
           <div className="space-y-1">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-blue-400">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-white">
               Deal Proposal
             </span>
             <h1 className="text-2xl font-bold tracking-tight text-white">
               {proposal.title}
             </h1>
-            <p className="text-xs text-zinc-400">
+            <p className="text-xs text-[#A3A3A3]">
               Created for counterparty review. Before acceptance, no contract exists and no funds move.
             </p>
           </div>
 
           {/* Quick Metrics Grid */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
-            <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/50 p-3">
-              <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-zinc-400">
-                <Coins className="h-3.5 w-3.5 text-blue-400" /> Proposed Escrow
+            <div className="rounded-xl border border-white/20 bg-[#252525] p-3">
+              <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-[#A3A3A3]">
+                <Coins className="h-3.5 w-3.5 text-white" /> Proposed Escrow
               </div>
-              <div className="mt-1 text-lg font-bold text-white">
-                {formattedUsdc} <span className="text-xs font-normal text-zinc-400">USDC</span>
+              <div className="mt-1 text-lg font-bold text-white font-mono">
+                {formattedUsdc} <span className="text-xs font-normal text-[#A3A3A3]">USDC</span>
               </div>
             </div>
 
-            <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/50 p-3">
-              <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-zinc-400">
-                <Layers className="h-3.5 w-3.5 text-blue-400" /> Milestones
+            <div className="rounded-xl border border-white/20 bg-[#252525] p-3">
+              <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-[#A3A3A3]">
+                <Layers className="h-3.5 w-3.5 text-white" /> Milestones
               </div>
-              <div className="mt-1 text-lg font-bold text-white">
+              <div className="mt-1 text-lg font-bold text-white font-mono">
                 {proposal.milestones.length}
               </div>
             </div>
 
-            <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/50 p-3">
-              <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-zinc-400">
-                <Clock className="h-3.5 w-3.5 text-blue-400" /> Proposal Expiry
+            <div className="rounded-xl border border-white/20 bg-[#252525] p-3">
+              <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-[#A3A3A3]">
+                <Clock className="h-3.5 w-3.5 text-white" /> Proposal Expiry
               </div>
               <div className="mt-1 text-sm font-semibold text-white truncate" title={formattedExpiry}>
                 {formattedExpiry}
               </div>
             </div>
 
-            <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/50 p-3">
-              <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-zinc-400">
-                <FileSignature className="h-3.5 w-3.5 text-blue-400" /> Your Role
+            <div className="rounded-xl border border-white/20 bg-[#252525] p-3">
+              <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-[#A3A3A3]">
+                <FileSignature className="h-3.5 w-3.5 text-white" /> Your Role
               </div>
               <div className="mt-1 text-sm font-semibold text-white">
                 {isClient ? 'Client (Creator)' : isFreelancer ? 'Freelancer' : 'Viewer (Read-Only)'}
@@ -582,14 +582,14 @@ export default function DealProposalPage() {
       )}
 
       {/* Section 1: Signed On-Chain Terms */}
-      <Card className="border-zinc-800 bg-zinc-900/60 backdrop-blur-md">
+      <Card className="border border-white/75 bg-[#1B1B1B] shadow-xl">
         <CardHeader>
           <div className="flex items-center justify-between">
             <div className="space-y-1">
               <CardTitle className="text-base text-white flex items-center gap-2">
                 <ShieldCheck className="h-4 w-4 text-emerald-400" /> Signed On-Chain Terms
               </CardTitle>
-              <p className="text-xs text-zinc-400">
+              <p className="text-xs text-[#A3A3A3]">
                 These terms are cryptographically committed through EIP-712 and cannot be modified.
               </p>
             </div>
@@ -601,28 +601,28 @@ export default function DealProposalPage() {
         <CardContent className="space-y-4">
           {/* Parties */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3 space-y-1">
-              <div className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Client (Signer)</div>
+            <div className="rounded-lg border border-white/20 bg-[#252525] p-3 space-y-1">
+              <div className="text-[10px] uppercase tracking-wider text-[#A3A3A3] font-semibold">Client (Signer)</div>
               <div className="flex items-center justify-between font-mono text-xs text-white">
                 <span>{proposal.clientWallet}</span>
                 <button
                   type="button"
                   onClick={() => copyToClipboard(proposal.clientWallet, 'client')}
-                  className="text-zinc-500 hover:text-zinc-300"
+                  className="text-[#A3A3A3] hover:text-white"
                 >
                   {copiedKey === 'client' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
                 </button>
               </div>
             </div>
 
-            <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3 space-y-1">
-              <div className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Freelancer (Recipient)</div>
+            <div className="rounded-lg border border-white/20 bg-[#252525] p-3 space-y-1">
+              <div className="text-[10px] uppercase tracking-wider text-[#A3A3A3] font-semibold">Freelancer (Recipient)</div>
               <div className="flex items-center justify-between font-mono text-xs text-white">
                 <span>{proposal.freelancerWallet}</span>
                 <button
                   type="button"
                   onClick={() => copyToClipboard(proposal.freelancerWallet, 'freelancer')}
-                  className="text-zinc-500 hover:text-zinc-300"
+                  className="text-[#A3A3A3] hover:text-white"
                 >
                   {copiedKey === 'freelancer' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
                 </button>
@@ -632,8 +632,8 @@ export default function DealProposalPage() {
 
           {/* Milestones List */}
           <div className="space-y-2">
-            <div className="text-xs font-semibold text-zinc-300">Milestone Definitions ({proposal.milestones.length})</div>
-            <div className="divide-y divide-zinc-800 rounded-lg border border-zinc-800 bg-zinc-950/40 overflow-hidden">
+            <div className="text-xs font-semibold text-white">Milestone Definitions ({proposal.milestones.length})</div>
+            <div className="divide-y divide-white/20 rounded-lg border border-white/20 bg-[#252525] overflow-hidden">
               {proposal.milestones.map((m, idx) => {
                 const amountUsdc = formatUnits(BigInt(m.amount), 6);
                 const deadlineDate = new Date(Number(m.workDeadline) * 1000).toLocaleDateString();
@@ -644,7 +644,7 @@ export default function DealProposalPage() {
                   <div key={idx} className="p-3.5 space-y-2">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-500/20 text-[10px] font-bold text-blue-400">
+                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-white/10 border border-white/20 text-[10px] font-bold text-white">
                           {idx + 1}
                         </span>
                         <span className="text-sm font-semibold text-white">
@@ -652,11 +652,11 @@ export default function DealProposalPage() {
                         </span>
                       </div>
                       <span className="font-mono text-sm font-bold text-white">
-                        {amountUsdc} <span className="text-xs font-normal text-zinc-400">USDC</span>
+                        {amountUsdc} <span className="text-xs font-normal text-[#A3A3A3]">USDC</span>
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] text-zinc-400 pt-1">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] text-[#A3A3A3] pt-1">
                       <div>
                         <span className="text-[10px] uppercase text-zinc-500 block">Work Deadline</span>
                         <span className="text-zinc-200">{deadlineDate}</span>
@@ -692,31 +692,31 @@ export default function DealProposalPage() {
               <CardTitle className="text-base text-white flex items-center gap-2">
                 <Info className="h-4 w-4 text-blue-400" /> Proposal Details
               </CardTitle>
-              <p className="text-xs text-zinc-400">
+              <p className="text-xs text-[#A3A3A3]">
                 Human-readable project scope and descriptions (Stored durably off-chain).
               </p>
             </div>
-            <Badge variant="outline" className="border-zinc-700 bg-zinc-800/40 text-[10px] text-zinc-400">
+            <Badge variant="outline" className="border-white/20 bg-[#252525] text-[10px] text-[#A3A3A3]">
               Unsigned Metadata
             </Badge>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-1">
-            <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-semibold">Scope of Work</span>
-            <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3 text-xs text-zinc-300 leading-relaxed whitespace-pre-wrap">
+            <span className="text-[10px] uppercase tracking-wider text-[#A3A3A3] font-semibold">Scope of Work</span>
+            <div className="rounded-lg border border-white/20 bg-[#252525] p-3 text-xs text-white leading-relaxed whitespace-pre-wrap">
               {proposal.scope || 'No written scope of work provided with this proposal.'}
             </div>
           </div>
 
           {proposal.milestones.some((m) => m.description) && (
             <div className="space-y-2">
-              <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-semibold">Milestone Deliverable Descriptions</span>
+              <span className="text-[10px] uppercase tracking-wider text-[#A3A3A3] font-semibold">Milestone Deliverable Descriptions</span>
               <div className="space-y-2">
                 {proposal.milestones.map((m, idx) => m.description ? (
-                  <div key={idx} className="rounded-lg border border-zinc-800/60 bg-zinc-950/20 p-2.5 text-xs">
-                    <span className="font-medium text-zinc-300 block mb-0.5">{m.title || `Milestone ${idx + 1}`}</span>
-                    <p className="text-zinc-400">{m.description}</p>
+                  <div key={idx} className="rounded-lg border border-white/20 bg-[#252525] p-2.5 text-xs">
+                    <span className="font-medium text-white block mb-0.5">{m.title || `Milestone ${idx + 1}`}</span>
+                    <p className="text-[#A3A3A3]">{m.description}</p>
                   </div>
                 ) : null)}
               </div>
@@ -726,55 +726,55 @@ export default function DealProposalPage() {
       </Card>
 
       {/* Section 3: Advanced Cryptographic Details */}
-      <Card className="border-zinc-800/70 bg-zinc-950/40">
+      <Card className="border border-white/75 bg-[#1B1B1B] shadow-xl">
         <CardHeader className="py-3">
-          <CardTitle className="text-xs text-zinc-400 font-semibold uppercase tracking-wider">
+          <CardTitle className="text-xs text-white font-semibold uppercase tracking-wider">
             Technical & Cryptographic Proofs
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2 text-xs font-mono">
-          <div className="flex items-center justify-between py-1 border-b border-zinc-900">
-            <span className="text-zinc-500">Proposal ID</span>
-            <div className="flex items-center gap-1.5 text-zinc-300">
+          <div className="flex items-center justify-between py-1 border-b border-white/10">
+            <span className="text-[#A3A3A3]">Proposal ID</span>
+            <div className="flex items-center gap-1.5 text-white">
               <span>{proposal.proposalId}</span>
-              <button type="button" onClick={() => copyToClipboard(proposal.proposalId, 'propId')} className="text-zinc-500 hover:text-zinc-300">
+              <button type="button" onClick={() => copyToClipboard(proposal.proposalId, 'propId')} className="text-[#A3A3A3] hover:text-white">
                 {copiedKey === 'propId' ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
               </button>
             </div>
           </div>
 
-          <div className="flex items-center justify-between py-1 border-b border-zinc-900">
-            <span className="text-zinc-500">Milestones Hash</span>
-            <div className="flex items-center gap-1.5 text-zinc-300">
+          <div className="flex items-center justify-between py-1 border-b border-white/10">
+            <span className="text-[#A3A3A3]">Milestones Hash</span>
+            <div className="flex items-center gap-1.5 text-white">
               <span>{proposal.milestonesHash}</span>
-              <button type="button" onClick={() => copyToClipboard(proposal.milestonesHash, 'mHash')} className="text-zinc-500 hover:text-zinc-300">
+              <button type="button" onClick={() => copyToClipboard(proposal.milestonesHash, 'mHash')} className="text-[#A3A3A3] hover:text-white">
                 {copiedKey === 'mHash' ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
               </button>
             </div>
           </div>
 
-          <div className="flex items-center justify-between py-1 border-b border-zinc-900">
-            <span className="text-zinc-500">Proposal Nonce</span>
-            <span className="text-zinc-300">{proposal.proposalNonce}</span>
+          <div className="flex items-center justify-between py-1 border-b border-white/10">
+            <span className="text-[#A3A3A3]">Proposal Nonce</span>
+            <span className="text-white">{proposal.proposalNonce}</span>
           </div>
 
-          <div className="flex items-center justify-between py-1 border-b border-zinc-900">
-            <span className="text-zinc-500">Factory V2 Contract</span>
+          <div className="flex items-center justify-between py-1 border-b border-white/10">
+            <span className="text-[#A3A3A3]">Factory V2 Contract</span>
             <a
               href={getSepoliaExplorerUrl('address', proposal.factoryAddress)}
               target="_blank"
               rel="noreferrer"
-              className="text-blue-400 hover:underline flex items-center gap-1"
+              className="text-white hover:text-neutral-300 hover:underline flex items-center gap-1"
             >
               {proposal.factoryAddress} <ExternalLink className="h-3 w-3" />
             </a>
           </div>
 
           <div className="flex items-center justify-between py-1">
-            <span className="text-zinc-500">Client Signature</span>
-            <div className="flex items-center gap-1.5 text-zinc-300">
+            <span className="text-[#A3A3A3]">Client Signature</span>
+            <div className="flex items-center gap-1.5 text-white">
               <span>{shortenAddress(proposal.clientSignature)}</span>
-              <button type="button" onClick={() => copyToClipboard(proposal.clientSignature, 'sig')} className="text-zinc-500 hover:text-zinc-300">
+              <button type="button" onClick={() => copyToClipboard(proposal.clientSignature, 'sig')} className="text-[#A3A3A3] hover:text-white">
                 {copiedKey === 'sig' ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
               </button>
             </div>
@@ -784,12 +784,12 @@ export default function DealProposalPage() {
 
       {/* Role-Aware Terminal Actions */}
       {status === 'PENDING' && !isExpired && (
-        <Card className="border-zinc-800 bg-zinc-900/90 backdrop-blur-md sticky bottom-4 shadow-2xl">
+        <Card className="border border-white/75 bg-[#1B1B1B]/95 backdrop-blur-md sticky bottom-4 shadow-2xl">
           <CardContent className="pt-4 pb-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="space-y-0.5">
                 <span className="text-sm font-semibold text-white">Respond to Proposal</span>
-                <p className="text-xs text-zinc-400">
+                <p className="text-xs text-[#A3A3A3]">
                   {isFreelancer
                     ? 'Accepting will deploy the SynqDealV1 clone on-chain.'
                     : isClient
@@ -800,7 +800,7 @@ export default function DealProposalPage() {
 
               <div className="flex items-center gap-3">
                 {!isConnected ? (
-                  <Button variant="outline" className="text-xs border-zinc-700" onClick={() => router.push('/settings')}>
+                  <Button variant="outline" className="text-xs border-white/20 bg-[#252525] text-white hover:bg-white/10" onClick={() => router.push('/profile')}>
                     Connect Wallet to Respond
                   </Button>
                 ) : isFreelancer ? (
@@ -832,11 +832,11 @@ export default function DealProposalPage() {
                       </Button>
 
                       <Button
-                        className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs h-9 shadow-lg shadow-emerald-900/30"
+                        className="bg-white text-[#101010] hover:bg-neutral-200 font-semibold text-xs h-9 shadow-lg"
                         onClick={handleAccept}
                         disabled={actionInProgress !== null}
                       >
-                        {actionInProgress === 'accept' ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />}
+                        {actionInProgress === 'accept' ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-[#101010]" /> : <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />}
                         Accept Proposal
                       </Button>
                     </>
@@ -859,7 +859,7 @@ export default function DealProposalPage() {
                     </Button>
                   </div>
                 ) : (
-                  <span className="text-xs text-zinc-500 italic">
+                  <span className="text-xs text-[#A3A3A3] italic">
                     Connected as third-party viewer ({shortenAddress(address || '')})
                   </span>
                 )}

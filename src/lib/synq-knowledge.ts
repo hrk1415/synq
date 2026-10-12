@@ -134,12 +134,20 @@ export const SYNQ_KNOWLEDGE = {
     ],
     secondaryNav: [
       {
+        id: 'profile',
+        name: 'Profile',
+        route: '/profile',
+        availability: 'implemented' as SynqFeatureAvailability,
+        accessNote: 'Accessible by clicking the user avatar/identity card or Profile menu in the sidebar.',
+        purpose: 'Manage personal profile, avatar, Synq Registry handle, and directory seller profile.',
+      },
+      {
         id: 'settings',
-        name: 'Profile / Settings',
+        name: 'Settings',
         route: '/settings',
         availability: 'implemented' as SynqFeatureAvailability,
-        accessNote: 'Accessible by clicking the user avatar/identity card at the bottom of the sidebar.',
-        purpose: 'Manage personal profile, email notifications, Synq Registry handle, and directory seller profile.',
+        accessNote: 'Accessible via the account popup menu beside the user profile in the sidebar.',
+        purpose: 'Manage deal notification preferences, event categories, and verified email status.',
       },
       {
         id: 'help',

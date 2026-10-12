@@ -1,4 +1,4 @@
-import { http, createConfig, fallback } from 'wagmi';
+import { http, createConfig, fallback, cookieStorage, createStorage } from 'wagmi';
 import { sepolia } from 'wagmi/chains';
 import { injected, walletConnect, coinbaseWallet } from 'wagmi/connectors';
 
@@ -19,6 +19,10 @@ const rpcTransports = [
 // connection is handled as connected-but-not-network-ready by useSepoliaNetwork.
 export const wagmiConfig = createConfig({
   chains: [sepolia],
+  ssr: true,
+  storage: createStorage({
+    storage: cookieStorage,
+  }),
   connectors: [
     injected(),
     coinbaseWallet({ appName: 'Synq' }),

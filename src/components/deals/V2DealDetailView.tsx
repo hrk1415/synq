@@ -142,12 +142,12 @@ export function V2DealDetailView({ dealAddress }: V2DealDetailViewProps) {
       <div className="flex items-center justify-between">
         <button
           onClick={() => router.push('/deals')}
-          className="flex items-center gap-2 text-sm text-zinc-400 hover:text-white transition-colors"
+          className="flex items-center gap-2 text-sm text-[#A3A3A3] hover:text-white transition-colors"
         >
           <ArrowLeft className="h-4 w-4" /> Back to Deals
         </button>
         <div className="flex items-center gap-2">
-          <Badge variant="outline" className="border-blue-500/30 bg-blue-500/10 text-xs text-blue-400">
+          <Badge variant="outline" className="border-white/20 bg-[#252525] text-xs text-white">
             Standard V2 Deal
           </Badge>
           {role === 'client' && (
@@ -156,7 +156,7 @@ export function V2DealDetailView({ dealAddress }: V2DealDetailViewProps) {
             </Badge>
           )}
           {role === 'freelancer' && (
-            <Badge className="bg-purple-600/20 text-purple-400 border border-purple-500/30 text-xs">
+            <Badge className="bg-white/10 text-white border border-white/20 text-xs">
               You are Freelancer
             </Badge>
           )}
@@ -164,7 +164,7 @@ export function V2DealDetailView({ dealAddress }: V2DealDetailViewProps) {
       </div>
 
       {/* Main Deal Header Card */}
-      <Card className="border-zinc-800 bg-zinc-900/60 backdrop-blur-md">
+      <Card className="border border-white/75 bg-[#1B1B1B] shadow-xl">
         <CardHeader>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="space-y-1">
@@ -179,12 +179,12 @@ export function V2DealDetailView({ dealAddress }: V2DealDetailViewProps) {
                     Active & Funded
                   </Badge>
                 ) : (
-                  <Badge variant="outline" className="border-zinc-700 text-xs text-zinc-300">
+                  <Badge variant="outline" className="border-white/20 text-xs text-white">
                     {stateLabel}
                   </Badge>
                 )}
               </div>
-              <CardDescription className="text-xs text-zinc-400 font-mono flex items-center gap-2">
+              <CardDescription className="text-xs text-[#A3A3A3] font-mono flex items-center gap-2">
                 <span>{dealData.dealAddress}</span>
                 <button
                   type="button"
@@ -197,7 +197,7 @@ export function V2DealDetailView({ dealAddress }: V2DealDetailViewProps) {
                   href={getSepoliaExplorerUrl('address', dealData.dealAddress)}
                   target="_blank"
                   rel="noreferrer"
-                  className="text-blue-400 hover:underline"
+                  className="text-white hover:text-neutral-300 hover:underline"
                 >
                   <ExternalLink className="h-3 w-3 inline ml-1" />
                 </a>
@@ -207,12 +207,12 @@ export function V2DealDetailView({ dealAddress }: V2DealDetailViewProps) {
             {/* Quick Metrics */}
             <div className="flex items-center gap-6">
               <div className="text-right">
-                <div className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Total Escrow</div>
-                <div className="text-lg font-bold text-white">{formatUsdcAmount(dealData.totalEscrow)} USDC</div>
+                <div className="text-[10px] uppercase tracking-wider text-[#A3A3A3] font-semibold">Total Escrow</div>
+                <div className="text-lg font-bold text-white font-mono">{formatUsdcAmount(dealData.totalEscrow)} USDC</div>
               </div>
               <div className="text-right">
-                <div className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Milestones</div>
-                <div className="text-lg font-bold text-white">{dealData.milestoneCount}</div>
+                <div className="text-[10px] uppercase tracking-wider text-[#A3A3A3] font-semibold">Milestones</div>
+                <div className="text-lg font-bold text-white font-mono">{dealData.milestoneCount}</div>
               </div>
             </div>
           </div>
@@ -220,9 +220,9 @@ export function V2DealDetailView({ dealAddress }: V2DealDetailViewProps) {
         <CardContent className="space-y-4">
           {/* Parties Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3 space-y-1">
+            <div className="rounded-lg border border-white/20 bg-[#252525] p-3 space-y-1">
               <div className="flex items-center justify-between">
-                <span className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Client</span>
+                <span className="text-[10px] uppercase tracking-wider text-[#A3A3A3] font-semibold">Client</span>
                 {role === 'client' && <span className="text-[10px] text-emerald-400 font-semibold">(You)</span>}
               </div>
               <div className="flex items-center justify-between font-mono text-xs text-white">
@@ -230,24 +230,24 @@ export function V2DealDetailView({ dealAddress }: V2DealDetailViewProps) {
                 <button
                   type="button"
                   onClick={() => copyToClipboard(dealData.client, 'client')}
-                  className="text-zinc-400 hover:text-white"
+                  className="text-[#A3A3A3] hover:text-white"
                 >
                   {copiedKey === 'client' ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
                 </button>
               </div>
             </div>
 
-            <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3 space-y-1">
+            <div className="rounded-lg border border-white/20 bg-[#252525] p-3 space-y-1">
               <div className="flex items-center justify-between">
-                <span className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Freelancer</span>
-                {role === 'freelancer' && <span className="text-[10px] text-purple-400 font-semibold">(You)</span>}
+                <span className="text-[10px] uppercase tracking-wider text-[#A3A3A3] font-semibold">Freelancer</span>
+                {role === 'freelancer' && <span className="text-[10px] text-white font-semibold">(You)</span>}
               </div>
               <div className="flex items-center justify-between font-mono text-xs text-white">
                 <span>{dealData.freelancer}</span>
                 <button
                   type="button"
                   onClick={() => copyToClipboard(dealData.freelancer, 'freelancer')}
-                  className="text-zinc-400 hover:text-white"
+                  className="text-[#A3A3A3] hover:text-white"
                 >
                   {copiedKey === 'freelancer' ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
                 </button>
@@ -257,28 +257,28 @@ export function V2DealDetailView({ dealAddress }: V2DealDetailViewProps) {
 
           {/* Asset & Protection Details */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-            <div className="rounded-lg border border-zinc-800 bg-zinc-950/30 p-2.5 space-y-0.5">
-              <span className="text-[10px] uppercase tracking-wider text-zinc-400">Canonical Asset</span>
+            <div className="rounded-lg border border-white/20 bg-[#252525] p-2.5 space-y-0.5">
+              <span className="text-[10px] uppercase tracking-wider text-[#A3A3A3]">Canonical Asset</span>
               <div className="font-semibold text-white">Sepolia USDC (6 decimals)</div>
-              <div className="text-[10px] font-mono text-zinc-500">{shortenAddress(dealData.usdc)}</div>
+              <div className="text-[10px] font-mono text-[#A3A3A3]">{shortenAddress(dealData.usdc)}</div>
             </div>
 
-            <div className="rounded-lg border border-zinc-800 bg-zinc-950/30 p-2.5 space-y-0.5">
-              <span className="text-[10px] uppercase tracking-wider text-zinc-400">Protection Status</span>
-              <div className="font-semibold text-zinc-300">
+            <div className="rounded-lg border border-white/20 bg-[#252525] p-2.5 space-y-0.5">
+              <span className="text-[10px] uppercase tracking-wider text-[#A3A3A3]">Protection Status</span>
+              <div className="font-semibold text-[#A3A3A3]">
                 {dealData.isProtected ? (
                   <span className="text-emerald-400">Active Protection</span>
                 ) : (
                   'Not enabled / Standard Deal'
                 )}
               </div>
-              <div className="text-[10px] text-zinc-500">Protection module disabled in V2 Standard</div>
+              <div className="text-[10px] text-[#A3A3A3]/70">Protection module disabled in V2 Standard</div>
             </div>
 
-            <div className="rounded-lg border border-zinc-800 bg-zinc-950/30 p-2.5 space-y-0.5">
-              <span className="text-[10px] uppercase tracking-wider text-zinc-400">Primary Resolver</span>
+            <div className="rounded-lg border border-white/20 bg-[#252525] p-2.5 space-y-0.5">
+              <span className="text-[10px] uppercase tracking-wider text-[#A3A3A3]">Primary Resolver</span>
               <div className="font-semibold text-white">{shortenAddress(dealData.primaryResolver)}</div>
-              <div className="text-[10px] text-zinc-500">Decentralized Resolution Committee</div>
+              <div className="text-[10px] text-[#A3A3A3]/70">Decentralized Resolution Committee</div>
             </div>
           </div>
         </CardContent>
@@ -291,18 +291,18 @@ export function V2DealDetailView({ dealAddress }: V2DealDetailViewProps) {
       <V2MilestoneLifecycle dealData={dealData} refetchDealData={loadDealData} />
 
       {/* On-Chain Milestones Section */}
-      <Card className="border-zinc-800 bg-zinc-900/60 backdrop-blur-md">
+      <Card className="border border-white/75 bg-[#1B1B1B] shadow-xl">
         <CardHeader>
           <div className="flex items-center justify-between">
             <div className="space-y-1">
               <CardTitle className="text-base text-white flex items-center gap-2">
-                <Layers className="h-4 w-4 text-blue-400" /> On-Chain Milestones ({dealData.milestones.length})
+                <Layers className="h-4 w-4 text-white" /> On-Chain Milestones ({dealData.milestones.length})
               </CardTitle>
-              <CardDescription className="text-xs text-zinc-400">
+              <CardDescription className="text-xs text-[#A3A3A3]">
                 Milestones are initialized at clone deployment and read directly from contract storage.
               </CardDescription>
             </div>
-            <Badge variant="outline" className="border-zinc-700 text-xs text-zinc-300">
+            <Badge variant="outline" className="border-white/20 text-xs text-white">
               Immutable Schedule
             </Badge>
           </div>
@@ -319,15 +319,15 @@ export function V2DealDetailView({ dealAddress }: V2DealDetailViewProps) {
                 className={cn(
                   'rounded-xl border p-4 space-y-3 transition-colors',
                   isCurrent
-                    ? 'border-purple-500/40 bg-purple-950/10'
-                    : 'border-zinc-800 bg-zinc-950/50'
+                    ? 'border-white bg-white/5'
+                    : 'border-white/20 bg-[#252525]'
                 )}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-bold text-white">Milestone {m.index + 1}</span>
                     {isCurrent && (
-                      <Badge variant="outline" className="border-purple-500/40 bg-purple-500/10 text-[10px] text-purple-300">
+                      <Badge variant="outline" className="border-white bg-white/20 text-[10px] text-white font-semibold">
                         Current
                       </Badge>
                     )}
@@ -344,17 +344,17 @@ export function V2DealDetailView({ dealAddress }: V2DealDetailViewProps) {
                         Dispute Open
                       </Badge>
                     ) : (
-                      <Badge variant="outline" className="border-zinc-700 text-[10px] text-zinc-300">
+                      <Badge variant="outline" className="border-white/20 text-[10px] text-[#A3A3A3]">
                         {statusLabel}
                       </Badge>
                     )}
                     {m.version > 0 && (
-                      <Badge variant="outline" className="border-zinc-700 text-[10px] text-zinc-400">
+                      <Badge variant="outline" className="border-white/20 text-[10px] text-[#A3A3A3]">
                         v{m.version}
                       </Badge>
                     )}
                   </div>
-                  <div className="text-sm font-bold text-white">
+                  <div className="text-sm font-bold text-white font-mono">
                     {formatUsdcAmount(m.amount)} USDC
                   </div>
                 </div>
@@ -398,38 +398,38 @@ export function V2DealDetailView({ dealAddress }: V2DealDetailViewProps) {
 
                 {/* Milestone Parameters Grid */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-                  <div className="rounded-md border border-zinc-800/80 bg-zinc-900/50 p-2 space-y-0.5">
-                    <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-zinc-400">
+                  <div className="rounded-md border border-white/20 bg-[#1B1B1B] p-2 space-y-0.5">
+                    <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-[#A3A3A3]">
                       <Calendar className="h-3 w-3" /> Work Deadline
                     </div>
-                    <div className="font-semibold text-zinc-200">{formatTimestamp(m.workDeadline)}</div>
+                    <div className="font-semibold text-white">{formatTimestamp(m.workDeadline)}</div>
                   </div>
 
-                  <div className="rounded-md border border-zinc-800/80 bg-zinc-900/50 p-2 space-y-0.5">
-                    <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-zinc-400">
+                  <div className="rounded-md border border-white/20 bg-[#1B1B1B] p-2 space-y-0.5">
+                    <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-[#A3A3A3]">
                       <Clock className="h-3 w-3" /> Review Window
                     </div>
-                    <div className="font-semibold text-zinc-200">{formatWindowDuration(m.reviewWindow)}</div>
+                    <div className="font-semibold text-white">{formatWindowDuration(m.reviewWindow)}</div>
                   </div>
 
-                  <div className="rounded-md border border-zinc-800/80 bg-zinc-900/50 p-2 space-y-0.5">
-                    <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-zinc-400">
+                  <div className="rounded-md border border-white/20 bg-[#1B1B1B] p-2 space-y-0.5">
+                    <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-[#A3A3A3]">
                       <Clock className="h-3 w-3" /> Grace Period
                     </div>
-                    <div className="font-semibold text-zinc-200">{formatWindowDuration(m.gracePeriod)}</div>
+                    <div className="font-semibold text-white">{formatWindowDuration(m.gracePeriod)}</div>
                   </div>
                 </div>
 
                 {/* Spec Hash */}
-                <div className="rounded-md border border-zinc-800/60 bg-zinc-900/30 p-2 flex items-center justify-between text-[11px]">
-                  <span className="text-zinc-400 flex items-center gap-1.5">
-                    <FileCheck2 className="h-3.5 w-3.5 text-zinc-500" /> Spec Hash:
-                    <span className="font-mono text-zinc-300">{m.specHash}</span>
+                <div className="rounded-md border border-white/20 bg-[#1B1B1B] p-2 flex items-center justify-between text-[11px]">
+                  <span className="text-[#A3A3A3] flex items-center gap-1.5">
+                    <FileCheck2 className="h-3.5 w-3.5 text-[#A3A3A3]" /> Spec Hash:
+                    <span className="font-mono text-white">{m.specHash}</span>
                   </span>
                   <button
                     type="button"
                     onClick={() => copyToClipboard(m.specHash, `spec_${m.index}`)}
-                    className="text-zinc-400 hover:text-white"
+                    className="text-[#A3A3A3] hover:text-white"
                   >
                     {copiedKey === `spec_${m.index}` ? (
                       <Check className="h-3 w-3 text-emerald-400" />
@@ -441,16 +441,16 @@ export function V2DealDetailView({ dealAddress }: V2DealDetailViewProps) {
 
                 {/* Evidence Hash */}
                 {m.evidenceRootHash && m.evidenceRootHash !== ZERO_BYTES32 && (
-                  <div className="rounded-md border border-purple-900/40 bg-purple-950/20 p-2 flex items-center justify-between text-[11px]">
-                    <span className="text-zinc-400 flex items-center gap-1.5 overflow-hidden">
-                      <FileCheck2 className="h-3.5 w-3.5 text-purple-400 shrink-0" />
-                      <span className="shrink-0 text-purple-300">Evidence Hash:</span>
-                      <span className="font-mono text-zinc-200 truncate">{m.evidenceRootHash}</span>
+                  <div className="rounded-md border border-white/20 bg-[#1B1B1B] p-2 flex items-center justify-between text-[11px]">
+                    <span className="text-[#A3A3A3] flex items-center gap-1.5 overflow-hidden">
+                      <FileCheck2 className="h-3.5 w-3.5 text-white shrink-0" />
+                      <span className="shrink-0 text-white">Evidence Hash:</span>
+                      <span className="font-mono text-white truncate">{m.evidenceRootHash}</span>
                     </span>
                     <button
                       type="button"
                       onClick={() => copyToClipboard(m.evidenceRootHash, `ev_${m.index}`)}
-                      className="text-zinc-400 hover:text-white shrink-0 ml-2"
+                      className="text-[#A3A3A3] hover:text-white shrink-0 ml-2"
                       title="Copy Evidence Hash"
                     >
                       {copiedKey === `ev_${m.index}` ? (
@@ -465,13 +465,13 @@ export function V2DealDetailView({ dealAddress }: V2DealDetailViewProps) {
                 {/* Submission and Review Timestamps */}
                 {m.submittedAt > 0n && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                    <div className="rounded-md border border-zinc-800/80 bg-zinc-900/40 p-2 space-y-0.5">
-                      <div className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Submitted At</div>
-                      <div className="font-semibold text-zinc-200">{formatTimestamp(m.submittedAt)}</div>
+                    <div className="rounded-md border border-white/20 bg-[#1B1B1B] p-2 space-y-0.5">
+                      <div className="text-[10px] uppercase tracking-wider text-[#A3A3A3] font-semibold">Submitted At</div>
+                      <div className="font-semibold text-white">{formatTimestamp(m.submittedAt)}</div>
                     </div>
-                    <div className="rounded-md border border-zinc-800/80 bg-zinc-900/40 p-2 space-y-0.5">
-                      <div className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Review Window Ends</div>
-                      <div className="font-semibold text-zinc-200">{formatTimestamp(m.submittedAt + m.reviewWindow)}</div>
+                    <div className="rounded-md border border-white/20 bg-[#1B1B1B] p-2 space-y-0.5">
+                      <div className="text-[10px] uppercase tracking-wider text-[#A3A3A3] font-semibold">Review Window Ends</div>
+                      <div className="font-semibold text-white">{formatTimestamp(m.submittedAt + m.reviewWindow)}</div>
                     </div>
                   </div>
                 )}

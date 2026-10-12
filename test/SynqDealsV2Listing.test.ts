@@ -535,7 +535,7 @@ describe('SYNQ Standard V2 /deals Listing Architecture Suite', () => {
 
     it('Z1: My Deals heading remains with Press_Start_2P styling', () => {
       assert.match(content, /My Deals\s*<\/h1>/);
-      assert.match(content, /style=\{\{\s*fontFamily:\s*pressStart2P\.style\.fontFamily\s*\}\}/);
+      assert.match(content, /pressStart2P\.(className|style\.fontFamily)/);
     });
 
     it('Z2: Permanent subtitle is removed from normal page flow', () => {

@@ -13,6 +13,7 @@ import {
   ArrowLeftRight,
   Activity,
   User,
+  Settings,
   HelpCircle,
   Menu,
   X,
@@ -203,13 +204,17 @@ export function Header({ className, navItems = defaultNavItems }: HeaderProps) {
               })}
 
               <div className="pt-3 mt-2 border-t border-zinc-800 flex items-center justify-between px-2 text-xs text-zinc-400">
-                <Link href="/settings" className="flex items-center gap-2 hover:text-white py-1">
-                  <User size={15} />
-                  <span>Profile & Settings</span>
+                <Link href="/profile" className="flex items-center gap-1.5 hover:text-white py-1">
+                  <User size={14} />
+                  <span>Profile</span>
                 </Link>
-                <Link href="/help" className="flex items-center gap-2 hover:text-white py-1">
-                  <HelpCircle size={15} />
-                  <span>Help Center</span>
+                <Link href="/settings" className="flex items-center gap-1.5 hover:text-white py-1">
+                  <Settings size={14} />
+                  <span>Settings</span>
+                </Link>
+                <Link href="/help" className="flex items-center gap-1.5 hover:text-white py-1">
+                  <HelpCircle size={14} />
+                  <span>Help</span>
                 </Link>
               </div>
             </div>

@@ -166,7 +166,7 @@ export function AIFreelancerMatches({
     <>
       <div
         className={cn(
-          'rounded-2xl border border-zinc-800/80 bg-zinc-900/60 shadow-xl transition-all',
+          'rounded-2xl border border-white/75 bg-[#1B1B1B] shadow-xl transition-all',
           anchoredGrowth
             ? isExpanded
               ? 'lg:rounded-b-none relative'
@@ -178,11 +178,11 @@ export function AIFreelancerMatches({
         <button
           type="button"
           onClick={onToggleExpand}
-          className="w-full px-6 py-4.5 sm:py-5 flex items-center justify-between text-left hover:bg-zinc-800/30 transition-colors"
+          className="w-full px-6 py-4.5 sm:py-5 flex items-center justify-between text-left hover:bg-white/5 transition-colors"
           aria-expanded={isExpanded}
         >
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-8 h-8 rounded-xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
+            <div className="w-8 h-8 rounded-xl bg-[#252525] border border-white/20 flex items-center justify-center text-white shrink-0">
               <Sparkles size={16} />
             </div>
             <span className="text-sm sm:text-base font-semibold text-white truncate">
@@ -194,7 +194,7 @@ export function AIFreelancerMatches({
               </span>
             )}
           </div>
-          <div className="text-zinc-400 hover:text-white transition-colors shrink-0 ml-3">
+          <div className="text-[#A3A3A3] hover:text-white transition-colors shrink-0 ml-3">
             {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
           </div>
         </button>
@@ -203,20 +203,20 @@ export function AIFreelancerMatches({
         {isExpanded && (
           <div
             className={cn(
-              'px-6 pb-6 pt-1 space-y-4 border-t border-zinc-800/50',
+              'px-6 pb-6 pt-1 space-y-4 border-t border-white/20',
               anchoredGrowth &&
-                'lg:absolute lg:top-full lg:left-[-1px] lg:right-[-1px] lg:z-30 lg:bg-zinc-900/98 lg:border lg:border-t-0 lg:border-zinc-800/80 lg:rounded-b-2xl lg:shadow-2xl'
+                'lg:absolute lg:top-full lg:left-[-1px] lg:right-[-1px] lg:z-30 lg:bg-[#1B1B1B] lg:border lg:border-t-0 lg:border-white/75 lg:rounded-b-2xl lg:shadow-2xl'
             )}
           >
             <div className="flex items-center justify-between text-xs pt-1">
-              <span className="text-zinc-400 font-medium">Based on your deal so far</span>
-              <span className="text-[11px] text-zinc-500 hidden sm:inline">
+              <span className="text-[#A3A3A3] font-medium">Based on your deal so far</span>
+              <span className="text-[11px] text-[#A3A3A3]/70 hidden sm:inline">
                 Click card to inspect profile • Click Select to choose
               </span>
             </div>
 
             {topRecommendations.length === 0 ? (
-              <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-950/40 text-center text-xs text-zinc-500">
+              <div className="p-4 rounded-xl border border-white/20 bg-[#252525] text-center text-xs text-[#A3A3A3]">
                 No registered freelancers available to match at this time.
               </div>
             ) : (

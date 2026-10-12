@@ -398,7 +398,7 @@ export function CommitteeResolutionWorkspace({
           variant="outline"
           size="sm"
           onClick={onBack}
-          className="h-8 text-xs border-zinc-700 text-zinc-300 hover:bg-zinc-900 flex items-center gap-1"
+          className="h-8 text-xs border-white/20 text-[#A3A3A3] hover:text-white hover:bg-white/5 flex items-center gap-1"
         >
           <ArrowLeft className="h-3.5 w-3.5" /> Back to Queue
         </Button>
@@ -415,106 +415,106 @@ export function CommitteeResolutionWorkspace({
       </div>
 
       {/* Snapshot Context Card */}
-      <Card className="border-zinc-800 bg-zinc-950/60">
+      <Card className="border-white/75 bg-[#1B1B1B] shadow-xl">
         <CardHeader className="pb-3">
           <CardTitle className="text-sm font-bold text-white flex items-center gap-2">
-            <Scale className="h-4 w-4 text-zinc-400" /> Milestone Case Context
+            <Scale className="h-4 w-4 text-white" /> Milestone Case Context
           </CardTitle>
-          <CardDescription className="text-xs text-zinc-400">
+          <CardDescription className="text-xs text-[#A3A3A3]">
             Escrow amount: {formatUsdcAmount(item.milestoneAmount)} USDC • Deal {shortenAddress(item.dealAddress)} • Milestone #{item.milestoneId + 1}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-2 text-xs">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 font-mono">
-            <div className="rounded bg-zinc-900/60 p-2">
-              <div className="text-[10px] text-zinc-500 uppercase font-sans">Client</div>
-              <div className="text-zinc-200">{shortenAddress(item.client)}</div>
+            <div className="rounded-lg bg-[#252525] border border-white/10 p-2.5">
+              <div className="text-[10px] text-[#A3A3A3] uppercase font-sans">Client</div>
+              <div className="text-white">{shortenAddress(item.client)}</div>
             </div>
-            <div className="rounded bg-zinc-900/60 p-2">
-              <div className="text-[10px] text-zinc-500 uppercase font-sans">Freelancer</div>
-              <div className="text-zinc-200">{shortenAddress(item.freelancer)}</div>
+            <div className="rounded-lg bg-[#252525] border border-white/10 p-2.5">
+              <div className="text-[10px] text-[#A3A3A3] uppercase font-sans">Freelancer</div>
+              <div className="text-white">{shortenAddress(item.freelancer)}</div>
             </div>
-            <div className="rounded bg-zinc-900/60 p-2">
-              <div className="text-[10px] text-zinc-500 uppercase font-sans">Spec Hash</div>
-              <div className="text-zinc-200">{item.specHash.slice(0, 10)}…</div>
+            <div className="rounded-lg bg-[#252525] border border-white/10 p-2.5">
+              <div className="text-[10px] text-[#A3A3A3] uppercase font-sans">Spec Hash</div>
+              <div className="text-white">{item.specHash.slice(0, 10)}…</div>
             </div>
-            <div className="rounded bg-zinc-900/60 p-2">
-              <div className="text-[10px] text-zinc-500 uppercase font-sans">Evidence Hash</div>
-              <div className="text-zinc-200">{item.evidenceRootHash.slice(0, 10)}…</div>
+            <div className="rounded-lg bg-[#252525] border border-white/10 p-2.5">
+              <div className="text-[10px] text-[#A3A3A3] uppercase font-sans">Evidence Hash</div>
+              <div className="text-white">{item.evidenceRootHash.slice(0, 10)}…</div>
             </div>
           </div>
         </CardContent>
       </Card>
 
       {/* STEP 1: Stage Canonical Report */}
-      <Card className="border-zinc-800 bg-zinc-950/60 space-y-4">
+      <Card className="border-white/75 bg-[#1B1B1B] shadow-xl space-y-4">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-bold text-white flex items-center gap-2">
-            <FileText className="h-4 w-4 text-zinc-400" /> 1. Author Resolution Report & Split
+            <FileText className="h-4 w-4 text-white" /> 1. Author Resolution Report & Split
           </CardTitle>
-          <CardDescription className="text-xs text-zinc-400">
+          <CardDescription className="text-xs text-[#A3A3A3]">
             Determine the exact escrow split and state findings. Sum must equal exactly {formatUsdcAmount(item.milestoneAmount)} USDC.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1">
-              <label className="text-[11px] text-zinc-400">Freelancer Amount (USDC)</label>
+              <label className="text-[11px] text-[#A3A3A3]">Freelancer Amount (USDC)</label>
               <Input
                 type="text"
                 placeholder="0.00"
                 value={freelancerAmountInput}
                 onChange={(e) => handleFreelancerAmountChange(e.target.value)}
                 disabled={Boolean(currentAuth)}
-                className="h-8 text-xs bg-zinc-900 border-zinc-700 text-white"
+                className="h-8 text-xs bg-[#252525] border-white/20 text-white placeholder:text-[#A3A3A3]"
               />
             </div>
             <div className="space-y-1">
-              <label className="text-[11px] text-zinc-400">Client Refund Amount (USDC)</label>
+              <label className="text-[11px] text-[#A3A3A3]">Client Refund Amount (USDC)</label>
               <Input
                 type="text"
                 placeholder="0.00"
                 value={clientAmountInput}
                 onChange={(e) => handleClientAmountChange(e.target.value)}
                 disabled={Boolean(currentAuth)}
-                className="h-8 text-xs bg-zinc-900 border-zinc-700 text-white"
+                className="h-8 text-xs bg-[#252525] border-white/20 text-white placeholder:text-[#A3A3A3]"
               />
             </div>
           </div>
 
           <div className="space-y-1">
-            <label className="text-[11px] text-zinc-400">Executive Summary</label>
+            <label className="text-[11px] text-[#A3A3A3]">Executive Summary</label>
             <Input
               type="text"
               placeholder="High-level summary of determination…"
               value={summaryInput}
               onChange={(e) => setSummaryInput(e.target.value)}
               disabled={Boolean(currentAuth)}
-              className="h-8 text-xs bg-zinc-900 border-zinc-700 text-white"
+              className="h-8 text-xs bg-[#252525] border-white/20 text-white placeholder:text-[#A3A3A3]"
             />
           </div>
 
           <div className="space-y-1">
-            <label className="text-[11px] text-zinc-400">Detailed Findings</label>
+            <label className="text-[11px] text-[#A3A3A3]">Detailed Findings</label>
             <textarea
               placeholder="Evaluation of evidence, milestones deliverables, and dispute claims…"
               value={findingsInput}
               onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setFindingsInput(e.target.value)}
               disabled={Boolean(currentAuth)}
               rows={3}
-              className="w-full rounded-md border border-zinc-700 bg-zinc-900 p-2.5 text-xs text-white focus:outline-none"
+              className="w-full rounded-md border border-white/20 bg-[#252525] p-2.5 text-xs text-white focus:outline-none focus:border-white/50 placeholder:text-[#A3A3A3]"
             />
           </div>
 
           <div className="space-y-1">
-            <label className="text-[11px] text-zinc-400">Legal & Equitable Justification</label>
+            <label className="text-[11px] text-[#A3A3A3]">Legal & Equitable Justification</label>
             <textarea
               placeholder="Justification for split decision and contract adherence…"
               value={justificationInput}
               onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setJustificationInput(e.target.value)}
               disabled={Boolean(currentAuth)}
               rows={3}
-              className="w-full rounded-md border border-zinc-700 bg-zinc-900 p-2.5 text-xs text-white focus:outline-none"
+              className="w-full rounded-md border border-white/20 bg-[#252525] p-2.5 text-xs text-white focus:outline-none focus:border-white/50 placeholder:text-[#A3A3A3]"
             />
           </div>
 
@@ -531,11 +531,11 @@ export function CommitteeResolutionWorkspace({
                 size="sm"
                 onClick={handleStageReport}
                 disabled={stagingInProgress || !freelancerAmountInput || !clientAmountInput}
-                className="h-8 text-xs bg-zinc-100 hover:bg-white text-zinc-950 font-medium"
+                className="h-8 text-xs bg-white hover:bg-neutral-200 text-[#101010] font-semibold shadow-sm"
               >
                 {stagingInProgress ? (
                   <>
-                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Staging Report…
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-[#101010]" /> Staging Report…
                   </>
                 ) : stagedReport ? (
                   'Update Staged Report'
@@ -550,19 +550,19 @@ export function CommitteeResolutionWorkspace({
 
       {/* STEP 2: Generate Authorization & Signatures */}
       {stagedReport && (
-        <Card className="border-zinc-800 bg-zinc-950/60 space-y-4">
+        <Card className="border-white/75 bg-[#1B1B1B] shadow-xl space-y-4">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-bold text-white flex items-center gap-2">
-              <Scale className="h-4 w-4 text-zinc-400" /> 2. Committee Multi-Sig Authorization (2 of 3)
+              <Scale className="h-4 w-4 text-white" /> 2. Committee Multi-Sig Authorization (2 of 3)
             </CardTitle>
-            <CardDescription className="text-xs text-zinc-400">
+            <CardDescription className="text-xs text-[#A3A3A3]">
               Collect 2 distinct committee member signatures over the exact hash-bound resolution payload.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             {!currentAuth ? (
               <div className="space-y-3">
-                <p className="text-xs text-zinc-400">
+                <p className="text-xs text-[#A3A3A3]">
                   Report staged with cryptographic hash. Generate the formal EIP-712 authorization to begin signature collection.
                 </p>
                 {authError && (
@@ -575,11 +575,11 @@ export function CommitteeResolutionWorkspace({
                   size="sm"
                   onClick={handleCreateAuthorization}
                   disabled={creatingAuth}
-                  className="h-8 text-xs bg-zinc-800 hover:bg-zinc-700 text-white"
+                  className="h-8 text-xs bg-white hover:bg-neutral-200 text-[#101010] font-semibold shadow-sm"
                 >
                   {creatingAuth ? (
                     <>
-                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Generating…
+                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-[#101010]" /> Generating…
                     </>
                   ) : (
                     'Generate Resolution Authorization'
@@ -588,10 +588,10 @@ export function CommitteeResolutionWorkspace({
               </div>
             ) : (
               <div className="space-y-3">
-                <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
+                <div className="flex items-center justify-between rounded-lg border border-white/20 bg-[#252525] p-3">
                   <div className="space-y-0.5">
                     <div className="text-xs font-semibold text-white">Signatures Collected</div>
-                    <div className="text-[11px] text-zinc-400">
+                    <div className="text-[11px] text-[#A3A3A3]">
                       {signatureCount} of 2 required signatures collected from active signers.
                     </div>
                   </div>
@@ -620,11 +620,11 @@ export function CommitteeResolutionWorkspace({
                       size="sm"
                       onClick={handleSignAuthorization}
                       disabled={signingInProgress}
-                      className="h-8 text-xs bg-zinc-100 hover:bg-white text-zinc-950 font-medium"
+                      className="h-8 text-xs bg-white hover:bg-neutral-200 text-[#101010] font-semibold shadow-sm"
                     >
                       {signingInProgress ? (
                         <>
-                          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Signing Typed Data…
+                          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-[#101010]" /> Signing Typed Data…
                         </>
                       ) : (
                         'Sign Resolution (Wallet)'
@@ -632,7 +632,7 @@ export function CommitteeResolutionWorkspace({
                     </Button>
                   )}
                   {hasUserSigned && (
-                    <div className="text-xs text-emerald-400 flex items-center gap-1.5">
+                    <div className="text-xs text-emerald-400 flex items-center gap-1.5 font-medium">
                       <Check className="h-4 w-4" /> You have signed this resolution.
                     </div>
                   )}
@@ -650,12 +650,12 @@ export function CommitteeResolutionWorkspace({
             <CardTitle className="text-sm font-bold text-white flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4 text-emerald-400" /> 3. Submit Resolution On-Chain
             </CardTitle>
-            <CardDescription className="text-xs text-zinc-400">
+            <CardDescription className="text-xs text-[#A3A3A3]">
               Threshold met. Active committee member submits gateway transaction to execute resolution.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <p className="text-xs text-zinc-300">
+            <p className="text-xs text-[#A3A3A3]">
               The gateway will forward execution to the Deal clone, disburse funds, and record the resolution justification hash on-chain.
             </p>
 

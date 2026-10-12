@@ -166,7 +166,7 @@ export function DealReceipt({
   return (
     <div
       className={cn(
-        'relative w-full rounded-t-2xl rounded-b-none bg-zinc-900 border border-b-0 border-zinc-800/80 shadow-2xl transition-all duration-300',
+        'relative w-full rounded-t-2xl rounded-b-none bg-[#1B1B1B] border border-b-0 border-white/75 shadow-2xl transition-all duration-300',
         isExpanded
           ? 'max-w-2xl mx-auto p-8 pb-9 space-y-6'
           : isChat
@@ -203,12 +203,12 @@ export function DealReceipt({
         <div className="space-y-1">
           <span className={cn('text-zinc-400 font-medium uppercase tracking-wider block', isReview ? 'text-[11px]' : 'text-[10px]')}>Title</span>
           {titleParsed.status === 'MISSING' || !titleParsed.value ? (
-            <div className={cn(isReview ? 'w-36 h-4' : 'w-28 h-3.5', 'bg-zinc-700/60 rounded')} />
+            <div className={cn(isReview ? 'w-36 h-4' : 'w-28 h-3.5', 'bg-[#252525] rounded')} />
           ) : (
-            <p className={cn('font-semibold truncate', isExpanded ? 'text-sm font-bold' : isReview ? 'text-sm font-semibold' : 'text-xs', titleParsed.status === 'PROPOSED' ? 'text-blue-300' : 'text-white')}>
+            <p className={cn('font-semibold truncate', isExpanded ? 'text-sm font-bold' : isReview ? 'text-sm font-semibold' : 'text-xs', titleParsed.status === 'PROPOSED' ? 'text-white' : 'text-white')}>
               {titleParsed.value}
               {titleParsed.status === 'PROPOSED' && (
-                <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30 font-mono">
+                <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded bg-white/10 text-white border border-white/20 font-mono">
                   proposed
                 </span>
               )}
@@ -263,7 +263,7 @@ export function DealReceipt({
             </div>
 
             {/* HANDSHAKE ICON (CENTER) */}
-            <div className="px-1.5 shrink-0 flex items-center justify-center text-blue-400">
+            <div className="px-1.5 shrink-0 flex items-center justify-center text-white">
               <Handshake size={isExpanded ? 22 : isReview ? 20 : isChat ? 14 : 18} />
             </div>
 
@@ -276,7 +276,7 @@ export function DealReceipt({
                       {freelancer?.name}
                     </div>
                   )}
-                  <div className={cn('font-mono text-blue-400 truncate', isExpanded ? 'text-xs' : isReview ? 'text-xs' : 'text-[10px]')}>
+                  <div className={cn('font-mono text-[#A3A3A3] truncate', isExpanded ? 'text-xs' : isReview ? 'text-xs' : 'text-[10px]')}>
                     {freelancer?.displayHandle || shortenAddress(freelancerWallet)}
                   </div>
                 </div>
@@ -289,7 +289,7 @@ export function DealReceipt({
                 ) : (
                   <div
                     className={cn(
-                      'rounded-full bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center text-white font-bold shrink-0 border border-zinc-700/60',
+                      'rounded-full bg-[#252525] flex items-center justify-center text-white font-bold shrink-0 border border-white/20',
                       isExpanded ? 'w-14 h-14 text-sm' : isReview ? 'w-12 h-12 text-xs' : isChat ? 'w-8 h-8 text-[10px]' : 'w-11 h-11 text-xs'
                     )}
                   >
@@ -441,7 +441,7 @@ export function DealReceipt({
       {/* DECORATIVE RECEIPT BOTTOM TEAR ZIGZAG EDGE */}
       <div
         aria-hidden="true"
-        className={cn('absolute left-0 right-0 pointer-events-none bg-zinc-900', isChat ? 'h-[7px]' : isReview ? 'h-[10px]' : 'h-[9px]')}
+        className={cn('absolute left-0 right-0 pointer-events-none bg-[#1B1B1B]', isChat ? 'h-[7px]' : isReview ? 'h-[10px]' : 'h-[9px]')}
         style={{
           top: `calc(100% + ${RECEIPT_TEAR_Y_OFFSET}px)`,
           clipPath: RECEIPT_TEAR_POLYGON,

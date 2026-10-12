@@ -11,7 +11,7 @@
  * 6. Expired JWT detection and automatic storage purge.
  * 7. Rejected / malformed JWT detection and storage purge.
  * 8. Concurrent authentication request deduplication.
- * 9. EmailBindModal unified session retrieval without forced signatures.
+ * 9. Authenticated email management session retrieval without forced signatures.
  */
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
@@ -252,8 +252,8 @@ describe('SYNQ — B.12.3.72: Wallet Authentication Persistence', () => {
     }
   });
 
-  // 9. EmailBindModal session access
-  it('9. EmailBindModal accesses cached token safely without triggering signatures or direct sessionStorage coupling', () => {
+  // 9. Authenticated email session access
+  it('9. Authenticated email management accesses cached token safely without triggering signatures or direct sessionStorage coupling', () => {
     // When no session exists, returns null without throwing
     assert.equal(getStoredSession(WALLET_A), null);
 

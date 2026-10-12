@@ -26,8 +26,23 @@ const categories = ['All', 'Web Development', 'Design', 'Smart Contract', 'Conte
 
 export default function MarketplacePage() {
   const router = useRouter();
-  const { address, isConnected } = useAccount();
-  const directory = useDirectoryContract(address);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+    document.body.classList.add('marketplace-page');
+    return () => {
+      document.body.classList.remove('marketplace-page');
+    };
+  }, []);
+
+  const { address, isConnected, status } = useAccount();
+  const isAccountRestoring = status === 'connecting' || status === 'reconnecting';
+
+  // Deterministic connection & address during SSR and initial client render to prevent hydration mismatches
+  const effectiveIsConnected = mounted && isConnected && !isAccountRestoring;
+  const effectiveAddress = effectiveIsConnected && !!address ? address : undefined;
+
+  const directory = useDirectoryContract(effectiveAddress as `0x${string}` | undefined);
 
   const [category, setCategory] = useState('All');
   const [search, setSearch] = useState('');
@@ -178,7 +193,20 @@ export default function MarketplacePage() {
   };
 
   return (
-    <div className="space-y-4 pt-0">
+    <div className="space-y-4 pt-0 pb-12 min-h-screen">
+      {/* DEAL PORT BACKGROUND: /bg2.jpg with #101010 charcoal fallback */}
+      <div
+        className="fixed inset-0 bg-[#101010] bg-cover bg-center bg-no-repeat -z-10 pointer-events-none"
+        style={{
+          backgroundImage: 'url(/bg2.jpg)',
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          backgroundRepeat: 'no-repeat',
+          backgroundAttachment: 'fixed',
+        }}
+        aria-hidden="true"
+      />
+
       {/* COMPACT TITLE ROW WITH HOVER/FOCUS TOOLTIP */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-2.5">
@@ -190,11 +218,11 @@ export default function MarketplacePage() {
               type="button"
               tabIndex={0}
               aria-label="About Deal Port"
-              className="w-5 h-5 rounded-full bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/60 text-zinc-400 hover:text-white text-[11px] font-bold font-mono inline-flex items-center justify-center shrink-0 transition-colors focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+              className="w-5 h-5 rounded-full bg-[#1B1B1B] hover:bg-[#252525] border border-[#383838] hover:border-zinc-500 text-[#A3A3A3] hover:text-white text-[11px] font-bold font-mono inline-flex items-center justify-center shrink-0 transition-colors focus:outline-none focus:ring-1 focus:ring-white/40"
             >
               ?
             </button>
-            <div className="absolute left-0 top-full mt-2 w-72 sm:w-80 p-3 rounded-xl bg-zinc-900 border border-zinc-700/80 text-zinc-200 text-xs leading-relaxed shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto transition-all duration-150 z-30">
+            <div className="absolute left-0 top-full mt-2 w-72 sm:w-80 p-3 rounded-xl bg-[#1B1B1B] border border-[#383838] text-[#A3A3A3] text-xs leading-relaxed shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto transition-all duration-150 z-30">
               Find the right professional, check their on-chain profile, and start a secure deal in seconds. Synq keeps every connection and escrow deal transparent, simple and protected.
             </div>
           </div>
@@ -202,14 +230,14 @@ export default function MarketplacePage() {
       </div>
 
       {/* SYSTEM MESSAGES */}
-      {!isConnected && (
-        <div className="p-3 rounded-lg bg-blue-600/10 border border-blue-500/20 text-sm text-blue-400">
+      {!effectiveIsConnected && (
+        <div className="p-3 rounded-lg bg-[#1B1B1B] border border-[#383838] text-sm text-zinc-300">
           Connect your wallet to order from a freelancer, or register your own on-chain profile from your Profile page.
         </div>
       )}
-      {isConnected && <ChainGuard what="the freelancer directory is" />}
-      {isConnected && !directory.myRegistered && directory.myProfile !== undefined && (
-        <div className="p-3 rounded-lg bg-zinc-800/40 border border-zinc-700/50 text-sm text-zinc-200">
+      {effectiveIsConnected && <ChainGuard what="the freelancer directory is" />}
+      {effectiveIsConnected && !directory.myRegistered && directory.myProfile !== undefined && (
+        <div className="p-3 rounded-lg bg-[#2A1719] border border-[#8B4048] text-[#FF9DA5] text-sm">
           You have no on-chain profile yet — create one from your Profile page to start receiving orders.
         </div>
       )}
@@ -217,12 +245,12 @@ export default function MarketplacePage() {
       {/* COMPACT SEARCH & FILTER ROW */}
       <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
         <div className="relative flex-1 min-w-[200px]">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#A3A3A3]" />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search by name, skill, or bio..."
-            className="pl-10 h-10 text-sm bg-zinc-900/80 border-zinc-800"
+            className="pl-10 h-10 text-sm bg-[#1B1B1B] border border-white/50 hover:border-white/70 focus-visible:border-white/90 text-white placeholder:text-[#737373] focus-visible:ring-1 focus-visible:ring-white/50 transition-colors"
           />
         </div>
 
@@ -233,19 +261,19 @@ export default function MarketplacePage() {
             onClick={() => setFilterOpen(!filterOpen)}
             className={`h-10 px-3.5 rounded-xl border text-xs font-medium flex items-center gap-2 transition-all ${
               category !== 'All'
-                ? 'bg-blue-600/15 text-blue-400 border-blue-500/30'
-                : 'bg-zinc-900/80 text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white'
+                ? 'bg-white text-[#101010] border-white font-semibold shadow-sm'
+                : 'bg-[#1B1B1B] text-zinc-300 border-white/50 hover:border-white/80 hover:bg-[#252525] hover:text-white'
             }`}
           >
             <SlidersHorizontal size={14} />
             <span>Filter</span>
             {category !== 'All' && (
-              <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+              <span className="w-1.5 h-1.5 rounded-full bg-[#101010]" />
             )}
           </button>
 
           {filterOpen && (
-            <div className="absolute right-0 top-full mt-2 w-48 rounded-xl bg-zinc-900 border border-zinc-700/80 shadow-2xl p-1.5 z-30 space-y-0.5">
+            <div className="absolute right-0 top-full mt-2 w-48 rounded-xl bg-[#1B1B1B] border border-white/50 shadow-2xl p-1.5 z-30 space-y-0.5">
               {categories.map((c) => (
                 <button
                   key={c}
@@ -256,12 +284,12 @@ export default function MarketplacePage() {
                   }}
                   className={`w-full flex items-center justify-between px-3 py-2 text-xs rounded-lg transition-colors ${
                     category === c
-                      ? 'bg-blue-600/15 text-blue-400 font-semibold'
-                      : 'text-zinc-300 hover:bg-zinc-800 hover:text-white'
+                      ? 'bg-white text-[#101010] font-semibold'
+                      : 'text-zinc-300 hover:bg-[#252525] hover:text-white'
                   }`}
                 >
                   <span>{c}</span>
-                  {category === c && <Check size={14} className="text-blue-400" />}
+                  {category === c && <Check size={14} className="text-[#101010]" />}
                 </button>
               ))}
             </div>
@@ -272,7 +300,7 @@ export default function MarketplacePage() {
         <button
           type="button"
           onClick={() => router.push('/deal/new')}
-          className="h-10 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs sm:text-sm inline-flex items-center transition-all shadow-sm shrink-0 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+          className="h-10 px-4 rounded-xl bg-white hover:bg-zinc-200 text-[#101010] font-semibold text-xs sm:text-sm inline-flex items-center transition-all shadow-sm shrink-0 focus:outline-none focus:ring-2 focus:ring-white/50"
         >
           + New Deal
         </button>
@@ -281,7 +309,7 @@ export default function MarketplacePage() {
       {/* PROVIDER CARDS GRID */}
       {directory.isLoading ? (
         <div className="flex items-center justify-center py-16">
-          <Loader2 size={24} className="animate-spin text-blue-400" />
+          <Loader2 size={24} className="animate-spin text-white" />
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 pt-1">
@@ -291,8 +319,8 @@ export default function MarketplacePage() {
               <motion.div key={String(p.wallet)} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
                 <SellerCard
                   profile={p}
-                  me={address}
-                  isConnected={isConnected}
+                  me={effectiveAddress}
+                  isConnected={effectiveIsConnected}
                   onOrder={order}
                   onOpenProfile={(wallet) => setSelectedWallet(wallet)}
                   avatar={avatarsMap[walletLower]}

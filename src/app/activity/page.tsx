@@ -1,6 +1,13 @@
 'use client';
 
+import { Press_Start_2P } from 'next/font/google';
 import { motion } from 'framer-motion';
+
+const pressStart2P = Press_Start_2P({
+  subsets: ['latin'],
+  weight: '400',
+  display: 'swap',
+});
 import { Activity, CheckCircle, AlertTriangle, Bot, Shield, Wallet, FileCheck, TrendingUp, Loader2, XCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -10,7 +17,7 @@ import { formatTimeAgo, cn } from '@/lib/utils';
 import { getSepoliaExplorerUrl } from '@/lib/chain';
 
 const activityIcons: Record<string, { icon: any; color: string }> = {
-  deal_created: { icon: FileCheck, color: 'text-blue-400 bg-blue-400/10' },
+  deal_created: { icon: FileCheck, color: 'text-white bg-white/10' },
   milestone_completed: { icon: CheckCircle, color: 'text-green-400 bg-green-400/10' },
   payment_sent: { icon: Wallet, color: 'text-emerald-400 bg-emerald-400/10' },
   payment_released: { icon: Wallet, color: 'text-emerald-400 bg-emerald-400/10' },
@@ -19,9 +26,9 @@ const activityIcons: Record<string, { icon: any; color: string }> = {
   dispute_resolved: { icon: CheckCircle, color: 'text-green-400 bg-green-400/10' },
   deal_completed: { icon: TrendingUp, color: 'text-green-400 bg-green-400/10' },
   deal_cancelled: { icon: XCircle, color: 'text-zinc-400 bg-zinc-400/10' },
-  protection_activated: { icon: Shield, color: 'text-violet-400 bg-violet-400/10' },
+  protection_activated: { icon: Shield, color: 'text-white bg-white/10' },
   risk_alert: { icon: AlertTriangle, color: 'text-amber-400 bg-amber-400/10' },
-  agent_action: { icon: Bot, color: 'text-blue-400 bg-blue-400/10' },
+  agent_action: { icon: Bot, color: 'text-white bg-white/10' },
 };
 
 export default function ActivityPage() {
@@ -31,8 +38,8 @@ export default function ActivityPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-white">Activity</h1>
-        <p className="text-zinc-400 text-sm mt-1">All your on-chain deal and agent activity in one place.</p>
+        <h1 className={`${pressStart2P.className} text-xl md:text-2xl font-normal text-white tracking-tight`}>Activity</h1>
+        <p className="text-[#A3A3A3] text-xs mt-1">All your on-chain deal and agent activity in one place.</p>
       </div>
 
       <Card>
@@ -66,7 +73,7 @@ export default function ActivityPage() {
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: i * 0.05 }}
-                    className="flex items-start gap-4 p-3 rounded-lg hover:bg-zinc-800/30 transition-colors"
+                    className="flex items-start gap-4 p-3 rounded-lg hover:bg-white/5 transition-colors"
                   >
                     <div className={cn('p-2 rounded-xl', meta.color)}>
                       <Icon size={16} />
@@ -79,7 +86,7 @@ export default function ActivityPage() {
                       <span className="text-xs text-zinc-500">{formatTimeAgo(act.timestamp)}</span>
                       {act.amount !== undefined && <span className="text-xs font-medium text-white">{act.amount.toFixed(4)} ETH</span>}
                       {explorerUrl && (
-                        <a href={explorerUrl} target="_blank" rel="noreferrer" className="text-[10px] text-blue-400 hover:text-blue-300">View tx ↗</a>
+                        <a href={explorerUrl} target="_blank" rel="noreferrer" className="text-[10px] text-white hover:text-neutral-300 underline underline-offset-2">View tx ↗</a>
                       )}
                     </div>
                   </motion.div>

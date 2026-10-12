@@ -49,11 +49,11 @@ export function ProviderProfileModal({
           onClick={onClose}
         >
           <motion.div
-            initial={{ opacity: 0, scale: 0.97, y: 8 }}
+            initial={{ opacity: 0, scale: 0.98, y: 6 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.97, y: 8 }}
-            transition={{ duration: 0.15 }}
-            className="w-full max-w-[1180px] max-h-[90vh] bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl overflow-y-auto p-5 sm:p-6 md:p-8 relative text-white"
+            exit={{ opacity: 0, scale: 0.98, y: 6 }}
+            transition={{ duration: 0.18, ease: 'easeOut' }}
+            className="w-full max-w-[1080px] lg:h-[720px] max-h-[90vh] flex flex-col bg-[#101010] border border-[#2F2F2F] rounded-2xl shadow-[0_24px_64px_-12px_rgba(0,0,0,0.8)] p-3.5 sm:p-4.5 relative text-white overflow-y-auto lg:overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             <ProviderProfile
@@ -62,6 +62,7 @@ export function ProviderProfileModal({
               onClose={onClose}
               onSelectFreelancer={onSelectFreelancer}
               selectButtonLabel={selectButtonLabel}
+              isModal
             />
           </motion.div>
         </motion.div>

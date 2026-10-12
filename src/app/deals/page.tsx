@@ -195,25 +195,24 @@ export default function DealsPage() {
 
   return (
     <div className="space-y-4 pt-0">
-      {/* HEADER SECTION */}
-      <div className="flex items-center gap-2.5">
-        <h1
-          className="text-lg font-bold tracking-tight text-white mb-0.5"
-          style={{ fontFamily: pressStart2P.style.fontFamily }}
-        >
-          My Deals
-        </h1>
-        <div className="relative group inline-block">
-          <button
-            type="button"
-            tabIndex={0}
-            aria-label="About My Deals"
-            className="w-5 h-5 rounded-full bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/60 text-zinc-400 hover:text-white text-[11px] font-bold font-mono inline-flex items-center justify-center shrink-0 transition-colors focus:outline-none focus:ring-1 focus:ring-blue-500/50"
-          >
-            ?
-          </button>
-          <div className="absolute left-0 top-full mt-2 w-72 sm:w-80 p-3 rounded-xl bg-zinc-900 border border-zinc-700/80 text-zinc-200 text-xs leading-relaxed shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto transition-all duration-150 z-30">
-            Track, fund, submit work, and manage your milestone escrow agreements.
+      {/* COMPACT TITLE ROW WITH HOVER/FOCUS TOOLTIP */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-2.5">
+          <h1 className={`${pressStart2P.className} text-xl md:text-2xl font-normal text-white tracking-tight`}>
+            My Deals
+          </h1>
+          <div className="relative group inline-block">
+            <button
+              type="button"
+              tabIndex={0}
+              aria-label="About My Deals"
+              className="w-5 h-5 rounded-full bg-[#252525] hover:bg-white/10 border border-white/20 text-[#A3A3A3] hover:text-white text-[11px] font-bold font-mono inline-flex items-center justify-center shrink-0 transition-colors focus:outline-none focus:ring-1 focus:ring-white/40"
+            >
+              ?
+            </button>
+            <div className="absolute left-0 top-full mt-2 w-72 sm:w-80 p-3 rounded-xl bg-[#1B1B1B] border border-white/75 text-white text-xs leading-relaxed shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto transition-all duration-150 z-30">
+              Track, fund, submit work, and manage your milestone escrow agreements.
+            </div>
           </div>
         </div>
       </div>
@@ -228,7 +227,7 @@ export default function DealsPage() {
               <AlertCircle size={20} className="text-red-400 shrink-0" />
               <div>
                 <p className="text-sm font-semibold text-white">Public RPC Limit or Network Delay</p>
-                <p className="text-xs text-zinc-400">
+                <p className="text-xs text-[#A3A3A3]">
                   A public RPC rate limit was encountered while reading Sepolia. Your on-chain deals are safe.
                 </p>
               </div>
@@ -249,12 +248,12 @@ export default function DealsPage() {
       {/* TOOLBAR CONTROLS: SEARCH & FILTER */}
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#A3A3A3]" />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search deals by title or address..."
-            className="pl-9 h-9 text-xs bg-zinc-900/40 border-zinc-800/80 rounded-xl focus:border-zinc-700 focus:bg-zinc-900/80"
+            className="pl-9 h-9 text-xs bg-[#252525] border-white/20 text-white placeholder:text-[#A3A3A3] rounded-xl focus:border-white focus:ring-1 focus:ring-white/40"
           />
         </div>
 
@@ -264,23 +263,23 @@ export default function DealsPage() {
             onClick={() => setFilterOpen((o) => !o)}
             className={`flex items-center gap-2 px-3 h-9 rounded-xl border text-xs font-medium transition-colors ${
               filter !== 'all'
-                ? 'border-blue-500/40 bg-blue-600/10 text-blue-400'
-                : 'border-zinc-800/80 bg-zinc-900/40 text-zinc-300 hover:bg-zinc-800/60 hover:text-white'
+                ? 'border-white bg-white/20 text-white font-semibold'
+                : 'border-white/20 bg-[#252525] text-white hover:bg-white/10'
             }`}
           >
-            <SlidersHorizontal size={13} className="text-zinc-400" />
+            <SlidersHorizontal size={13} className="text-white" />
             <span>
               {filter === 'all'
                 ? 'Filter Status'
                 : filterOptions.find((o) => o.value === filter)?.label || 'Filter'}
             </span>
             {filter !== 'all' && (
-              <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+              <span className="w-1.5 h-1.5 rounded-full bg-white" />
             )}
           </button>
 
           {filterOpen && (
-            <div className="absolute right-0 top-full mt-2 w-44 rounded-xl bg-zinc-900 border border-zinc-700/80 shadow-2xl p-1.5 z-30 space-y-0.5">
+            <div className="absolute right-0 top-full mt-2 w-44 rounded-xl bg-[#1B1B1B] border border-white/75 shadow-2xl p-1.5 z-30 space-y-0.5">
               {filterOptions.map((opt) => (
                 <button
                   key={opt.value}
@@ -291,12 +290,12 @@ export default function DealsPage() {
                   }}
                   className={`w-full flex items-center justify-between px-3 py-2 text-xs rounded-lg transition-colors ${
                     filter === opt.value
-                      ? 'bg-blue-600/15 text-blue-400 font-semibold'
-                      : 'text-zinc-300 hover:bg-zinc-800 hover:text-white'
+                      ? 'bg-white/20 text-white font-semibold'
+                      : 'text-[#A3A3A3] hover:bg-white/10 hover:text-white'
                   }`}
                 >
                   <span>{opt.label}</span>
-                  {filter === opt.value && <Check size={14} className="text-blue-400" />}
+                  {filter === opt.value && <Check size={14} className="text-white" />}
                 </button>
               ))}
             </div>
@@ -305,14 +304,14 @@ export default function DealsPage() {
       </div>
 
       {!effectiveAddress ? (
-        <Card className="bg-zinc-900/60 border-zinc-800">
+        <Card className="bg-[#1B1B1B] border border-white/75">
           <CardContent className="p-12 text-center">
-            <p className="text-zinc-400">Connect your wallet to view your deals.</p>
+            <p className="text-[#A3A3A3]">Connect your wallet to view your deals.</p>
           </CardContent>
         </Card>
       ) : (isLoading || !lastFetchedAddressRef.current) && deals.length === 0 ? (
         <div className="flex items-center justify-center py-20">
-          <Loader2 size={24} className="animate-spin text-blue-400" />
+          <Loader2 size={24} className="animate-spin text-white" />
         </div>
       ) : (
         <div className="grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 pt-1">
@@ -351,13 +350,13 @@ export default function DealsPage() {
                 transition={{ delay: i * 0.04 }}
               >
                 <Link href={`/deals/${deal.dealAddress}`}>
-                  <Card className="group h-full bg-zinc-900/60 border-zinc-800/80 hover:border-zinc-700/80 hover:bg-zinc-900/90 transition-all cursor-pointer flex flex-col justify-between">
+                  <Card className="group h-full bg-[#1B1B1B] border border-white/75 hover:border-white transition-all cursor-pointer flex flex-col justify-between shadow-xl">
                     <CardContent className="p-5 flex flex-col h-full justify-between gap-4">
                       {/* TOP SECTION: TITLE & STATUS */}
                       <div className="space-y-2">
                         <div className="flex items-start justify-between gap-2">
                           <h3
-                            className="text-base font-semibold text-white group-hover:text-blue-400 transition-colors line-clamp-2 leading-snug"
+                            className="text-base font-semibold text-white group-hover:text-neutral-200 transition-colors line-clamp-2 leading-snug"
                             title={deal.title}
                           >
                             {deal.title}
@@ -369,37 +368,37 @@ export default function DealsPage() {
                             {V2_DEAL_STATE_LABELS[statusStr] ?? 'Unknown'}
                           </Badge>
                         </div>
-                        <div className="text-xs font-mono text-zinc-500">
+                        <div className="text-xs font-mono text-[#A3A3A3]">
                           {shortenAddress(deal.dealAddress)}
                         </div>
                       </div>
 
                       {/* MAIN VALUE */}
-                      <div className="py-2 border-y border-zinc-800/60 flex items-baseline justify-between">
-                        <span className="text-xs text-zinc-400">Total Escrow</span>
+                      <div className="py-2 border-y border-white/20 flex items-baseline justify-between">
+                        <span className="text-xs text-[#A3A3A3]">Total Escrow</span>
                         <span className="text-xl font-bold text-white font-mono">
                           {formatUsdcAmount(deal.totalEscrow)}
                         </span>
                       </div>
 
                       {/* RELATIONSHIP & DETAILS */}
-                      <div className="space-y-1.5 text-xs text-zinc-400">
+                      <div className="space-y-1.5 text-xs text-[#A3A3A3]">
                         <div className="flex items-center justify-between">
-                          <span className="text-zinc-500">Counterparty</span>
-                          <span className="font-mono text-zinc-200">
+                          <span className="text-[#A3A3A3]">Counterparty</span>
+                          <span className="font-mono text-white">
                             {counterpartyRole ? `With ${counterpartyText} (${counterpartyRole})` : counterpartyText}
                           </span>
                         </div>
                         {createdDate && (
                           <div className="flex items-center justify-between">
-                            <span className="text-zinc-500">Created</span>
-                            <span className="text-zinc-300">{createdDate}</span>
+                            <span className="text-[#A3A3A3]">Created</span>
+                            <span className="text-white">{createdDate}</span>
                           </div>
                         )}
                       </div>
 
                       {/* BOTTOM ACTION */}
-                      <div className="pt-2 flex items-center justify-end text-xs font-medium text-blue-400 group-hover:text-blue-300 transition-colors">
+                      <div className="pt-2 flex items-center justify-end text-xs font-semibold text-white group-hover:text-neutral-300 transition-colors">
                         <span>Open Deal</span>
                         <ArrowRight size={14} className="ml-1 group-hover:translate-x-0.5 transition-transform" />
                       </div>
@@ -411,7 +410,7 @@ export default function DealsPage() {
           })}
           {filtered.length === 0 && (
             <div className="col-span-full text-center py-20">
-              <p className="text-zinc-500 text-sm">No deals found matching your search or filter.</p>
+              <p className="text-[#A3A3A3] text-sm">No deals found matching your search or filter.</p>
             </div>
           )}
         </div>

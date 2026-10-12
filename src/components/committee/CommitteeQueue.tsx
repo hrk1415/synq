@@ -28,7 +28,7 @@ export function CommitteeQueue({
 
   if (isLoading) {
     return (
-      <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-8 text-center text-sm text-zinc-400">
+      <div className="rounded-xl border border-white/20 bg-[#1B1B1B] p-8 text-center text-sm text-[#A3A3A3]">
         Loading committee queue items…
       </div>
     );
@@ -36,7 +36,7 @@ export function CommitteeQueue({
 
   if (filtered.length === 0) {
     return (
-      <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-8 text-center space-y-2">
+      <div className="rounded-xl border border-white/20 bg-[#1B1B1B] p-8 text-center space-y-2">
         <Scale className="mx-auto h-8 w-8 text-zinc-500" />
         <h4 className="text-sm font-semibold text-zinc-300">No Actionable Milestones</h4>
         <p className="text-xs text-zinc-500">
@@ -55,7 +55,7 @@ export function CommitteeQueue({
         return (
           <Card
             key={`${item.dealAddress}-${item.milestoneId}-${item.phase}`}
-            className="border-zinc-800 bg-zinc-950/60 hover:border-zinc-700 transition-colors"
+            className="border border-white/75 bg-[#1B1B1B] hover:border-white transition-colors shadow-xl"
           >
             <CardHeader className="pb-2">
               <div className="flex items-center justify-between">
@@ -111,7 +111,7 @@ export function CommitteeQueue({
                 <Button
                   size="sm"
                   onClick={() => onSelectMilestone(item)}
-                  className="h-7 text-xs bg-zinc-800 hover:bg-zinc-700 text-white flex items-center gap-1.5"
+                  className="h-7 text-xs bg-white hover:bg-neutral-200 text-[#101010] font-semibold flex items-center gap-1.5"
                 >
                   <span>Review & Resolve</span>
                   <ArrowRight className="h-3 w-3" />

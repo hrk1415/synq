@@ -90,12 +90,12 @@ const STARTER_PROMPTS = [
   },
 ];
 
-const SynqAvatar = ({ className = "w-8 h-8 p-1.5" }: { className?: string }) => (
-  <div className={cn("rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center shrink-0 shadow-sm mt-0.5", className)}>
+const SynqAvatar = ({ className = "w-11 h-11 p-2" }: { className?: string }) => (
+  <div className={cn("rounded-lg bg-[#1B1B1B] border border-[#383838] flex items-center justify-center shrink-0 shadow-sm mt-0.5", className)}>
     <img
-      src="/synq-logo.png"
+      src="/newlogopng.png"
       alt="Synq logo"
-      className="w-full h-full object-contain mix-blend-lighten"
+      className="w-full h-full object-contain"
     />
   </div>
 );
@@ -1009,15 +1009,15 @@ function NegotiatorContent() {
 
   const renderHistoryContent = () => (
     !effectiveAddress ? (
-      <div className="flex h-full min-h-24 flex-col items-center justify-center px-3 text-center text-xs text-zinc-400 gap-1">
+      <div className="flex h-full min-h-24 flex-col items-center justify-center px-3 text-center text-xs text-[#A3A3A3] gap-1">
         <span>Connect your wallet to view chat history.</span>
       </div>
     ) : historyLoading || isAccountRestoring ? (
-      <div className="flex h-full min-h-24 items-center justify-center px-3 text-center text-sm text-zinc-400">
+      <div className="flex h-full min-h-24 items-center justify-center px-3 text-center text-sm text-[#A3A3A3]">
         Loading chat history...
       </div>
     ) : conversations.length === 0 ? (
-      <div className="flex h-full min-h-24 items-center justify-center px-3 text-center text-sm text-zinc-400">
+      <div className="flex h-full min-h-24 items-center justify-center px-3 text-center text-sm text-[#A3A3A3]">
         No previous chats yet.
       </div>
     ) : (
@@ -1028,8 +1028,8 @@ function NegotiatorContent() {
             className={cn(
               'flex w-full items-center rounded-lg border transition-colors',
               activeConversationId === chat.id
-                ? 'border-blue-500/35 bg-blue-500/10'
-                : 'border-transparent hover:border-zinc-700/70 hover:bg-zinc-800/40'
+                ? 'border-white/30 bg-white/10'
+                : 'border-transparent hover:border-[#383838] hover:bg-[#222222]'
             )}
           >
             <button
@@ -1037,10 +1037,10 @@ function NegotiatorContent() {
               disabled={isThinking}
               className="flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2.5 text-left disabled:opacity-50"
             >
-              <MessageSquare size={14} className={cn('shrink-0', activeConversationId === chat.id ? 'text-blue-400' : 'text-zinc-400')} />
+              <MessageSquare size={14} className={cn('shrink-0', activeConversationId === chat.id ? 'text-white' : 'text-[#A3A3A3]')} />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-zinc-200">{chat.title}</p>
-                <p className="mt-0.5 text-xs text-zinc-400">{formatChatDate(new Date(chat.updatedAt).getTime())}</p>
+                <p className="truncate text-sm font-medium text-white">{chat.title}</p>
+                <p className="mt-0.5 text-xs text-[#A3A3A3]">{formatChatDate(new Date(chat.updatedAt).getTime())}</p>
               </div>
             </button>
             <button
@@ -1052,7 +1052,7 @@ function NegotiatorContent() {
                 event.stopPropagation();
                 deleteChat(chat.id);
               }}
-              className="mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-zinc-700/70 bg-zinc-900/40 text-zinc-400 transition-colors hover:border-red-400/40 hover:bg-red-500/10 hover:text-red-400 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-400/50 disabled:opacity-50"
+              className="mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[#383838] bg-[#222222] text-[#A3A3A3] transition-colors hover:border-zinc-400 hover:bg-[#2a2a2a] hover:text-white focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/40 disabled:opacity-50"
             >
               <Trash2 size={14} />
             </button>
@@ -1072,7 +1072,7 @@ function NegotiatorContent() {
               type="button"
               onClick={handleRetryAi}
               disabled={isThinking}
-              className="underline font-semibold text-blue-400 hover:text-blue-300 disabled:opacity-50 disabled:no-underline"
+              className="underline font-semibold text-white hover:text-zinc-300 disabled:opacity-50 disabled:no-underline"
             >
               Retry AI
             </button>
@@ -1081,7 +1081,7 @@ function NegotiatorContent() {
       )}
       <div
         className={cn(
-          'flex items-center gap-2 bg-zinc-900/90 border border-zinc-700/60 rounded-2xl focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/20 transition-all shadow-xl',
+          'flex items-center gap-2 bg-[#1B1B1B] border border-[#383838] rounded-2xl focus-within:border-white/50 focus-within:ring-1 focus-within:ring-white/20 transition-all shadow-xl',
           emptyState ? 'p-3' : 'p-2'
         )}
       >
@@ -1093,7 +1093,7 @@ function NegotiatorContent() {
           onKeyDown={handleKeyDown}
           placeholder="Describe the deal you want..."
           className={cn(
-            'flex-1 bg-transparent text-sm text-white placeholder:text-zinc-500 outline-none resize-none px-1 max-h-[140px] overflow-y-auto leading-relaxed',
+            'flex-1 bg-transparent text-sm text-white placeholder:text-[#737373] outline-none resize-none px-1 max-h-[140px] overflow-y-auto leading-relaxed',
             emptyState ? 'py-2.5 min-h-[44px]' : 'py-1.5 min-h-[36px]'
           )}
         />
@@ -1102,12 +1102,12 @@ function NegotiatorContent() {
           onClick={() => void handleSend()}
           disabled={!input.trim() || isThinking}
           className={cn(
-            'rounded-xl bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed transition-all shrink-0 shadow-sm',
+            'rounded-xl bg-white text-[#101010] hover:bg-zinc-200 disabled:opacity-40 disabled:cursor-not-allowed transition-all shrink-0 shadow-sm font-semibold',
             emptyState ? 'p-3' : 'p-2.5'
           )}
           aria-label="Send message"
         >
-          <Send size={15} />
+          <Send size={15} className="text-[#101010]" />
         </button>
       </div>
     </div>
@@ -1115,6 +1115,18 @@ function NegotiatorContent() {
 
   return (
     <div className="flex h-[calc(100dvh-6rem)] min-h-0 flex-col gap-4 overflow-hidden lg:h-[calc(100dvh-4rem)]">
+      {/* Viewport custom optimized background scoped to /negotiator */}
+      <div
+        className="fixed inset-0 bg-[#101010] bg-cover bg-center bg-no-repeat -z-10 pointer-events-none"
+        style={{
+          backgroundImage: 'linear-gradient(to bottom, rgba(16, 16, 16, 0.4), rgba(16, 16, 16, 0.55)), url(/bg1.webp)',
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          backgroundRepeat: 'no-repeat',
+        }}
+        aria-hidden="true"
+      />
+
       {/* COMPACT HEADER WITH PRESS START 2P FONT AND HELP TOOLTIP */}
       <div className="flex items-center justify-between flex-wrap gap-3 shrink-0">
         <div className="flex items-center gap-2.5">
@@ -1126,11 +1138,11 @@ function NegotiatorContent() {
               type="button"
               tabIndex={0}
               aria-label="About AI Deal Negotiator"
-              className="w-5 h-5 rounded-full bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/60 text-zinc-400 hover:text-white text-[11px] font-bold font-mono inline-flex items-center justify-center shrink-0 transition-colors focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+              className="w-5 h-5 rounded-full bg-[#1B1B1B] hover:bg-[#252525] border border-[#383838] hover:border-zinc-500 text-[#A3A3A3] hover:text-white text-[11px] font-bold font-mono inline-flex items-center justify-center shrink-0 transition-colors focus:outline-none focus:ring-1 focus:ring-white/40"
             >
               ?
             </button>
-            <div className="absolute left-0 top-full mt-2 w-72 sm:w-80 p-3 rounded-xl bg-zinc-900 border border-zinc-700/80 text-zinc-200 text-xs leading-relaxed shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto transition-all duration-150 z-30">
+            <div className="absolute left-0 top-full mt-2 w-72 sm:w-80 p-3 rounded-xl bg-[#1B1B1B] border border-[#383838] text-[#A3A3A3] text-xs leading-relaxed shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto transition-all duration-150 z-30">
               Describe the deal you need. Synq AI helps shape the terms, find matching providers, and turn the conversation into a deal proposal. Review deal terms carefully before signing.
             </div>
           </div>
@@ -1142,8 +1154,8 @@ function NegotiatorContent() {
             size="sm"
             onClick={() => setMobileDraftOpen(!mobileDraftOpen)}
             className={cn(
-              'flex items-center gap-1.5 border-zinc-800 bg-zinc-900/80 text-zinc-300 hover:text-white hover:bg-zinc-800 text-xs',
-              mobileDraftOpen && 'border-blue-500/60 text-blue-400'
+              'flex items-center gap-1.5 border-[#383838] bg-[#1B1B1B] text-white hover:bg-[#252525] hover:border-zinc-400 text-xs',
+              mobileDraftOpen && 'border-white bg-white/10 text-white font-semibold'
             )}
             title="Toggle Deal Draft"
           >
@@ -1155,7 +1167,7 @@ function NegotiatorContent() {
             variant="outline"
             size="sm"
             onClick={() => setMobileHistoryOpen(!mobileHistoryOpen)}
-            className="flex items-center gap-1.5 border-zinc-800 bg-zinc-900/80 text-zinc-300 hover:text-white hover:bg-zinc-800 text-xs"
+            className="flex items-center gap-1.5 border-[#383838] bg-[#1B1B1B] text-white hover:bg-[#252525] hover:border-zinc-400 text-xs"
             title="Toggle Chat History"
           >
             <History size={14} />
@@ -1177,8 +1189,8 @@ function NegotiatorContent() {
             )}
           >
             {messagesLoading ? (
-              <div className="flex h-full min-h-32 items-center justify-center text-sm text-zinc-400 gap-2">
-                <Loader2 size={16} className="animate-spin text-blue-400" />
+              <div className="flex h-full min-h-32 items-center justify-center text-sm text-[#A3A3A3] gap-2">
+                <Loader2 size={16} className="animate-spin text-white" />
                 Loading conversation...
               </div>
             ) : isEmptyChat ? (
@@ -1190,7 +1202,7 @@ function NegotiatorContent() {
 
                   {renderComposer(true)}
 
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3 items-stretch">
                   {STARTER_PROMPTS.map((item) => {
                     const IconComponent = item.icon;
                     return (
@@ -1207,13 +1219,17 @@ function NegotiatorContent() {
                           requestAnimationFrame(() => textareaRef.current?.focus());
                         }}
                         disabled={isThinking}
-                        className="group flex min-w-0 flex-col rounded-xl border border-zinc-800/80 bg-zinc-900/60 p-4 text-left transition-all hover:border-zinc-700/80 hover:bg-zinc-800/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500/60 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="group flex min-w-0 h-full flex-col justify-between rounded-xl border border-[#303030] bg-[#1B1B1B] p-3.5 sm:p-4 text-left transition-all hover:border-[#454545] hover:bg-[#222222] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/40 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        <div className="mb-2 flex items-center justify-between gap-3">
-                          <p className={`${pressStart2P.className} min-w-0 flex-1 text-[10px] font-normal leading-relaxed tracking-[-0.04em] text-zinc-200 transition-colors group-hover:text-white md:whitespace-nowrap`}>{item.title}</p>
-                          <IconComponent size={16} className="shrink-0 text-zinc-400 transition-colors group-hover:text-blue-400" />
+                        <div>
+                          <div className="mb-2 flex items-start justify-between gap-2">
+                            <p className={`${pressStart2P.className} min-w-0 flex-1 text-[8.5px] sm:text-[9px] lg:text-[9.5px] font-normal leading-[1.65] tracking-[-0.03em] text-white transition-colors break-words`}>
+                              {item.title}
+                            </p>
+                            <IconComponent size={14} className="hidden lg:block shrink-0 mt-0.5 text-[#A3A3A3] transition-colors group-hover:text-white" />
+                          </div>
+                          <p className="text-xs leading-relaxed text-[#A3A3A3] mt-1.5">{item.description}</p>
                         </div>
-                        <p className="text-xs leading-relaxed text-zinc-400">{item.description}</p>
                       </button>
                     );
                   })}
@@ -1231,7 +1247,7 @@ function NegotiatorContent() {
                         animate={{ opacity: 1, y: 0 }}
                         className="flex justify-end gap-2.5 max-w-[85%] ml-auto"
                       >
-                        <div className="bg-blue-600 text-white rounded-2xl rounded-tr-xs px-4 py-2.5 shadow-sm text-sm leading-relaxed">
+                        <div className="bg-white text-[#101010] font-medium rounded-2xl rounded-tr-xs px-4 py-2.5 shadow-sm text-sm leading-relaxed">
                           <p className="whitespace-pre-wrap">{msg.content}</p>
                         </div>
                       </motion.div>
@@ -1241,8 +1257,8 @@ function NegotiatorContent() {
                         animate={{ opacity: 1, y: 0 }}
                         className="flex items-start gap-2.5 max-w-[85%] sm:max-w-[80%]"
                       >
-                        <SynqAvatar className="w-8 h-8 p-1.5 mt-0.5 shrink-0" />
-                        <div className="bg-zinc-800/80 border border-zinc-700/60 text-zinc-200 rounded-2xl rounded-tl-xs px-4 py-2.5 shadow-xs text-sm leading-relaxed min-w-0">
+                        <SynqAvatar className="w-11 h-11 p-2 mt-0.5 shrink-0" />
+                        <div className="bg-[#1B1B1B] border border-white/75 text-white rounded-2xl rounded-tl-xs px-4 py-2.5 text-sm leading-relaxed min-w-0">
                           <FreelancerSearchMessage
                             content={msg.content}
                             sellers={msg.sellers}
@@ -1259,7 +1275,7 @@ function NegotiatorContent() {
                       <motion.div
                         initial={{ opacity: 0, y: 8 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className="bg-zinc-800/30 text-zinc-400 text-center rounded-lg px-4 py-2 text-xs"
+                        className="bg-[#1B1B1B]/60 border border-[#303030] text-[#A3A3A3] text-center rounded-lg px-4 py-2 text-xs"
                       >
                         {msg.content}
                       </motion.div>
@@ -1270,22 +1286,22 @@ function NegotiatorContent() {
 
             {isThinking && (
               <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex items-start gap-2.5 max-w-[85%] sm:max-w-[80%]">
-                <SynqAvatar className="w-8 h-8 p-1.5 mt-0.5 shrink-0" />
-                <div className="bg-zinc-800/80 border border-zinc-700/60 text-zinc-400 rounded-2xl rounded-tl-xs px-4 py-2.5 shadow-xs text-xs flex items-center gap-2">
-                  <Loader2 size={14} className="animate-spin text-blue-400" />
+                <SynqAvatar className="w-11 h-11 p-2 mt-0.5 shrink-0" />
+                <div className="bg-[#1B1B1B] border border-white/75 text-[#A3A3A3] rounded-2xl rounded-tl-xs px-4 py-2.5 text-xs flex items-center gap-2">
+                  <Loader2 size={14} className="animate-spin text-white" />
                   Analyzing deal request...
                 </div>
               </motion.div>
             )}
 
             {accepted && (
-              <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="p-4 rounded-xl border border-green-500/20 bg-green-600/10">
+              <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="p-4 rounded-xl border border-white/20 bg-white/5">
                 <div className="flex items-center gap-2 mb-1">
-                  <Check size={18} className="text-green-400" />
-                  <span className="text-sm font-medium text-green-400">Deal Created!</span>
+                  <Check size={18} className="text-white" />
+                  <span className="text-sm font-medium text-white">Deal Created!</span>
                 </div>
-                <p className="text-xs text-zinc-400">Your deal has been created on-chain.</p>
-                <Button size="sm" variant="outline" className="mt-2 gap-1" onClick={() => router.push('/deals')}>
+                <p className="text-xs text-[#A3A3A3]">Your deal has been created on-chain.</p>
+                <Button size="sm" variant="outline" className="mt-2 gap-1 border-[#383838] bg-[#1B1B1B] text-white hover:bg-[#252525]" onClick={() => router.push('/deals')}>
                   <Plus size={14} /> View My Deals
                 </Button>
               </motion.div>
@@ -1298,8 +1314,8 @@ function NegotiatorContent() {
         </div>
 
         {/* PERMANENT DESKTOP HISTORY PANEL WITH DRAFT CONTROL */}
-        <aside className="hidden lg:flex flex-col min-h-0 w-[300px] shrink-0 border border-zinc-800/80 bg-zinc-950/40 rounded-2xl overflow-hidden relative">
-          <div className="p-3.5 border-b border-zinc-800/60 shrink-0 space-y-3 relative" ref={draftContainerRef}>
+        <aside className="hidden lg:flex flex-col min-h-0 w-[300px] shrink-0 border border-[#383838] bg-[#1B1B1B] rounded-2xl overflow-hidden relative">
+          <div className="p-3.5 border-b border-[#303030] shrink-0 space-y-3 relative" ref={draftContainerRef}>
             {/* Top Control Row */}
             <div className="grid grid-cols-[2fr_3fr] gap-1.5 w-full">
               <Popover.Root
@@ -1319,11 +1335,11 @@ function NegotiatorContent() {
                     onMouseLeave={handleDraftMouseLeave}
                     onClick={handleDraftClick}
                     className={cn(
-                      'w-full justify-center px-2 py-1 h-8 text-xs border-zinc-700/80 bg-zinc-900 text-zinc-200 hover:bg-zinc-800 transition-all font-medium gap-1.5',
-                      (draftPanelOpen || draftPanelPinned) && 'border-blue-500/60 bg-blue-500/10 text-blue-300'
+                      'w-full justify-center px-2 py-1 h-8 text-xs border-[#383838] bg-[#222222] text-white hover:bg-[#2a2a2a] hover:border-zinc-400 transition-all font-medium gap-1.5',
+                      (draftPanelOpen || draftPanelPinned) && 'border-white bg-white/10 text-white font-semibold'
                     )}
                   >
-                    <FileText size={13} className={cn((draftPanelOpen || draftPanelPinned) ? 'text-blue-400' : 'text-zinc-400')} />
+                    <FileText size={13} className={cn((draftPanelOpen || draftPanelPinned) ? 'text-white' : 'text-[#A3A3A3]')} />
                     Draft
                   </Button>
                 </Popover.Trigger>
@@ -1353,20 +1369,20 @@ function NegotiatorContent() {
                 size="sm"
                 onClick={startNewChat}
                 disabled={isThinking}
-                className="w-full justify-center px-2 py-1 h-8 text-xs bg-blue-600 hover:bg-blue-500 text-white font-semibold gap-1.5"
+                className="w-full justify-center px-2 py-1 h-8 text-xs bg-white hover:bg-zinc-200 text-[#101010] font-semibold gap-1.5 shadow-sm"
               >
-                <Plus size={13} /> New Chat
+                <Plus size={13} className="text-[#101010]" /> New Chat
               </Button>
             </div>
 
             {/* Chat History Title & Subtitle */}
             <div>
               <h2 className="text-sm font-semibold text-white">Chat History</h2>
-              <p className="text-[11px] text-zinc-300">Recent negotiation sessions</p>
+              <p className="text-[11px] text-[#A3A3A3]">Recent negotiation sessions</p>
             </div>
 
             {/* Limit Row */}
-            <div className="flex items-center justify-between text-xs text-zinc-300 font-mono pt-0.5">
+            <div className="flex items-center justify-between text-xs text-[#A3A3A3] font-mono pt-0.5">
               <span>Limit</span>
               <span>{address ? `${chatCount} / ${chatLimit}` : '0 / 10'}</span>
             </div>
@@ -1393,20 +1409,20 @@ function NegotiatorContent() {
               animate={{ x: 0 }}
               exit={{ x: '100%' }}
               transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-              className="fixed right-0 top-0 bottom-0 w-[300px] max-w-[85vw] bg-zinc-950 border-l border-zinc-800 z-50 flex flex-col p-4 space-y-3 lg:hidden"
+              className="fixed right-0 top-0 bottom-0 w-[300px] max-w-[85vw] bg-[#1B1B1B] border-l border-[#383838] z-50 flex flex-col p-4 space-y-3 lg:hidden"
             >
               <div className="flex items-center justify-between gap-2">
                 <Button
-                  className="flex-1 justify-start gap-2"
+                  className="flex-1 justify-start gap-2 bg-white hover:bg-zinc-200 text-[#101010] font-semibold"
                   onClick={startNewChat}
                   disabled={isThinking}
                 >
-                  <Plus size={15} /> New Chat
+                  <Plus size={15} className="text-[#101010]" /> New Chat
                 </Button>
                 <button
                   type="button"
                   onClick={() => setMobileHistoryOpen(false)}
-                  className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800 border border-zinc-800 shrink-0"
+                  className="p-2 rounded-xl text-[#A3A3A3] hover:text-white hover:bg-[#252525] border border-[#383838] shrink-0"
                   aria-label="Close history"
                 >
                   <X size={16} />
@@ -1415,9 +1431,9 @@ function NegotiatorContent() {
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-base font-semibold text-white">Chat History</h2>
-                  <p className="text-xs text-zinc-300">Recent negotiation sessions</p>
+                  <p className="text-xs text-[#A3A3A3]">Recent negotiation sessions</p>
                 </div>
-                <span className="text-xs font-mono px-2 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-300">
+                <span className="text-xs font-mono px-2 py-0.5 rounded bg-[#222222] border border-[#383838] text-[#A3A3A3]">
                   {address ? `${chatCount} / ${chatLimit}` : '0 / 10'}
                 </span>
               </div>
@@ -1462,9 +1478,9 @@ function NegotiatorContent() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 8, scale: 0.95 }}
             transition={{ duration: 0.15 }}
-            className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl bg-zinc-900/95 border border-zinc-700/80 text-zinc-100 text-xs sm:text-sm font-medium shadow-2xl backdrop-blur-md flex items-center gap-2.5 pointer-events-auto"
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl bg-[#1B1B1B] border border-[#383838] text-white text-xs sm:text-sm font-medium shadow-2xl backdrop-blur-md flex items-center gap-2.5 pointer-events-auto"
           >
-            <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+            <span className="w-2 h-2 rounded-full bg-white shrink-0" />
             <span>{toastMessage}</span>
           </motion.div>
         )}

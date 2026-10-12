@@ -1387,11 +1387,11 @@ function NewDealForm() {
                   setTimeout(() => setShowSuggestions(false), 150);
                 }}
                 placeholder="Type a job title..."
-                className="w-full text-sm bg-zinc-900/60 border-zinc-700 text-white placeholder:text-zinc-500 focus:border-blue-500/60 h-11"
+                className="w-full text-sm bg-[#252525] border-white/20 text-white placeholder:text-[#A3A3A3] focus:border-white focus:ring-1 focus:ring-white/40 h-11"
                 autoComplete="off"
               />
               {showSuggestions && filteredSuggestions.length > 0 && (
-                <div className="absolute left-0 right-0 top-full mt-1.5 z-20 overflow-hidden rounded-xl border border-zinc-700/70 bg-zinc-900/95 p-1.5 shadow-xl backdrop-blur-md">
+                <div className="absolute left-0 right-0 top-full mt-1.5 z-20 overflow-hidden rounded-xl border border-white/75 bg-[#1B1B1B] p-1.5 shadow-xl backdrop-blur-md">
                   <div className="space-y-0.5">
                     {filteredSuggestions.map((suggestion) => (
                       <button
@@ -1403,8 +1403,8 @@ function NewDealForm() {
                           setShowSuggestions(false);
                         }}
                         className={cn(
-                          'w-full text-left px-3 py-2 rounded-lg text-sm transition-colors text-zinc-200 hover:bg-blue-600/15 hover:text-blue-300',
-                          form.type === suggestion && 'bg-blue-600/20 text-blue-400 font-medium'
+                          'w-full text-left px-3 py-2 rounded-lg text-sm transition-colors text-white hover:bg-white/10 hover:text-white',
+                          form.type === suggestion && 'bg-white/20 text-white font-medium'
                         )}
                       >
                         {suggestion}
@@ -1414,7 +1414,7 @@ function NewDealForm() {
                 </div>
               )}
             </div>
-            <p className="text-xs text-zinc-500">
+            <p className="text-xs text-[#A3A3A3]">
               Type any title or pick a suggestion. Custom titles are fully supported.
             </p>
           </div>
@@ -1433,7 +1433,7 @@ function NewDealForm() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <UserCheck size={16} className="text-emerald-400" />
-                    <span className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-[#A3A3A3]">
                       Selected Freelancer
                     </span>
                   </div>
@@ -1445,13 +1445,13 @@ function NewDealForm() {
                       clearSelectedFreelancer();
                       setSearchQuery('');
                     }}
-                    className="text-xs text-blue-400 hover:text-blue-300 hover:bg-blue-600/10 h-7 px-2.5"
+                    className="text-xs text-white hover:text-neutral-300 hover:bg-white/10 h-7 px-2.5"
                   >
                     Change
                   </Button>
                 </div>
 
-                <div className="p-4 rounded-xl border border-zinc-800/80 bg-zinc-900/60 shadow-sm flex items-center justify-between gap-4">
+                <div className="p-4 rounded-xl border border-white/75 bg-[#1B1B1B] shadow-sm flex items-center justify-between gap-4">
                   {/* LEFT: PFP + NAME/HANDLE + WALLET/STATUS */}
                   <div className="flex items-center gap-3.5 min-w-0 flex-1">
                     <FreelancerAvatar
@@ -1469,16 +1469,16 @@ function NewDealForm() {
                             'Direct Wallet'}
                         </span>
                         {freelancerIdentity.displayHandle && (
-                          <span className="text-xs font-mono text-blue-400 truncate">
+                          <span className="text-xs font-mono text-[#A3A3A3] truncate">
                             {freelancerIdentity.displayHandle}
                           </span>
                         )}
                       </div>
                       <div className="flex items-center gap-2 mt-1 text-xs font-mono">
-                        <span className="text-zinc-400">
+                        <span className="text-[#A3A3A3]">
                           {shortenAddress(form.counterparty)}
                         </span>
-                        <span className="text-zinc-600">•</span>
+                        <span className="text-neutral-600">•</span>
                         {selectedFreelancerProfile?.available === false ? (
                           <span className="text-amber-400/90 font-sans text-[11px]">
                             ○ Busy
@@ -1498,14 +1498,14 @@ function NewDealForm() {
                       <div className="text-2xl sm:text-3xl font-black text-emerald-400 font-mono tracking-tight">
                         {selectedMatchPercentage}%
                       </div>
-                      <div className="text-[9px] uppercase tracking-wider text-zinc-500 font-bold mt-0.5">
+                      <div className="text-[9px] uppercase tracking-wider text-[#A3A3A3] font-bold mt-0.5">
                         MATCH
                       </div>
                     </div>
                   )}
                 </div>
 
-                <p className="text-xs text-zinc-400">
+                <p className="text-xs text-[#A3A3A3]">
                   Click <strong className="text-white font-medium">Next</strong> below to confirm this freelancer and continue.
                 </p>
               </div>
@@ -1514,11 +1514,11 @@ function NewDealForm() {
               <div className="space-y-4">
                 {/* SEARCH INPUT & DROPDOWN */}
                 <div ref={searchRef} className="relative space-y-1">
-                  <label htmlFor="freelancer-search-input" className="text-xs text-zinc-400 font-medium block">
+                  <label htmlFor="freelancer-search-input" className="text-xs text-[#A3A3A3] font-medium block">
                     Search Freelancers
                   </label>
                   <div className="relative">
-                    <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
+                    <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#A3A3A3] pointer-events-none" />
                     <Input
                       id="freelancer-search-input"
                       value={searchQuery}
@@ -1528,14 +1528,14 @@ function NewDealForm() {
                       }}
                       onFocus={() => setSearchFocused(true)}
                       placeholder="Search freelancers by handle, name, skill, category, or wallet..."
-                      className="w-full pl-9 pr-8 text-sm bg-zinc-900/60 border-zinc-700/60 text-white placeholder:text-zinc-500 focus:border-blue-500/60 rounded-xl h-11"
+                      className="w-full pl-9 pr-8 text-sm bg-[#252525] border-white/20 text-white placeholder:text-[#A3A3A3] focus:border-white focus:ring-1 focus:ring-white/40 rounded-xl h-11"
                       autoComplete="off"
                     />
                     {searchQuery && (
                       <button
                         type="button"
                         onClick={() => setSearchQuery('')}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-0.5"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-[#A3A3A3] hover:text-white p-0.5"
                       >
                         <X size={14} />
                       </button>
@@ -1544,7 +1544,7 @@ function NewDealForm() {
 
                   {/* REAL-TIME TYPEAHEAD DROPDOWN */}
                   {searchFocused && searchQuery.trim().length > 0 && (
-                    <div className="absolute left-0 right-0 top-full mt-1.5 z-30 overflow-hidden rounded-xl border border-zinc-700/80 bg-zinc-900/98 p-1.5 shadow-2xl backdrop-blur-md">
+                    <div className="absolute left-0 right-0 top-full mt-1.5 z-30 overflow-hidden rounded-xl border border-white/75 bg-[#1B1B1B] p-1.5 shadow-2xl backdrop-blur-md">
                       <div className="space-y-1 max-h-72 overflow-y-auto">
                         {/* Direct Address Entry (when valid EVM address) */}
                         {queryIsAddress && !queryIsOwnAddress && !queryMatchesDirectoryProfile && (
@@ -1556,25 +1556,25 @@ function NewDealForm() {
                               setSearchQuery('');
                               setSearchFocused(false);
                             }}
-                            className="w-full text-left p-2.5 rounded-lg hover:bg-blue-600/15 border border-blue-500/20 bg-blue-950/20 flex items-center justify-between gap-3 transition-colors"
+                            className="w-full text-left p-2.5 rounded-lg hover:bg-white/10 border border-white/20 bg-[#252525] flex items-center justify-between gap-3 transition-colors"
                           >
                             <div className="flex items-center gap-2.5 min-w-0">
-                              <div className="w-8 h-8 rounded-full bg-blue-600/30 border border-blue-500/40 flex items-center justify-center text-blue-400 shrink-0">
+                              <div className="w-8 h-8 rounded-full bg-white/10 border border-white/20 flex items-center justify-center text-white shrink-0">
                                 <Wallet size={14} />
                               </div>
                               <div className="min-w-0">
                                 <div className="text-xs font-semibold text-white flex items-center gap-1.5">
                                   <span>Use direct address</span>
-                                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400 border border-zinc-700">
+                                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#101010] text-[#A3A3A3] border border-white/20">
                                     Unregistered
                                   </span>
                                 </div>
-                                <div className="text-[11px] font-mono text-blue-300 truncate">
+                                <div className="text-[11px] font-mono text-[#A3A3A3] truncate">
                                   {searchQuery.trim()}
                                 </div>
                               </div>
                             </div>
-                            <span className="text-xs text-blue-400 shrink-0 font-medium">Select →</span>
+                            <span className="text-xs text-white shrink-0 font-medium">Select →</span>
                           </button>
                         )}
 
@@ -1603,7 +1603,7 @@ function NewDealForm() {
                                 setSearchQuery('');
                                 setSearchFocused(false);
                               }}
-                              className="w-full text-left p-2.5 rounded-lg hover:bg-zinc-800/70 border border-transparent hover:border-zinc-700/60 flex items-center justify-between gap-3 transition-colors"
+                              className="w-full text-left p-2.5 rounded-lg hover:bg-[#252525] border border-transparent hover:border-white/20 flex items-center justify-between gap-3 transition-colors"
                             >
                               <div className="flex items-center gap-2.5 min-w-0">
                                 <FreelancerAvatar
@@ -1617,13 +1617,13 @@ function NewDealForm() {
                                   <div className="text-sm font-semibold text-white truncate flex items-center gap-1.5">
                                     <span>{displayName}</span>
                                     {handle && (
-                                      <span className="text-xs font-mono text-blue-400 font-normal">
+                                      <span className="text-xs font-mono text-[#A3A3A3] font-normal">
                                         {handle}
                                       </span>
                                     )}
                                   </div>
-                                  <div className="text-xs text-zinc-400 truncate">
-                                    {p.category && <span className="text-zinc-300 mr-1.5">{p.category}</span>}
+                                  <div className="text-xs text-[#A3A3A3] truncate">
+                                    {p.category && <span className="text-white mr-1.5">{p.category}</span>}
                                     {(p.skills || []).slice(0, 3).join(', ')}
                                   </div>
                                 </div>
@@ -1634,13 +1634,13 @@ function NewDealForm() {
                                   if (itemPricing) {
                                     return (
                                       <div className="text-xs font-semibold text-white">
-                                        {itemPricing.amountDisplay} <span className="text-[10px] text-zinc-400 font-normal">USDC / {pricingMap[w]?.rateType === 'PER_HOUR' ? 'hour' : 'project'}</span>
+                                        {itemPricing.amountDisplay} <span className="text-[10px] text-[#A3A3A3] font-normal">USDC / {pricingMap[w]?.rateType === 'PER_HOUR' ? 'hour' : 'project'}</span>
                                       </div>
                                     );
                                   }
-                                  return <div className="text-[11px] text-zinc-500">Rate not set</div>;
+                                  return <div className="text-[11px] text-[#A3A3A3]">Rate not set</div>;
                                 })()}
-                                <div className="text-[10px] text-zinc-500">
+                                <div className="text-[10px] text-[#A3A3A3]">
                                   {dealsDone} deal{dealsDone === 1 ? '' : 's'}
                                 </div>
                               </div>
@@ -1650,7 +1650,7 @@ function NewDealForm() {
 
                         {/* No Results Fallback */}
                         {searchResults.length === 0 && !queryIsAddress && (
-                          <div className="p-4 text-center text-xs text-zinc-500">
+                          <div className="p-4 text-center text-xs text-[#A3A3A3]">
                             No registered freelancers found matching &quot;{searchQuery}&quot;
                           </div>
                         )}
@@ -1675,10 +1675,10 @@ function NewDealForm() {
                 value={form.deliverables}
                 onChange={(e) => update('deliverables', e.target.value)}
                 placeholder="Describe project scope, technical requirements, and acceptance standards..."
-                className="w-full h-36 rounded-xl border border-zinc-700/60 bg-zinc-900/60 p-4 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-blue-500/60 resize-none font-sans"
+                className="w-full h-36 rounded-xl border border-white/20 bg-[#252525] p-4 text-sm text-white placeholder:text-[#A3A3A3] focus:outline-none focus:border-white focus:ring-1 focus:ring-white/40 resize-none font-sans"
               />
               <div className="flex items-center justify-between pt-1">
-                <span className="text-[11px] text-zinc-500 font-mono">
+                <span className="text-[11px] text-[#A3A3A3] font-mono">
                   {form.deliverables.length} characters
                 </span>
               </div>
@@ -1692,7 +1692,7 @@ function NewDealForm() {
             <h3 className="text-base font-semibold text-white">What&apos;s your budget?</h3>
 
             <div className="space-y-1.5">
-              <label htmlFor="deal-budget-input" className="text-xs text-zinc-400 font-medium block">
+              <label htmlFor="deal-budget-input" className="text-xs text-[#A3A3A3] font-medium block">
                 TOTAL DEAL BUDGET (USDC)
               </label>
               <div className="relative">
@@ -1707,12 +1707,12 @@ function NewDealForm() {
                     }
                   }}
                   placeholder="0.00"
-                  className="w-full pl-4 pr-18 font-mono text-base bg-zinc-900/60 border-zinc-700/60 text-white placeholder:text-zinc-500 focus:border-blue-500/60 rounded-xl h-14"
+                  className="w-full pl-4 pr-18 font-mono text-base bg-[#252525] border-white/20 text-white placeholder:text-[#A3A3A3] focus:border-white focus:ring-1 focus:ring-white/40 rounded-xl h-14"
                   type="number"
                   min="0"
                   step="0.01"
                 />
-                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-400 text-xs font-semibold uppercase pointer-events-none">
+                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[#A3A3A3] text-xs font-semibold uppercase pointer-events-none">
                   USDC
                 </span>
               </div>
@@ -1728,8 +1728,8 @@ function NewDealForm() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
-                <label htmlFor="deal-deadline-date" className="text-xs text-zinc-400 font-medium block">
-                  TARGET COMPLETION DATE
+                <label htmlFor="deal-deadline-date" className="text-xs text-[#A3A3A3] font-medium block">
+                  DELIVERY DATE
                 </label>
                 <Input
                   ref={dateInputRef}
@@ -1742,12 +1742,12 @@ function NewDealForm() {
                     handleDeadlineDateChange(e.target.value);
                     setSelectedDeadlinePreset(null);
                   }}
-                  className="w-full font-mono text-sm bg-zinc-900/60 border-zinc-700/60 text-white focus:border-blue-500/60 rounded-xl h-11 [color-scheme:dark] cursor-pointer [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:scale-125 [&::-webkit-calendar-picker-indicator]:opacity-90 hover:[&::-webkit-calendar-picker-indicator]:opacity-100"
+                  className="w-full font-mono text-sm bg-[#252525] border-white/20 text-white focus:border-white focus:ring-1 focus:ring-white/40 rounded-xl h-11 [color-scheme:dark] cursor-pointer [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:scale-125 [&::-webkit-calendar-picker-indicator]:opacity-90 hover:[&::-webkit-calendar-picker-indicator]:opacity-100"
                 />
               </div>
 
               <div className="space-y-1.5">
-                <label htmlFor="deal-deadline-time" className="text-xs text-zinc-400 font-medium block">
+                <label htmlFor="deal-deadline-time" className="text-xs text-[#A3A3A3] font-medium block">
                   TARGET TIME
                 </label>
                 <Input
@@ -1760,14 +1760,14 @@ function NewDealForm() {
                     handleDeadlineTimeChange(e.target.value);
                     setSelectedDeadlinePreset(null);
                   }}
-                  className="w-full font-mono text-sm bg-zinc-900/60 border-zinc-700/60 text-white focus:border-blue-500/60 rounded-xl h-11 [color-scheme:dark] cursor-pointer [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:scale-125 [&::-webkit-calendar-picker-indicator]:opacity-90 hover:[&::-webkit-calendar-picker-indicator]:opacity-100"
+                  className="w-full font-mono text-sm bg-[#252525] border-white/20 text-white focus:border-white focus:ring-1 focus:ring-white/40 rounded-xl h-11 [color-scheme:dark] cursor-pointer [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:scale-125 [&::-webkit-calendar-picker-indicator]:opacity-90 hover:[&::-webkit-calendar-picker-indicator]:opacity-100"
                 />
               </div>
             </div>
 
             {/* QUICK PRESET DEADLINE CARDS */}
             <div className="space-y-1.5">
-              <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider block">
+              <span className="text-[11px] font-semibold text-[#A3A3A3] uppercase tracking-wider block">
                 Quick Presets
               </span>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
@@ -1786,8 +1786,8 @@ function NewDealForm() {
                       className={cn(
                         'px-3 py-2 rounded-lg border text-center transition-all text-xs font-medium',
                         isSelected
-                          ? 'border-blue-500/60 bg-blue-600/20 text-blue-300 shadow-sm'
-                          : 'border-zinc-800 bg-zinc-900/50 text-zinc-300 hover:border-zinc-700 hover:bg-zinc-800/40'
+                          ? 'border-white bg-white/20 text-white shadow-sm font-semibold'
+                          : 'border-white/20 bg-[#252525] text-[#A3A3A3] hover:border-white/40 hover:bg-white/10 hover:text-white'
                       )}
                     >
                       {preset.label}
@@ -1798,9 +1798,9 @@ function NewDealForm() {
             </div>
 
             {formattedLocalDelivery && (
-              <div className="p-3.5 rounded-xl border border-zinc-800 bg-zinc-900/40 text-xs text-zinc-400 flex items-center justify-between">
+              <div className="p-3.5 rounded-xl border border-white/20 bg-[#252525] text-xs text-[#A3A3A3] flex items-center justify-between">
                 <span>Target Delivery:</span>
-                <span className="font-mono text-zinc-100 text-sm font-semibold">
+                <span className="font-mono text-white text-sm font-semibold">
                   {formattedLocalDelivery}
                 </span>
               </div>
@@ -1813,7 +1813,7 @@ function NewDealForm() {
         return (
           <div className="space-y-6">
             {/* CARD 1 — PAYMENT STRUCTURE */}
-            <div className="p-5 sm:p-6 rounded-2xl bg-zinc-900/80 border border-zinc-800/80 shadow-md space-y-4">
+            <div className="p-5 sm:p-6 rounded-2xl bg-[#1B1B1B] border border-white/75 shadow-md space-y-4">
               <h3 className="text-base font-semibold text-white">
                 Choose how funds should be released across milestones.
               </h3>
@@ -1836,12 +1836,12 @@ function NewDealForm() {
                     className={cn(
                       'p-3.5 rounded-xl border text-left transition-all',
                       paymentStructureSelected && form.paymentStructure === opt.value
-                        ? 'border-blue-500/50 bg-blue-600/10 shadow-sm'
-                        : 'border-zinc-700/50 bg-zinc-800/30 hover:border-zinc-600'
+                        ? 'border-white bg-white/10 shadow-sm'
+                        : 'border-white/20 bg-[#252525] hover:border-white/40 hover:bg-white/5'
                     )}
                   >
                     <div className="text-sm font-semibold text-white">{opt.label}</div>
-                    <div className="text-xs text-zinc-400 mt-0.5">{opt.desc}</div>
+                    <div className="text-xs text-[#A3A3A3] mt-0.5">{opt.desc}</div>
                   </button>
                 ))}
               </div>
@@ -1849,12 +1849,12 @@ function NewDealForm() {
 
             {/* CARD 2 — MILESTONES (Rendered ONLY after explicit selection) */}
             {paymentStructureSelected && form.paymentStructure && milestones.length > 0 && (
-              <div className="p-5 sm:p-6 rounded-2xl bg-zinc-900/80 border border-zinc-800/80 shadow-md space-y-4">
+              <div className="p-5 sm:p-6 rounded-2xl bg-[#1B1B1B] border border-white/75 shadow-md space-y-4">
                 {/* Milestone Card Header */}
                 <div>
                   <h4 className="text-sm font-semibold text-white">Milestone Breakdown</h4>
-                  <p className="text-xs text-zinc-400 mt-0.5">
-                    Total Escrow: <span className="font-semibold text-blue-400 font-mono">{formattedTotalEscrow} USDC</span> across {milestones.length} milestone{milestones.length === 1 ? '' : 's'}.
+                  <p className="text-xs text-[#A3A3A3] mt-0.5">
+                    Total Escrow: <span className="font-semibold text-white font-mono">{formattedTotalEscrow} USDC</span> across {milestones.length} milestone{milestones.length === 1 ? '' : 's'}.
                   </p>
                 </div>
 
@@ -1867,7 +1867,7 @@ function NewDealForm() {
                     return (
                       <div
                         key={idx}
-                        className="rounded-xl border border-zinc-800 bg-zinc-900/50 overflow-hidden transition-colors"
+                        className="rounded-xl border border-white/20 bg-[#252525] overflow-hidden transition-colors"
                       >
                         {/* Collapsed Header Bar */}
                         <div
@@ -1880,9 +1880,9 @@ function NewDealForm() {
                               setExpandedMilestoneIndex(isExpanded ? null : idx);
                             }
                           }}
-                          className="w-full flex items-center justify-between p-3.5 hover:bg-zinc-800/40 cursor-pointer select-none transition-colors"
+                          className="w-full flex items-center justify-between p-3.5 hover:bg-white/5 cursor-pointer select-none transition-colors"
                         >
-                          <span className="text-xs font-semibold text-zinc-200 truncate pr-2">
+                          <span className="text-xs font-semibold text-white truncate pr-2">
                             {displayTitle}
                           </span>
                           <div className="flex items-center gap-2 shrink-0">
@@ -1894,12 +1894,12 @@ function NewDealForm() {
                                   e.stopPropagation();
                                   removeMilestone(idx);
                                 }}
-                                className="text-zinc-500 hover:text-red-400 transition-colors p-1"
+                                className="text-[#A3A3A3] hover:text-red-400 transition-colors p-1"
                               >
                                 <Trash2 size={14} />
                               </button>
                             )}
-                            <div className="text-zinc-400">
+                            <div className="text-[#A3A3A3]">
                               {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                             </div>
                           </div>
@@ -1907,28 +1907,28 @@ function NewDealForm() {
 
                         {/* Expanded State Body */}
                         {isExpanded && (
-                          <div className="p-4 pt-2 border-t border-zinc-800/70 space-y-3">
+                          <div className="p-4 pt-2 border-t border-white/20 space-y-3">
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                               <div className="space-y-1">
-                                <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
+                                <label className="text-[11px] uppercase tracking-wider text-[#A3A3A3] font-semibold block">
                                   Title
                                 </label>
                                 <Input
                                   value={m.title}
                                   onChange={(e) => updateMilestone(idx, 'title', e.target.value)}
                                   placeholder={`Milestone ${idx + 1} Title`}
-                                  className="text-xs bg-zinc-950/40 border-zinc-800 text-white h-9"
+                                  className="text-xs bg-[#1B1B1B] border-white/20 text-white placeholder:text-[#A3A3A3] h-9"
                                 />
                               </div>
                               <div className="space-y-1">
-                                <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
+                                <label className="text-[11px] uppercase tracking-wider text-[#A3A3A3] font-semibold block">
                                   Amount (USDC)
                                 </label>
                                 <Input
                                   value={m.amountUsdc}
                                   onChange={(e) => updateMilestone(idx, 'amountUsdc', e.target.value)}
                                   placeholder="0.00"
-                                  className="text-xs font-mono bg-zinc-950/40 border-zinc-800 text-white h-9"
+                                  className="text-xs font-mono bg-[#1B1B1B] border-white/20 text-white placeholder:text-[#A3A3A3] h-9"
                                   type="number"
                                   step="0.01"
                                   min="0"
@@ -1937,37 +1937,37 @@ function NewDealForm() {
                             </div>
 
                             <div className="space-y-1">
-                              <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
+                              <label className="text-[11px] uppercase tracking-wider text-[#A3A3A3] font-semibold block">
                                 Acceptance Specification
                               </label>
                               <textarea
                                 value={m.description}
                                 onChange={(e) => updateMilestone(idx, 'description', e.target.value)}
                                 placeholder="Specify the work deliverable and acceptance criteria (hashed into specHash)..."
-                                className="w-full h-18 rounded-lg border border-zinc-800 bg-zinc-950/40 p-2.5 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-blue-500/50 resize-none font-sans"
+                                className="w-full h-18 rounded-lg border border-white/20 bg-[#1B1B1B] p-2.5 text-xs text-white placeholder:text-[#A3A3A3] focus:outline-none focus:border-white focus:ring-1 focus:ring-white/40 resize-none font-sans"
                               />
                             </div>
 
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                               <div className="space-y-1">
-                                <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
+                                <label className="text-[11px] uppercase tracking-wider text-[#A3A3A3] font-semibold block">
                                   Work Deadline
                                 </label>
                                 <Input
                                   type="date"
                                   value={m.deadlineDate}
                                   onChange={(e) => updateMilestone(idx, 'deadlineDate', e.target.value)}
-                                  className="text-xs font-mono bg-zinc-950/40 border-zinc-800 text-white h-9"
+                                  className="text-xs font-mono bg-[#1B1B1B] border-white/20 text-white h-9"
                                 />
                               </div>
                               <div className="space-y-1">
-                                <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
+                                <label className="text-[11px] uppercase tracking-wider text-[#A3A3A3] font-semibold block">
                                   Review Window
                                 </label>
                                 <select
                                   value={m.reviewWindowSeconds}
                                   onChange={(e) => updateMilestone(idx, 'reviewWindowSeconds', Number(e.target.value))}
-                                  className="w-full rounded-md border border-zinc-800 bg-zinc-950/40 px-3 text-xs text-white h-9"
+                                  className="w-full rounded-md border border-white/20 bg-[#1B1B1B] px-3 text-xs text-white h-9"
                                 >
                                   <option value={86400}>24 Hours</option>
                                   <option value={259200}>3 Days</option>
@@ -1976,13 +1976,13 @@ function NewDealForm() {
                                 </select>
                               </div>
                               <div className="space-y-1">
-                                <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold block">
+                                <label className="text-[11px] uppercase tracking-wider text-[#A3A3A3] font-semibold block">
                                   Grace Period
                                 </label>
                                 <select
                                   value={m.gracePeriodSeconds}
                                   onChange={(e) => updateMilestone(idx, 'gracePeriodSeconds', Number(e.target.value))}
-                                  className="w-full rounded-md border border-zinc-800 bg-zinc-950/40 px-3 text-xs text-white h-9"
+                                  className="w-full rounded-md border border-white/20 bg-[#1B1B1B] px-3 text-xs text-white h-9"
                                 >
                                   <option value={0}>0 Days</option>
                                   <option value={86400}>1 Day</option>
@@ -2002,9 +2002,9 @@ function NewDealForm() {
                     <button
                       type="button"
                       onClick={addMilestone}
-                      className="w-full flex items-center justify-center gap-2 p-3 rounded-xl border border-dashed border-zinc-700/80 bg-zinc-900/30 hover:border-zinc-500 hover:bg-zinc-800/40 text-xs font-medium text-zinc-300 transition-all cursor-pointer"
+                      className="w-full flex items-center justify-center gap-2 p-3 rounded-xl border border-dashed border-white/30 bg-[#252525] hover:border-white hover:bg-white/10 text-xs font-medium text-white transition-all cursor-pointer"
                     >
-                      <Plus size={15} className="text-blue-400" />
+                      <Plus size={15} className="text-white" />
                       <span>Add Milestone</span>
                     </button>
                   )}
@@ -2031,19 +2031,19 @@ function NewDealForm() {
                 className={cn(
                   'p-5 rounded-2xl border text-left transition-all relative flex flex-col justify-between cursor-pointer space-y-4',
                   form.protectionSelection === 'STANDARD'
-                    ? 'border-blue-500/60 bg-blue-600/10 shadow-sm'
-                    : 'border-zinc-800/80 bg-zinc-900/40 hover:border-zinc-700 hover:bg-zinc-800/30'
+                    ? 'border-white bg-white/10 shadow-sm'
+                    : 'border-white/20 bg-[#252525] hover:border-white/40 hover:bg-white/5'
                 )}
               >
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-semibold text-white">Standard Protection</span>
-                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-zinc-800 text-zinc-300 border border-zinc-700/60 uppercase tracking-wider">
+                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-[#101010] text-[#A3A3A3] border border-white/20 uppercase tracking-wider">
                       Included
                     </span>
                   </div>
 
-                  <p className="text-xs text-zinc-400 leading-relaxed">
+                  <p className="text-xs text-[#A3A3A3] leading-relaxed">
                     Secure escrow, milestone releases and standard dispute resolution.
                   </p>
 
@@ -2053,26 +2053,26 @@ function NewDealForm() {
                       'Milestone-based releases',
                       'Standard dispute resolution',
                     ].map((benefit, i) => (
-                      <div key={i} className="flex items-center gap-2 text-[11px] text-zinc-400">
-                        <Check size={12} className="text-blue-400 shrink-0" />
+                      <div key={i} className="flex items-center gap-2 text-[11px] text-[#A3A3A3]">
+                        <Check size={12} className="text-white shrink-0" />
                         <span>{benefit}</span>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between pt-2 border-t border-zinc-800/60">
-                  <span className="text-[11px] text-zinc-500 font-medium">Core Protection</span>
+                <div className="flex items-center justify-between pt-2 border-t border-white/20">
+                  <span className="text-[11px] text-[#A3A3A3] font-medium">Core Protection</span>
                   <div
                     className={cn(
                       'w-4 h-4 rounded-full flex items-center justify-center transition-all',
                       form.protectionSelection === 'STANDARD'
-                        ? 'border-2 border-blue-500 bg-blue-500 text-white'
-                        : 'border border-zinc-600 bg-transparent'
+                        ? 'border-2 border-white bg-white text-[#101010]'
+                        : 'border border-white/40 bg-transparent'
                     )}
                   >
                     {form.protectionSelection === 'STANDARD' && (
-                      <div className="w-1.5 h-1.5 rounded-full bg-white" />
+                      <div className="w-1.5 h-1.5 rounded-full bg-[#101010]" />
                     )}
                   </div>
                 </div>
@@ -2087,8 +2087,8 @@ function NewDealForm() {
                 className={cn(
                   'p-5 rounded-2xl border text-left transition-all relative flex flex-col justify-between cursor-pointer space-y-4',
                   form.protectionSelection === 'PREMIUM'
-                    ? 'border-blue-500/60 bg-blue-600/10 shadow-sm'
-                    : 'border-zinc-800/80 bg-zinc-900/40 hover:border-zinc-700 hover:bg-zinc-800/30'
+                    ? 'border-white bg-white/10 shadow-sm'
+                    : 'border-white/20 bg-[#252525] hover:border-white/40 hover:bg-white/5'
                 )}
               >
                 <div className="space-y-3">
@@ -2111,7 +2111,7 @@ function NewDealForm() {
                             setShowPremiumInfo((prev) => !prev);
                           }
                         }}
-                        className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 hover:bg-zinc-700/80 transition-colors focus:outline-none focus:ring-1 focus:ring-blue-400 cursor-pointer"
+                        className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-white/20 bg-[#101010] text-[#A3A3A3] hover:text-white hover:border-white/40 transition-colors focus:outline-none focus:ring-1 focus:ring-white/40 cursor-pointer"
                       >
                         <HelpCircle size={10} className="shrink-0" />
                       </span>
@@ -2119,10 +2119,10 @@ function NewDealForm() {
                       {showPremiumInfo && (
                         <div
                           onClick={(e) => e.stopPropagation()}
-                          className="absolute left-0 top-full mt-2 w-72 sm:w-80 max-w-[calc(100vw-3rem)] rounded-xl bg-zinc-900 border border-zinc-700/80 p-3.5 shadow-2xl shadow-black/80 z-30 cursor-default text-left space-y-2.5"
+                          className="absolute left-0 top-full mt-2 w-72 sm:w-80 max-w-[calc(100vw-3rem)] rounded-xl bg-[#1B1B1B] border border-white/75 p-3.5 shadow-2xl shadow-black/80 z-30 cursor-default text-left space-y-2.5"
                         >
-                          <div className="flex items-center justify-between pb-1.5 border-b border-zinc-800">
-                            <span className="text-xs font-semibold text-zinc-200">
+                          <div className="flex items-center justify-between pb-1.5 border-b border-white/20">
+                            <span className="text-xs font-semibold text-white">
                               How Premium Protection works
                             </span>
                             <span
@@ -2140,7 +2140,7 @@ function NewDealForm() {
                                   setShowPremiumInfo(false);
                                 }
                               }}
-                              className="text-zinc-500 hover:text-zinc-300 transition-colors p-0.5 rounded cursor-pointer"
+                              className="text-[#A3A3A3] hover:text-white transition-colors p-0.5 rounded cursor-pointer"
                             >
                               <X size={12} />
                             </span>
@@ -2149,40 +2149,40 @@ function NewDealForm() {
                           <div className="space-y-2 text-xs">
                             <div className="space-y-0.5">
                               <div className="font-medium text-white flex items-center gap-1.5 text-[11px]">
-                                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
+                                <span className="w-1.5 h-1.5 rounded-full bg-white shrink-0" />
                                 Coverage
                               </div>
-                              <p className="text-[11px] text-zinc-400 leading-relaxed pl-3">
+                              <p className="text-[11px] text-[#A3A3A3] leading-relaxed pl-3">
                                 Up to 20% additional recovery on eligible failed milestones.
                               </p>
                             </div>
 
                             <div className="space-y-0.5">
                               <div className="font-medium text-white flex items-center gap-1.5 text-[11px]">
-                                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
+                                <span className="w-1.5 h-1.5 rounded-full bg-white shrink-0" />
                                 Claim
                               </div>
-                              <p className="text-[11px] text-zinc-400 leading-relaxed pl-3">
+                              <p className="text-[11px] text-[#A3A3A3] leading-relaxed pl-3">
                                 Submit a claim after an eligible milestone failure.
                               </p>
                             </div>
 
                             <div className="space-y-0.5">
                               <div className="font-medium text-white flex items-center gap-1.5 text-[11px]">
-                                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
+                                <span className="w-1.5 h-1.5 rounded-full bg-white shrink-0" />
                                 Review
                               </div>
-                              <p className="text-[11px] text-zinc-400 leading-relaxed pl-3">
+                              <p className="text-[11px] text-[#A3A3A3] leading-relaxed pl-3">
                                 Your protection claim is reviewed before payout.
                               </p>
                             </div>
 
                             <div className="space-y-0.5">
                               <div className="font-medium text-white flex items-center gap-1.5 text-[11px]">
-                                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
+                                <span className="w-1.5 h-1.5 rounded-full bg-white shrink-0" />
                                 Payout
                               </div>
-                              <p className="text-[11px] text-zinc-400 leading-relaxed pl-3">
+                              <p className="text-[11px] text-[#A3A3A3] leading-relaxed pl-3">
                                 Approved claims are paid separately from your original deal escrow.
                               </p>
                             </div>
@@ -2191,12 +2191,12 @@ function NewDealForm() {
                       )}
                     </div>
 
-                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-500/20 text-blue-300 border border-blue-500/40 uppercase tracking-wider">
+                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-white/10 text-white border border-white/30 uppercase tracking-wider">
                       Premium
                     </span>
                   </div>
 
-                  <p className="text-xs text-zinc-300 leading-relaxed font-medium">
+                  <p className="text-xs text-white leading-relaxed font-medium">
                     Get up to 20% additional recovery coverage when an eligible milestone fails.
                   </p>
 
@@ -2206,30 +2206,30 @@ function NewDealForm() {
                       'Priority dispute review',
                       'Replacement freelancer assistance',
                     ].map((benefit, i) => (
-                      <div key={i} className="flex items-center gap-2 text-[11px] text-zinc-400">
-                        <Check size={12} className="text-blue-400 shrink-0" />
+                      <div key={i} className="flex items-center gap-2 text-[11px] text-[#A3A3A3]">
+                        <Check size={12} className="text-white shrink-0" />
                         <span>{benefit}</span>
                       </div>
                     ))}
                   </div>
 
-                  <div className="text-[11px] text-zinc-500 italic pt-1">
+                  <div className="text-[11px] text-[#A3A3A3]/70 italic pt-1">
                     Premium fee shown before activation
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between pt-2 border-t border-zinc-800/60">
-                  <span className="text-[11px] text-zinc-500 font-medium">Enhanced Recovery</span>
+                <div className="flex items-center justify-between pt-2 border-t border-white/20">
+                  <span className="text-[11px] text-[#A3A3A3] font-medium">Enhanced Recovery</span>
                   <div
                     className={cn(
                       'w-4 h-4 rounded-full flex items-center justify-center transition-all',
                       form.protectionSelection === 'PREMIUM'
-                        ? 'border-2 border-blue-500 bg-blue-500 text-white'
-                        : 'border border-zinc-600 bg-transparent'
+                        ? 'border-2 border-white bg-white text-[#101010]'
+                        : 'border border-white/40 bg-transparent'
                     )}
                   >
                     {form.protectionSelection === 'PREMIUM' && (
-                      <div className="w-1.5 h-1.5 rounded-full bg-white" />
+                      <div className="w-1.5 h-1.5 rounded-full bg-[#101010]" />
                     )}
                   </div>
                 </div>
@@ -2287,12 +2287,12 @@ function NewDealForm() {
               >
                 {/* WIZARD COLUMN */}
                 <div className={cn('lg:col-span-8 space-y-6', (step === 0 || step === 1) ? '' : 'lg:self-start')}>
-                <div className="p-6 rounded-2xl bg-zinc-900/70 border border-zinc-800/80 shadow-2xl space-y-6">
+                <div className="p-6 rounded-2xl bg-[#1B1B1B] border border-white/75 shadow-2xl space-y-6">
                   {handoffLoading ? (
                     <div className="flex flex-col items-center justify-center py-16 text-center space-y-3">
-                      <Loader2 size={24} className="animate-spin text-blue-400" />
-                      <p className="text-sm font-medium text-zinc-300">Fetching negotiated deal terms...</p>
-                      <p className="text-xs text-zinc-500">Loading your draft from AI Negotiator</p>
+                      <Loader2 size={24} className="animate-spin text-white" />
+                      <p className="text-sm font-medium text-white">Fetching negotiated deal terms...</p>
+                      <p className="text-xs text-[#A3A3A3]">Loading your draft from AI Negotiator</p>
                     </div>
                   ) : handoffError ? (
                     <div className="py-8 text-center space-y-4">
@@ -2302,7 +2302,7 @@ function NewDealForm() {
                       <Button
                         variant="outline"
                         onClick={() => router.push('/negotiator')}
-                        className="gap-2 border-zinc-700/60 bg-zinc-900/40 text-zinc-300"
+                        className="gap-2 border-white/20 bg-[#252525] text-white hover:bg-white/10"
                       >
                         <ArrowLeft size={16} /> Back to AI Negotiator
                       </Button>
@@ -2319,19 +2319,19 @@ function NewDealForm() {
                         )}
 
                         {step < 7 && (
-                          <div className="flex items-center justify-between mt-8 pt-4 border-t border-zinc-800/60">
+                          <div className="flex items-center justify-between mt-8 pt-4 border-t border-white/20">
                             <Button
                               variant="outline"
                               onClick={handlePrevious}
                               disabled={step === 0 || !!isReviewTransitioning}
-                              className="gap-2 border-zinc-700/60 bg-zinc-900/40 text-zinc-300 hover:bg-zinc-800/60 hover:text-white"
+                              className="gap-2 border-white/20 bg-[#252525] text-white hover:bg-white/10"
                             >
                               <ArrowLeft size={16} /> Previous
                             </Button>
                             <Button
                               onClick={step === 6 ? handleContinueToReview : () => setStep(step + 1)}
                               disabled={!canProceed() || !!isReviewTransitioning}
-                              className="gap-2 bg-blue-600 hover:bg-blue-500 text-white"
+                              className="gap-2 bg-white text-[#101010] hover:bg-neutral-200 font-semibold"
                             >
                               {step === 6 ? (
                                 <>
@@ -2563,7 +2563,7 @@ function NewDealForm() {
                           variant="outline"
                           onClick={handlePreviousFromReview}
                           disabled={signing || !!isReviewTransitioning}
-                          className="gap-2 border-zinc-700 bg-zinc-800/40 text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                          className="gap-2 border-white/20 bg-[#252525] text-white hover:bg-white/10"
                         >
                           <ArrowLeft size={16} /> Previous
                         </Button>
@@ -2571,11 +2571,11 @@ function NewDealForm() {
                         <Button
                           onClick={handleSignAndSendProposal}
                           disabled={signing || !canProceed() || !!isReviewTransitioning}
-                          className="gap-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold shadow-lg shadow-blue-900/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="gap-2 bg-white text-[#101010] hover:bg-neutral-200 font-semibold shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {signing ? (
                             <>
-                              <Loader2 size={16} className="animate-spin" /> Signing & Sending...
+                              <Loader2 size={16} className="animate-spin text-[#101010]" /> Signing & Sending...
                             </>
                           ) : (
                             <>
@@ -2601,11 +2601,11 @@ function NewDealForm() {
           collapsed ? 'left-0 lg:left-[68px]' : 'left-0 lg:left-[240px]'
         )}
       >
-        <div className="pointer-events-auto p-4 rounded-xl bg-zinc-900/90 backdrop-blur-md border border-zinc-800/90 shadow-2xl max-w-2xl w-full">
+        <div className="pointer-events-auto p-4 rounded-xl bg-[#1B1B1B]/95 backdrop-blur-md border border-white/75 shadow-2xl max-w-2xl w-full">
           <div className="relative flex items-center justify-between">
-            <div className="absolute top-1/2 left-4 right-4 h-0.5 -translate-y-1/2 bg-zinc-800/80 z-0" />
+            <div className="absolute top-1/2 left-4 right-4 h-0.5 -translate-y-1/2 bg-white/15 z-0" />
             <div
-              className="absolute top-1/2 left-4 h-0.5 -translate-y-1/2 bg-blue-500 transition-all duration-300 z-0"
+              className="absolute top-1/2 left-4 h-0.5 -translate-y-1/2 bg-white transition-all duration-300 z-0"
               style={{ width: `calc(${(step / (steps.length - 1)) * 100}% - 1rem)` }}
             />
             {steps.map((_, i) => {
@@ -2613,14 +2613,14 @@ function NewDealForm() {
               const isActive = i === step;
 
               return (
-                <div key={i} className="relative z-10 flex items-center justify-center shrink-0 rounded-full bg-zinc-900">
+                <div key={i} className="relative z-10 flex items-center justify-center shrink-0 rounded-full bg-[#1B1B1B]">
                   <div
                     className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold transition-all duration-200 ${
                       isActive
-                        ? 'bg-blue-600 text-white ring-4 ring-blue-500/20 border border-blue-400'
+                        ? 'bg-white text-[#101010] ring-4 ring-white/20 border border-white font-bold'
                         : isCompleted
-                        ? 'bg-blue-500/20 text-blue-400 border border-blue-500/50'
-                        : 'bg-zinc-900 text-zinc-500 border border-zinc-700/60'
+                        ? 'bg-white/20 text-white border border-white/40'
+                        : 'bg-[#252525] text-[#A3A3A3] border border-white/20'
                     }`}
                   >
                     {isCompleted ? <Check size={13} /> : i + 1}
