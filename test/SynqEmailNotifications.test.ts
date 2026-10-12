@@ -57,6 +57,8 @@ describe('SYNQ — B.12.2 / B.12.2.3 Hardened Notification Security & Email UX S
     subRepo = new InMemoryMilestoneSubmissionRepository();
     setMilestoneSubmissionRepository(subRepo);
 
+    process.env.NOTIFICATION_LIVE_START_BLOCK = '1';
+
     // Set test user lookup for this test run
     db.setTestUserLookup(async (id: string) => {
       return inMemoryUsers.get(id.toLowerCase()) || null;
@@ -91,6 +93,7 @@ describe('SYNQ — B.12.2 / B.12.2.3 Hardened Notification Security & Email UX S
   });
 
   afterEach(() => {
+    delete process.env.NOTIFICATION_LIVE_START_BLOCK;
     resetDealProposalRepository();
     resetNotificationsRepository();
     resetMilestoneSubmissionRepository();
@@ -127,6 +130,7 @@ describe('SYNQ — B.12.2 / B.12.2.3 Hardened Notification Security & Email UX S
       milestones: milestones || [{ amount: '1000', title: 'Milestone 1', description: 'MVP' } as any],
       dealAddress,
       cachedStatus: status,
+      deploymentBlock: 100n,
     });
   }
 

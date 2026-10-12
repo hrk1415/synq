@@ -605,6 +605,7 @@ export async function reconcileMilestoneSubmission(params: {
   repo?: IMilestoneSubmissionRepository;
 }): Promise<{
   submission: MilestoneSubmissionRow;
+  blockNumber?: bigint;
 }> {
   const { dealAddress, milestoneId, version, authWallet, txHash } = params;
   const client = params.publicClient ?? sepoliaPublicClient;
@@ -650,8 +651,12 @@ export async function reconcileMilestoneSubmission(params: {
 
   // 2. If txHash provided, verify receipt and event
   let verifiedTxHash = txHash?.toLowerCase();
+  let verifiedReceiptBlockNumber: bigint | undefined = undefined;
   if (txHash && typeof (client as any).waitForTransactionReceipt === 'function') {
     const receipt = await (client as any).waitForTransactionReceipt({ hash: txHash as `0x${string}` });
+    if (receipt?.blockNumber !== undefined) {
+      verifiedReceiptBlockNumber = BigInt(receipt.blockNumber);
+    }
     const eventCheck = verifySubmitWorkReceipt(
       receipt,
       normalizedDeal,
@@ -697,7 +702,7 @@ export async function reconcileMilestoneSubmission(params: {
         'Submission already confirmed with a different transaction hash'
       );
     }
-    return { submission: existing };
+    return { submission: existing, blockNumber: verifiedReceiptBlockNumber };
   }
 
   // Transition to confirmed
@@ -711,5 +716,5 @@ export async function reconcileMilestoneSubmission(params: {
     updatedAt: new Date(),
   });
 
-  return { submission: confirmed };
+  return { submission: confirmed, blockNumber: verifiedReceiptBlockNumber };
 }

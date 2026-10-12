@@ -87,6 +87,7 @@ describe('SYNQ — B.12.3.64: V2 Deal Lifecycle Automatic Notifications', () => 
   let sampleProposal: DealProposalRow;
 
   beforeEach(async () => {
+    process.env.NOTIFICATION_LIVE_START_BLOCK = '1';
     sellerToken = signToken({ userId: WALLET_SELLER, walletAddress: WALLET_SELLER });
     buyerToken = signToken({ userId: WALLET_BUYER, walletAddress: WALLET_BUYER });
 
@@ -169,12 +170,14 @@ describe('SYNQ — B.12.3.64: V2 Deal Lifecycle Automatic Notifications', () => 
       ],
       dealAddress: DEAL_ADDRESS,
       cachedStatus: 'PENDING',
+      deploymentBlock: 100n,
       createdAt: new Date(),
       updatedAt: new Date(),
     } as any as DealProposalRow;
   });
 
   afterEach(() => {
+    delete process.env.NOTIFICATION_LIVE_START_BLOCK;
     resetDealProposalRepository();
     resetNotificationsRepository();
     resetDealOutboxRepository();
@@ -407,6 +410,7 @@ describe('SYNQ — B.12.3.64: V2 Deal Lifecycle Automatic Notifications', () => 
         dealTitle: 'Full Real Deal Cycle',
         milestoneAmount: '1000000', // 1 USDC
         evidenceSummary: 'Finished smart contract implementation',
+        blockNumber: 100n,
       });
 
       assert.equal(res.dispatched, true);
@@ -429,6 +433,7 @@ describe('SYNQ — B.12.3.64: V2 Deal Lifecycle Automatic Notifications', () => 
         clientWallet: WALLET_BUYER,
         dealTitle: 'Full Real Deal Cycle',
         milestoneAmount: '1000000',
+        blockNumber: 100n,
       });
 
       assert.equal(res.dispatched, false);
@@ -444,6 +449,7 @@ describe('SYNQ — B.12.3.64: V2 Deal Lifecycle Automatic Notifications', () => 
         clientWallet: WALLET_BUYER,
         dealTitle: 'Full Real Deal Cycle',
         milestoneAmount: '1000000',
+        blockNumber: 100n,
       });
       assert.equal(capturedEmails.length, 1);
 
@@ -454,6 +460,7 @@ describe('SYNQ — B.12.3.64: V2 Deal Lifecycle Automatic Notifications', () => 
         clientWallet: WALLET_BUYER,
         dealTitle: 'Full Real Deal Cycle',
         milestoneAmount: '1000000',
+        blockNumber: 100n,
       });
       assert.equal(res2.skipped, true);
       assert.equal(capturedEmails.length, 1);
@@ -471,6 +478,7 @@ describe('SYNQ — B.12.3.64: V2 Deal Lifecycle Automatic Notifications', () => 
         freelancerWallet: WALLET_SELLER,
         dealTitle: 'Full Real Deal Cycle',
         milestoneAmount: '1000000', // 1 USDC
+        blockNumber: 100n,
       });
 
       assert.equal(res.dispatched, true);
@@ -491,6 +499,7 @@ describe('SYNQ — B.12.3.64: V2 Deal Lifecycle Automatic Notifications', () => 
         freelancerWallet: WALLET_SELLER,
         dealTitle: 'Full Real Deal Cycle',
         milestoneAmount: '1000000',
+        blockNumber: 100n,
       });
 
       assert.equal(res.dispatched, false);
@@ -510,6 +519,7 @@ describe('SYNQ — B.12.3.64: V2 Deal Lifecycle Automatic Notifications', () => 
         freelancerWallet: WALLET_SELLER,
         dealTitle: 'Full Real Deal Cycle',
         totalAmount: '1000000', // 1 USDC
+        blockNumber: 100n,
       });
 
       assert.equal(res.buyer.dispatched, true);
@@ -548,6 +558,7 @@ describe('SYNQ — B.12.3.64: V2 Deal Lifecycle Automatic Notifications', () => 
         freelancerWallet: WALLET_SELLER,
         dealTitle: 'Full Real Deal Cycle',
         totalAmount: '1000000',
+        blockNumber: 100n,
       });
 
       assert.equal(res.buyer.skipped, true);
@@ -586,6 +597,7 @@ describe('SYNQ — B.12.3.64: V2 Deal Lifecycle Automatic Notifications', () => 
         milestoneIndex: 0,
         version: 1,
         clientWallet: WALLET_BUYER,
+        blockNumber: 100n,
       });
       assert.equal(res3.dispatched, false);
       assert.ok(res3.reason?.includes('Connection refused'));

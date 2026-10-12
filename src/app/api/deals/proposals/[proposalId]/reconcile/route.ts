@@ -54,7 +54,7 @@ export async function POST(req: NextRequest, context: RouteContext) {
     if (result.status === 'ACCEPTED' && !result.alreadyReconciled) {
       try {
         const { dispatchProposalAcceptedNotification } = await import('@/lib/deals/deal-lifecycle-notifications');
-        await dispatchProposalAcceptedNotification(result.proposal, result.dealAddress, txHash.trim());
+        await dispatchProposalAcceptedNotification(result.proposal, result.dealAddress, txHash.trim(), result.blockNumber);
       } catch (notifErr: any) {
         console.warn('[POST /api/deals/proposals/reconcile] deal_confirmed dispatch warning:', notifErr?.message || notifErr);
       }

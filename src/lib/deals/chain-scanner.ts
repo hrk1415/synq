@@ -30,6 +30,7 @@ import {
 } from './chain-sync-db';
 import {
   type IDealOutboxRepository,
+  type OutboxStatus,
   getDealOutboxRepository,
   deriveOutboxEventId,
 } from './outbox-db';
@@ -1431,6 +1432,16 @@ export function decodeDealContractLog(params: {
   return [];
 }
 
+import {
+  type NotificationCutoffConfig,
+  parseNotificationLiveStartBlock,
+} from './notification-freshness';
+
+export {
+  type NotificationCutoffConfig,
+  parseNotificationLiveStartBlock,
+};
+
 /**
  * Persists decoded event into Outbox without pre-claiming delivery.
  * Canonical implementation used across live scanner and historical replay.
@@ -1438,7 +1449,9 @@ export function decodeDealContractLog(params: {
 export async function persistDecodedEventToOutbox(
   outboxRepo: IDealOutboxRepository,
   event: DecodedDealEvent,
+  options?: { isHistoricalReplay?: boolean },
 ): Promise<'enqueued' | 'duplicate'> {
+  // Canonical identity matches direct SMTP delivery without log/tx noise
   const notifKey = generateCanonicalDealEventKey({
     chainId: event.chainId,
     dealId: event.contractAddress,
@@ -1449,7 +1462,7 @@ export async function persistDecodedEventToOutbox(
     txHash: event.transactionHash,
     logIndex: event.logIndex,
     recipientRole: event.recipientRole,
-    includeLogIndex: true,
+    includeLogIndex: false,
   });
 
   // Stage into deal_events_outbox for asynchronous, reliable email dispatch
@@ -1461,6 +1474,20 @@ export async function persistDecodedEventToOutbox(
     actionId: `${event.transactionHash}:${event.logIndex}`,
   });
 
+  const isHistoricalReplay = options?.isHistoricalReplay === true;
+  const cutoff = parseNotificationLiveStartBlock(process.env.NOTIFICATION_LIVE_START_BLOCK);
+
+  let status: OutboxStatus | undefined = undefined;
+  let lastError: string | undefined = undefined;
+
+  if (isHistoricalReplay) {
+    status = 'skipped';
+    lastError = 'Historical replay event; email dispatch suppressed';
+  } else if (cutoff.configured && cutoff.startBlock !== undefined && event.blockNumber < cutoff.startBlock) {
+    status = 'skipped';
+    lastError = `Historical on-chain event prior to live start block (${cutoff.startBlock})`;
+  }
+
   return outboxRepo.enqueue({
     id: outboxId,
     chainId: event.chainId,
@@ -1471,6 +1498,8 @@ export async function persistDecodedEventToOutbox(
     blockNumber: event.blockNumber,
     txHash: event.transactionHash,
     logIndex: event.logIndex,
+    status,
+    lastError,
     payload: {
       dealId: event.contractAddress,
       event: event.event,
@@ -1510,8 +1539,8 @@ function decodeSynqDealEvent(
         event: 'deal_confirmed',
         buyerWallet: buyer,
         sellerWallet: seller,
-        recipientWallet: seller,
-        recipientRole: 'seller',
+        recipientWallet: buyer,
+        recipientRole: 'buyer',
         amount: args.totalEscrow ? args.totalEscrow.toString() : undefined,
       },
     ];

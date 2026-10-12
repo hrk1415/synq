@@ -58,6 +58,14 @@ export async function POST(req: NextRequest, context: RouteContext) {
       const milestoneIndex = result.authorization.milestoneId;
       const dealData = await readStandardV2DealData(dealAddress as `0x${string}`, sepoliaPublicClient).catch(() => null);
       if (dealData) {
+        let receiptBlockNumber: bigint | undefined;
+        if (result.executionTxHash) {
+          try {
+            const r = await sepoliaPublicClient.getTransactionReceipt({ hash: result.executionTxHash as `0x${string}` });
+            if (r && r.blockNumber !== undefined) receiptBlockNumber = BigInt(r.blockNumber);
+          } catch {}
+        }
+
         const outboxRepo = getDealOutboxRepository();
         for (const recipient of [dealData.client, dealData.freelancer]) {
           const eventId = `outbox:${SEPOLIA_CHAIN_ID}:${dealAddress.toLowerCase()}:resolution_finalized:${recipient.toLowerCase()}:${authId}`;
@@ -67,11 +75,13 @@ export async function POST(req: NextRequest, context: RouteContext) {
             dealId: dealAddress,
             event: 'resolution_finalized',
             recipientWallet: recipient,
+            blockNumber: receiptBlockNumber,
             payload: {
               dealId: dealAddress,
               milestoneIndex,
               authorizationId: authId,
               txHash: result.executionTxHash,
+              blockNumber: receiptBlockNumber ? Number(receiptBlockNumber) : undefined,
             },
           });
         }

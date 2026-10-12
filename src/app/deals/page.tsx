@@ -86,7 +86,7 @@ export default function DealsPage() {
     async (force = false) => {
       const targetAddress = effectiveAddress || address;
       if (!targetAddress) {
-        setDeals([]);
+        setDeals((prev) => (prev.length === 0 ? prev : []));
         setIsLoading(false);
         setLoadError(null);
         lastFetchedAddressRef.current = null;
@@ -114,7 +114,7 @@ export default function DealsPage() {
         const uniqueAddresses = mergeAndDeduplicateDealAddresses(clientDeals, freelancerDeals);
 
         if (uniqueAddresses.length === 0) {
-          setDeals([]);
+          setDeals((prev) => (prev.length === 0 ? prev : []));
           lastFetchedAddressRef.current = targetAddress.toLowerCase();
           return;
         }
@@ -163,7 +163,7 @@ export default function DealsPage() {
     if (!mounted) return;
     if (effectiveAddress && effectiveAddress.toLowerCase() !== lastFetchedAddressRef.current) {
       loadDeals();
-    } else if (!effectiveAddress) {
+    } else if (!effectiveAddress && lastFetchedAddressRef.current !== null) {
       loadDeals();
     }
   }, [effectiveAddress, mounted, loadDeals]);

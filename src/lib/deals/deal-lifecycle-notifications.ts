@@ -31,10 +31,12 @@ import {
 import {
   getNotificationsRepository,
   generateCanonicalDealEventKey,
+  getEquivalentNotificationKeys,
   type NotificationClaimResult,
 } from '@/lib/deals/notifications-db';
 import { getDealOutboxRepository, deriveOutboxEventId } from '@/lib/deals/outbox-db';
 import { isNotificationAllowed } from '@/lib/deals/notification-preferences-db';
+import { evaluateNotificationFreshness } from '@/lib/deals/notification-freshness';
 import type { DealProposalRow } from '@/lib/deals/proposals-db';
 import { normalizeWallet } from '@/lib/utils';
 
@@ -146,12 +148,14 @@ export async function dispatchProposalAcceptedNotification(
   proposal: DealProposalRow,
   dealAddress?: string,
   txHash?: string,
+  blockNumber?: bigint | number | string,
 ): Promise<LifecycleNotificationResult> {
   const event = 'deal_confirmed';
   const recipientWallet = normalizeWallet(proposal.clientWallet);
   const freelancerWallet = normalizeWallet(proposal.freelancerWallet);
   const chainId = proposal.chainId || 11155111;
   const targetDeal = (dealAddress || proposal.dealAddress || proposal.proposalId).toLowerCase();
+  const effectiveBlock = blockNumber ?? proposal.deploymentBlock;
 
   try {
     const notifRepo = getNotificationsRepository();
@@ -163,6 +167,45 @@ export async function dispatchProposalAcceptedNotification(
       recipientRole: 'buyer',
     });
 
+    // Enforce Shared Freshness Guard (Fresh Notifications Only policy)
+    const freshness = evaluateNotificationFreshness({
+      event,
+      origin: 'on_chain',
+      blockNumber: effectiveBlock,
+      txHash,
+    });
+
+    if (!freshness.eligible) {
+      if (freshness.reason === 'historical') {
+        try {
+          const claim = await notifRepo.claimPending(
+            eventKey,
+            { dealId: targetDeal, event, recipientWallet },
+            { fenced: true },
+          );
+          if (claim && typeof claim === 'object' && claim.claimToken) {
+            await notifRepo.markSkipped(eventKey, freshness.message, claim.claimToken);
+          }
+        } catch {}
+      }
+      return {
+        event,
+        recipientWallet,
+        dispatched: false,
+        skipped: true,
+        reason: freshness.message,
+      };
+    }
+
+    const fallbackKeys = getEquivalentNotificationKeys({
+      chainId,
+      dealId: targetDeal,
+      contractAddress: dealAddress || proposal.dealAddress || undefined,
+      event,
+      txHash,
+      recipientRole: 'buyer',
+    });
+
     const claim: NotificationClaimResult = await notifRepo.claimPending(
       eventKey,
       {
@@ -170,7 +213,7 @@ export async function dispatchProposalAcceptedNotification(
         event,
         recipientWallet,
       },
-      { fenced: true },
+      { fenced: true, fallbackKeys },
     );
 
     if (claim.status === 'duplicate_delivered' || String(claim) === 'duplicate_delivered') {
@@ -234,6 +277,7 @@ export async function dispatchWorkSubmittedNotification(params: {
   milestoneAmount?: string | bigint;
   evidenceSummary?: string;
   txHash?: string;
+  blockNumber?: bigint | number | string;
 }): Promise<LifecycleNotificationResult> {
   const event = 'work_submitted';
   const recipientWallet = normalizeWallet(params.clientWallet);
@@ -253,6 +297,47 @@ export async function dispatchWorkSubmittedNotification(params: {
       recipientRole: 'buyer',
     });
 
+    // Enforce Shared Freshness Guard (Fresh Notifications Only policy)
+    const freshness = evaluateNotificationFreshness({
+      event,
+      origin: 'on_chain',
+      blockNumber: params.blockNumber,
+      txHash: params.txHash,
+    });
+
+    if (!freshness.eligible) {
+      if (freshness.reason === 'historical') {
+        try {
+          const claim = await notifRepo.claimPending(
+            eventKey,
+            { dealId, event, recipientWallet },
+            { fenced: true },
+          );
+          if (claim && typeof claim === 'object' && claim.claimToken) {
+            await notifRepo.markSkipped(eventKey, freshness.message, claim.claimToken);
+          }
+        } catch {}
+      }
+      return {
+        event,
+        recipientWallet,
+        dispatched: false,
+        skipped: true,
+        reason: freshness.message,
+      };
+    }
+
+    const fallbackKeys = getEquivalentNotificationKeys({
+      chainId,
+      dealId,
+      contractAddress: params.dealAddress,
+      event,
+      milestoneIndex: params.milestoneIndex,
+      submissionVersion: params.version,
+      txHash: params.txHash,
+      recipientRole: 'buyer',
+    });
+
     const claim: NotificationClaimResult = await notifRepo.claimPending(
       eventKey,
       {
@@ -260,7 +345,7 @@ export async function dispatchWorkSubmittedNotification(params: {
         event,
         recipientWallet,
       },
-      { fenced: true },
+      { fenced: true, fallbackKeys },
     );
 
     if (claim.status === 'duplicate_delivered' || String(claim) === 'duplicate_delivered') {
@@ -324,6 +409,7 @@ export async function dispatchPaymentReleasedNotification(params: {
   dealTitle?: string;
   milestoneAmount?: string | bigint;
   txHash?: string;
+  blockNumber?: bigint | number | string;
 }): Promise<LifecycleNotificationResult> {
   const event = 'payment_released';
   const recipientWallet = normalizeWallet(params.freelancerWallet);
@@ -342,6 +428,46 @@ export async function dispatchPaymentReleasedNotification(params: {
       recipientRole: 'seller',
     });
 
+    // Enforce Shared Freshness Guard (Fresh Notifications Only policy)
+    const freshness = evaluateNotificationFreshness({
+      event,
+      origin: 'on_chain',
+      blockNumber: params.blockNumber,
+      txHash: params.txHash,
+    });
+
+    if (!freshness.eligible) {
+      if (freshness.reason === 'historical') {
+        try {
+          const claim = await notifRepo.claimPending(
+            eventKey,
+            { dealId, event, recipientWallet },
+            { fenced: true },
+          );
+          if (claim && typeof claim === 'object' && claim.claimToken) {
+            await notifRepo.markSkipped(eventKey, freshness.message, claim.claimToken);
+          }
+        } catch {}
+      }
+      return {
+        event,
+        recipientWallet,
+        dispatched: false,
+        skipped: true,
+        reason: freshness.message,
+      };
+    }
+
+    const fallbackKeys = getEquivalentNotificationKeys({
+      chainId,
+      dealId,
+      contractAddress: params.dealAddress,
+      event,
+      milestoneIndex: params.milestoneIndex,
+      txHash: params.txHash,
+      recipientRole: 'seller',
+    });
+
     const claim: NotificationClaimResult = await notifRepo.claimPending(
       eventKey,
       {
@@ -349,7 +475,7 @@ export async function dispatchPaymentReleasedNotification(params: {
         event,
         recipientWallet,
       },
-      { fenced: true },
+      { fenced: true, fallbackKeys },
     );
 
     if (claim.status === 'duplicate_delivered' || String(claim) === 'duplicate_delivered') {
@@ -412,6 +538,7 @@ export async function dispatchDealCompletedNotifications(params: {
   dealTitle?: string;
   totalAmount?: string | bigint;
   txHash?: string;
+  blockNumber?: bigint | number | string;
 }): Promise<{ buyer: LifecycleNotificationResult; seller: LifecycleNotificationResult }> {
   const chainId = 11155111;
   const dealId = params.dealAddress.toLowerCase();
@@ -419,6 +546,35 @@ export async function dispatchDealCompletedNotifications(params: {
   const freelancerWallet = normalizeWallet(params.freelancerWallet);
   const displayAmount = params.totalAmount !== undefined ? formatDealAmount(params.totalAmount) : '';
   const notifRepo = getNotificationsRepository();
+
+  // Enforce Shared Freshness Guard (Fresh Notifications Only policy)
+  const freshness = evaluateNotificationFreshness({
+    event: 'deal_completed',
+    origin: 'on_chain',
+    blockNumber: params.blockNumber,
+    txHash: params.txHash,
+  });
+
+  if (!freshness.eligible) {
+    if (freshness.reason === 'historical') {
+      try {
+        const buyerKey = generateCanonicalDealEventKey({ chainId, dealId, contractAddress: params.dealAddress, event: 'deal_completed', recipientRole: 'buyer' });
+        const sellerKey = generateCanonicalDealEventKey({ chainId, dealId, contractAddress: params.dealAddress, event: 'deal_completed_seller', recipientRole: 'seller' });
+        const claimBuyer = await notifRepo.claimPending(buyerKey, { dealId, event: 'deal_completed', recipientWallet: clientWallet }, { fenced: true });
+        if (claimBuyer && typeof claimBuyer === 'object' && claimBuyer.claimToken) {
+          await notifRepo.markSkipped(buyerKey, freshness.message, claimBuyer.claimToken);
+        }
+        const claimSeller = await notifRepo.claimPending(sellerKey, { dealId, event: 'deal_completed_seller', recipientWallet: freelancerWallet }, { fenced: true });
+        if (claimSeller && typeof claimSeller === 'object' && claimSeller.claimToken) {
+          await notifRepo.markSkipped(sellerKey, freshness.message, claimSeller.claimToken);
+        }
+      } catch {}
+    }
+    return {
+      buyer: { event: 'deal_completed', recipientWallet: clientWallet, dispatched: false, skipped: true, reason: freshness.message },
+      seller: { event: 'deal_completed_seller', recipientWallet: freelancerWallet, dispatched: false, skipped: true, reason: freshness.message },
+    };
+  }
 
   // 5a. Buyer Notification (deal_completed)
   let buyerRes: LifecycleNotificationResult = {
@@ -437,10 +593,19 @@ export async function dispatchDealCompletedNotifications(params: {
       recipientRole: 'buyer',
     });
 
+    const fallbackKeys = getEquivalentNotificationKeys({
+      chainId,
+      dealId,
+      contractAddress: params.dealAddress,
+      event: 'deal_completed',
+      txHash: params.txHash,
+      recipientRole: 'buyer',
+    });
+
     const claim: NotificationClaimResult = await notifRepo.claimPending(
       eventKey,
       { dealId, event: 'deal_completed', recipientWallet: clientWallet },
-      { fenced: true },
+      { fenced: true, fallbackKeys },
     );
 
     if (claim.status === 'duplicate_delivered' || String(claim) === 'duplicate_delivered') {
@@ -500,10 +665,19 @@ export async function dispatchDealCompletedNotifications(params: {
       recipientRole: 'seller',
     });
 
+    const fallbackKeys = getEquivalentNotificationKeys({
+      chainId,
+      dealId,
+      contractAddress: params.dealAddress,
+      event: 'deal_completed_seller',
+      txHash: params.txHash,
+      recipientRole: 'seller',
+    });
+
     const claim: NotificationClaimResult = await notifRepo.claimPending(
       eventKey,
       { dealId, event: 'deal_completed_seller', recipientWallet: freelancerWallet },
-      { fenced: true },
+      { fenced: true, fallbackKeys },
     );
 
     if (claim.status === 'duplicate_delivered' || String(claim) === 'duplicate_delivered') {

@@ -210,9 +210,9 @@ export class HistoricalDealReplayService {
           sellerWallet: seller,
         });
 
-        // 4. Persist each event idempotently into outbox
+        // 4. Persist each event idempotently into outbox (marked skipped for live email dispatch)
         for (const decoded of decodedList) {
-          await persistDecodedEventToOutbox(this.outboxRepo, decoded);
+          await persistDecodedEventToOutbox(this.outboxRepo, decoded, { isHistoricalReplay: true });
           batchEventsCount++;
         }
       }

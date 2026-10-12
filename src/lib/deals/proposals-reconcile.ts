@@ -213,6 +213,7 @@ export async function reconcileProposalWithReceipt(
   alreadyReconciled: boolean;
   status: 'ACCEPTED' | 'DECLINED' | 'CANCELLED';
   dealAddress?: string;
+  blockNumber?: bigint;
 }> {
   const cleanProposalId = proposalId.trim().toLowerCase();
   if (!/^0x[0-9a-fA-F]{64}$/.test(cleanProposalId)) {
@@ -254,6 +255,7 @@ export async function reconcileProposalWithReceipt(
       alreadyReconciled: true,
       status: verified.status,
       dealAddress: proposal.dealAddress || verified.dealAddress,
+      blockNumber: verified.blockNumber,
     };
   }
 
@@ -282,5 +284,6 @@ export async function reconcileProposalWithReceipt(
     alreadyReconciled: false,
     status: verified.status,
     dealAddress: updated.dealAddress || verified.dealAddress,
+    blockNumber: verified.blockNumber,
   };
 }

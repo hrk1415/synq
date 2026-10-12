@@ -335,6 +335,7 @@ export interface NotifyPayload {
   link?: string;
   counterpartyWallet?: string;
   freelancerWallet?: string;
+  clientWallet?: string;
 }
 
 /**
@@ -528,8 +529,27 @@ export async function notifyBuyerDealConfirmed(p: NotifyPayload): Promise<MailRe
   return { ...res, event: p.event, recipientResolved: true };
 }
 
-/** Backward-compatible export alias for notifyBuyerDealConfirmed */
-export const notifyDealConfirmedToSeller = notifyBuyerDealConfirmed;
+/**
+ * Notify Seller/Freelancer that Deal has been funded and escrow is locked.
+ */
+export async function notifyDealConfirmedToSeller(p: NotifyPayload): Promise<MailResult> {
+  const { email, skip } = await resolveRecipientForNotification(String(p.recipientWallet || ''), p.event);
+  if (skip || !email) return skip!;
+  const title = 'Deal funded and active';
+  const heading = 'Escrow funding has been confirmed on-chain. You may begin work on Milestone #1.';
+  const displayAmount = formatDealAmount(p.dealAmount);
+  const rows: [string, string][] = [
+    ['Deal', p.dealTitle || 'Untitled deal'],
+    ['Client', p.clientWallet || p.counterpartyWallet || '—'],
+    ['Amount', displayAmount || '—'],
+    ['Reference', p.dealId || '—'],
+  ];
+  if (p.note) rows.push(['Note', p.note]);
+  const dealLink = formatAppUrl(p.link || (p.dealId ? `/deals/${p.dealId}` : '/deals'));
+  const { html, text } = layout(title, heading, rows, `Open the deal to view milestones and submit deliverables: ${dealLink}`);
+  const res = await sendMail(email, title, html, text);
+  return { ...res, event: p.event, recipientResolved: true };
+}
 
 export async function notifyBuyerWorkSubmitted(p: NotifyPayload): Promise<MailResult> {
   const { email, skip } = await resolveRecipientForNotification(String(p.recipientWallet || ''), p.event);
