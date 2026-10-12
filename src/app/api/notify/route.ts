@@ -23,10 +23,12 @@ import { getMilestoneSubmissionRepository } from '@/lib/deals/submissions-db';
 import {
   generateNotificationKey,
   generateCanonicalDealEventKey,
+  getEquivalentNotificationKeys,
   getNotificationsRepository,
   NotificationPersistenceError,
   type NotificationClaimResult,
 } from '@/lib/deals/notifications-db';
+import { evaluateNotificationFreshness } from '@/lib/deals/notification-freshness';
 import { getDb } from '@/db';
 import { milestoneSubmissions, milestoneResolutionReports, milestoneRevisions } from '@/db/schema';
 import { and, eq, gt, desc } from 'drizzle-orm';
@@ -295,6 +297,7 @@ export async function POST(req: NextRequest) {
     let verifiedLogIndex: number | undefined = undefined;
     let verifiedSubmissionVersion: number | undefined = undefined;
     let verifiedTxHash: string | undefined = undefined;
+    let verifiedBlockNumber: bigint | undefined = undefined;
     const targetDealAddress = (proposal?.dealAddress || (dealId.startsWith('0x') ? dealId : '')).toLowerCase();
 
     if (event === 'deal_confirmed') {
@@ -717,6 +720,57 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Resolve block coordinates from verified txHash, body txHash, or receipt if available
+    if (verifiedTxHash && verifiedBlockNumber === undefined) {
+      try {
+        const r = await sepoliaPublicClient.getTransactionReceipt({ hash: verifiedTxHash as `0x${string}` });
+        if (r && r.blockNumber !== undefined) {
+          verifiedBlockNumber = BigInt(r.blockNumber);
+        }
+      } catch {}
+    } else if (txHash && /^0x[0-9a-fA-F]{64}$/.test(txHash) && verifiedBlockNumber === undefined) {
+      try {
+        const r = await sepoliaPublicClient.getTransactionReceipt({ hash: txHash as `0x${string}` });
+        if (r && r.blockNumber !== undefined) {
+          verifiedBlockNumber = BigInt(r.blockNumber);
+          verifiedTxHash = txHash.toLowerCase();
+        }
+      } catch {}
+    }
+    if (verifiedBlockNumber === undefined && proposal?.deploymentBlock) {
+      verifiedBlockNumber = BigInt(proposal.deploymentBlock);
+    }
+
+    // 4b. Enforce Shared Freshness Guard (Fresh Notifications Only policy)
+    const freshness = evaluateNotificationFreshness({
+      event,
+      origin: 'on_chain',
+      blockNumber: verifiedBlockNumber,
+      txHash: verifiedTxHash,
+    });
+
+    if (!freshness.eligible) {
+      if (freshness.reason === 'historical') {
+        return Response.json({
+          messageId: 'historical-skipped',
+          mode: 'skipped',
+          skipped: true,
+          reason: freshness.message,
+          recipientResolved: true,
+        });
+      }
+      if (freshness.reason === 'missing_or_invalid_cutoff') {
+        return Response.json(
+          { error: freshness.message },
+          { status: 503 },
+        );
+      }
+      return Response.json(
+        { error: freshness.message },
+        { status: 400 },
+      );
+    }
+
     // 5. Derive recipient from trusted deal data
     let trustedRecipient: string;
     let recipientRole: 'buyer' | 'seller';
@@ -745,7 +799,19 @@ export async function POST(req: NextRequest) {
       txHash: verifiedTxHash,
       logIndex: verifiedLogIndex,
       recipientRole,
-      includeLogIndex: verifiedLogIndex !== undefined,
+      includeLogIndex: false,
+    });
+
+    const fallbackKeys = getEquivalentNotificationKeys({
+      chainId: 11155111,
+      dealId: targetDealAddress || dealId,
+      contractAddress: targetDealAddress || (dealId.startsWith('0x') ? dealId : undefined),
+      event,
+      milestoneIndex,
+      submissionVersion: verifiedSubmissionVersion,
+      txHash: verifiedTxHash,
+      logIndex: verifiedLogIndex,
+      recipientRole,
     });
 
     let claimStatus: NotificationClaimResult;
@@ -757,7 +823,7 @@ export async function POST(req: NextRequest) {
           event,
           recipientWallet: trustedRecipient,
         },
-        { fenced: true },
+        { fenced: true, fallbackKeys },
       );
     } catch (err: any) {
       if (err instanceof NotificationPersistenceError) {

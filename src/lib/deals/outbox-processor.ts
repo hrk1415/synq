@@ -10,13 +10,16 @@ import {
   type IDealOutboxRepository,
   type DealOutboxEvent,
 } from './outbox-db';
+import { parseNotificationLiveStartBlock } from './chain-scanner';
 import {
   getNotificationsRepository,
   type INotificationsRepository,
   generateCanonicalDealEventKey,
+  getEquivalentNotificationKeys,
 } from './notifications-db';
 import {
   notifyProposalReceived,
+  notifyBuyerDealConfirmed,
   notifyDealConfirmedToSeller,
   notifyBuyerWorkSubmitted,
   notifyFreelancerRevisionRequested,
@@ -54,6 +57,7 @@ export interface INotificationDispatcher {
       dealTitle?: string;
       dealAmount?: string;
       recipientWallet: string;
+      recipientRole?: 'buyer' | 'seller';
       milestoneIndex?: number;
       evidence?: string;
       note?: string;
@@ -72,6 +76,7 @@ export class DefaultNotificationDispatcher implements INotificationDispatcher {
       dealTitle?: string;
       dealAmount?: string;
       recipientWallet: string;
+      recipientRole?: 'buyer' | 'seller';
       milestoneIndex?: number;
       evidence?: string;
       note?: string;
@@ -93,14 +98,25 @@ export class DefaultNotificationDispatcher implements INotificationDispatcher {
           break;
 
         case 'deal_confirmed':
-          mailRes = await notifyDealConfirmedToSeller({
-            event,
-            dealId: p.dealId,
-            dealTitle: p.dealTitle,
-            dealAmount: p.dealAmount,
-            recipientWallet: p.recipientWallet,
-            note: p.note,
-          });
+          if (p.recipientRole === 'seller') {
+            mailRes = await notifyDealConfirmedToSeller({
+              event,
+              dealId: p.dealId,
+              dealTitle: p.dealTitle,
+              dealAmount: p.dealAmount,
+              recipientWallet: p.recipientWallet,
+              note: p.note,
+            });
+          } else {
+            mailRes = await notifyBuyerDealConfirmed({
+              event,
+              dealId: p.dealId,
+              dealTitle: p.dealTitle,
+              dealAmount: p.dealAmount,
+              recipientWallet: p.recipientWallet,
+              note: p.note,
+            });
+          }
           break;
 
         case 'work_submitted':
@@ -319,6 +335,55 @@ export interface OutboxBatchResult {
   deferredCount: number;
 }
 
+/**
+ * Authoritatively determines whether an outbox event represents a blockchain-derived event.
+ * Inspects explicit origin, block/log coordinates, and smart contract lifecycle semantics.
+ */
+export function isBlockchainDerivedEvent(item: DealOutboxEvent): boolean {
+  // 1. Explicit origin discriminator
+  if (item.origin === 'on_chain') return true;
+
+  // 2. Contains block coordinate or log index (top-level or in payload)
+  if (item.blockNumber !== null && item.blockNumber !== undefined) return true;
+  if (item.logIndex !== null && item.logIndex !== undefined) return true;
+  const payload = item.payload || {};
+  if (payload.blockNumber !== null && payload.blockNumber !== undefined) return true;
+  if (payload.logIndex !== null && payload.logIndex !== undefined) return true;
+
+  // 3. Known on-chain contract lifecycle event types (emitted by deal smart contract)
+  const onChainEventTypes = new Set([
+    'deal_confirmed',
+    'work_submitted',
+    'payment_released',
+    'deal_completed',
+    'deal_completed_seller',
+    'deal_cancelled',
+    'milestone_refunded',
+    'resolution_finalized',
+    'mutual_settlement_executed',
+    'mutual_settlement_cancelled',
+  ]);
+  if (onChainEventTypes.has(item.event)) return true;
+
+  // 4. Outbox ID or payload contains transaction hash without being a pure off-chain proposal
+  if (item.id.includes(':0x') || item.txHash !== null || (payload as any).txHash !== null) {
+    const offChainWorkflows = new Set([
+      'proposal_received',
+      'committee_authorization_requested',
+      'mutual_settlement_proposed',
+      'resolution_report_filed',
+    ]);
+    if (!offChainWorkflows.has(item.event)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+import { extractSafeBlockNumber } from './notification-freshness';
+export { extractSafeBlockNumber };
+
 export class OutboxProcessor {
   constructor(
     private outboxRepo: IDealOutboxRepository = getDealOutboxRepository(),
@@ -381,31 +446,86 @@ export class OutboxProcessor {
     const logIndex = payload.logIndex !== undefined ? Number(payload.logIndex) : undefined;
     const recipientRole = (payload.recipientRole as 'buyer' | 'seller') || (item.event === 'work_submitted' ? 'buyer' : 'seller');
 
-    // Canonical notification key
-    const notifKey =
-      (payload.notifKey as string) ||
-      generateCanonicalDealEventKey({
-        chainId: item.chainId,
-        dealId: item.dealId,
-        event: item.event,
-        milestoneIndex,
-        submissionVersion,
-        submissionId,
-        txHash,
-        logIndex,
-        recipientRole,
-        includeLogIndex: logIndex !== undefined,
-      });
+    // 1. Historical safety gate: validate live start block cutoff configuration for blockchain-derived events
+    if (isBlockchainDerivedEvent(item)) {
+      const cutoff = parseNotificationLiveStartBlock(process.env.NOTIFICATION_LIVE_START_BLOCK);
 
-    // 2. Claim in notification repository
+      if (!cutoff.configured || cutoff.startBlock === undefined) {
+        // FAIL-CLOSED: Configuration is missing or invalid.
+        // Do NOT dispatch live email! Do NOT permanently mark skipped!
+        // Defer with backoff so normal processing safely resumes when configuration is supplied.
+        stats.deferredCount += 1;
+        console.warn(
+          `[OutboxProcessor] FAIL-CLOSED: Blockchain-derived event ${item.id} cannot be delivered: ${cutoff.error}. Releasing claim to retry after configuration is supplied.`
+        );
+        await this.outboxRepo.releaseClaim(item.id, 60, claimToken);
+        return stats;
+      }
+
+      // Extract and validate block number coordinate
+      const rawBlock = item.blockNumber ?? (payload as any)?.blockNumber;
+      const blockCoord = extractSafeBlockNumber(rawBlock);
+
+      if (!blockCoord.valid || blockCoord.blockNumber === undefined) {
+        // FAIL-CLOSED: Block coordinate is unverified, null, undefined, or malformed.
+        // Do NOT dispatch email! Do NOT permanently mark skipped!
+        // Defer in recoverable state so it can be reconciled/retried once block coordinate is established.
+        stats.deferredCount += 1;
+        console.warn(
+          `[OutboxProcessor] FAIL-CLOSED: Blockchain-derived event ${item.id} has unverified or invalid block coordinate (${blockCoord.error}). Deferring in recoverable state.`
+        );
+        await this.outboxRepo.releaseClaim(item.id, 60, claimToken);
+        return stats;
+      }
+
+      if (blockCoord.blockNumber < cutoff.startBlock) {
+        // Event block is confirmed historical (prior to cutoff): permanently skip email dispatch
+        stats.skippedCount += 1;
+        await this.outboxRepo.markSkipped(
+          item.id,
+          `Historical on-chain event prior to live start block (${cutoff.startBlock})`,
+          claimToken,
+        );
+        return stats;
+      }
+    }
+
+    // 2. Canonical notification identity and equivalent legacy candidate keys
+    const canonicalKey = generateCanonicalDealEventKey({
+      chainId: item.chainId,
+      dealId: item.dealId,
+      event: item.event,
+      milestoneIndex,
+      submissionVersion,
+      submissionId,
+      txHash,
+      logIndex,
+      recipientRole,
+      includeLogIndex: false,
+    });
+
+    const fallbackKeys = getEquivalentNotificationKeys({
+      chainId: item.chainId,
+      dealId: item.dealId,
+      event: item.event,
+      milestoneIndex,
+      submissionVersion,
+      submissionId,
+      txHash,
+      logIndex,
+      recipientRole,
+      rawNotifKey: payload.notifKey as string | undefined,
+    });
+
+    // 3. Claim in notification repository with cross-key legacy deduplication
     const claim = await this.notifRepo.claimPending(
-      notifKey,
+      canonicalKey,
       {
         dealId: item.dealId,
         event: item.event,
         recipientWallet: item.recipientWallet,
       },
-      { fenced: true },
+      { fenced: true, fallbackKeys },
     );
 
     if (claim.status === 'duplicate_delivered' || (claim as any) === 'duplicate_delivered') {
@@ -427,17 +547,18 @@ export class OutboxProcessor {
     const freshItem = await this.outboxRepo.get(item.id);
     if (!freshItem || freshItem.status === 'cancelled' || (claimToken && freshItem.claimToken !== claimToken)) {
       stats.skippedCount += 1;
-      await this.notifRepo.markSkipped(notifKey, 'Event invalidated by blockchain reorganization', claim.claimToken);
+      await this.notifRepo.markSkipped(canonicalKey, 'Event invalidated by blockchain reorganization', claim.claimToken);
       return stats;
     }
 
-    // 3. Dispatch through notification service abstraction
+    // 4. Dispatch through notification service abstraction
     const rawAmount = (payload.amount ?? payload.totalAmount) as string | number | bigint | undefined;
     const dispatchRes = await this.dispatcher.dispatch(item.event, {
       dealId: item.dealId,
       dealTitle: payload.title as string | undefined,
       dealAmount: rawAmount !== undefined && rawAmount !== null ? formatDealAmount(rawAmount) : undefined,
       recipientWallet: item.recipientWallet,
+      recipientRole,
       milestoneIndex,
       evidence: payload.evidence as string | undefined,
       note: payload.note as string | undefined,
@@ -445,7 +566,7 @@ export class OutboxProcessor {
 
     if (dispatchRes.skipped) {
       stats.skippedCount += 1;
-      await this.notifRepo.markSkipped(notifKey, dispatchRes.reason, claim.claimToken);
+      await this.notifRepo.markSkipped(canonicalKey, dispatchRes.reason, claim.claimToken);
       await this.outboxRepo.markSkipped(item.id, dispatchRes.reason, claimToken);
       return stats;
     }
@@ -455,7 +576,7 @@ export class OutboxProcessor {
       // Defers the item with backoff (e.g. 60 seconds) so it remains pending for future delivery once SMTP is live,
       // without burning retries or entering an immediate tight loop.
       stats.deferredCount += 1;
-      await this.notifRepo.markDeferred(notifKey, 'SMTP transport disabled (log-only mode)', claim.claimToken);
+      await this.notifRepo.markDeferred(canonicalKey, 'SMTP transport disabled (log-only mode)', claim.claimToken);
       await this.outboxRepo.releaseClaim(item.id, 60, claimToken);
       return stats;
     }
@@ -463,16 +584,38 @@ export class OutboxProcessor {
     if (!dispatchRes.success || dispatchRes.error) {
       stats.failedCount += 1;
       const errMsg = dispatchRes.error || 'Notification delivery failure';
-      const isPermanent = dispatchRes.deliveryStatus === 'permanent_fail';
-      await this.notifRepo.markFailed(notifKey, errMsg, claim.claimToken);
-      await this.outboxRepo.markFailed(item.id, errMsg, claimToken, isPermanent);
+      const isTimeout = /timeout|timed out|etimedout|esockettimedout/i.test(errMsg);
+      // Fail permanently on timeout, explicit permanent failure, or reaching retry cap (>=2 retries, 3 total attempts)
+      const isPermanent = dispatchRes.deliveryStatus === 'permanent_fail' || isTimeout || item.retryCount >= 2;
+      const failReason = isTimeout
+        ? `Ambiguous SMTP outcome (timeout): ${errMsg}. Quarantined to prevent duplicate sending.`
+        : errMsg;
+      await this.notifRepo.markFailed(canonicalKey, failReason, claim.claimToken);
+      await this.outboxRepo.markFailed(item.id, failReason, claimToken, isPermanent);
       return stats;
     }
 
-    // 4. Success
+    // 5. Success: SMTP accepted delivery
     stats.processedCount += 1;
-    await this.notifRepo.markDelivered(notifKey, dispatchRes.messageId, undefined, claim.claimToken);
-    await this.outboxRepo.markProcessed(item.id, claimToken);
+    try {
+      await this.notifRepo.markDelivered(canonicalKey, dispatchRes.messageId, undefined, claim.claimToken);
+      await this.outboxRepo.markProcessed(item.id, claimToken);
+    } catch (dbErr: any) {
+      console.error(`[OutboxProcessor] CRITICAL: SMTP accepted (${dispatchRes.messageId}) but DB update failed:`, dbErr);
+      try {
+        await this.outboxRepo.markFailed(
+          item.id,
+          `SMTP delivered (${dispatchRes.messageId}) but post-delivery DB update failed: ${dbErr?.message || dbErr}`,
+          claimToken,
+          true, // permanent to prevent retrying already-sent email
+        );
+      } catch (qErr: any) {
+        console.error(
+          `[OutboxProcessor] CRITICAL QUARANTINE FAILURE: Failed to persist quarantine for delivered email ${item.id} (${dispatchRes.messageId}):`,
+          qErr
+        );
+      }
+    }
     return stats;
   }
 }

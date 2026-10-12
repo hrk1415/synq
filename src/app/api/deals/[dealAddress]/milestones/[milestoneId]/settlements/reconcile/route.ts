@@ -58,7 +58,15 @@ export async function POST(req: NextRequest, context: RouteContext) {
     try {
       const { getDealOutboxRepository } = await import('@/lib/deals/outbox-db');
       const { SEPOLIA_CHAIN_ID } = await import('@/lib/contracts/addresses');
+      const { sepoliaPublicClient } = await import('@/lib/chain');
       const outboxRepo = getDealOutboxRepository();
+
+      let receiptBlockNumber: bigint | undefined;
+      try {
+        const r = await sepoliaPublicClient.getTransactionReceipt({ hash: txHash as `0x${string}` });
+        if (r && r.blockNumber !== undefined) receiptBlockNumber = BigInt(r.blockNumber);
+      } catch {}
+
       // Notify both participants of executed mutual settlement
       for (const recipient of [proposal.proposerWallet, proposal.counterpartyWallet]) {
         const eventId = `outbox:${SEPOLIA_CHAIN_ID}:${rawDealAddress.toLowerCase()}:mutual_settlement_executed:${recipient.toLowerCase()}:${proposal.proposalNonce}`;
@@ -68,12 +76,14 @@ export async function POST(req: NextRequest, context: RouteContext) {
           dealId: rawDealAddress,
           event: 'mutual_settlement_executed',
           recipientWallet: recipient,
+          blockNumber: receiptBlockNumber,
           payload: {
             dealId: rawDealAddress,
             milestoneIndex: milestoneId,
             freelancerAmount: proposal.freelancerAmount,
             clientAmount: proposal.clientAmount,
             txHash,
+            blockNumber: receiptBlockNumber ? Number(receiptBlockNumber) : undefined,
           },
         });
       }

@@ -78,6 +78,8 @@ export interface IDealOutboxRepository {
     event: string;
     recipientWallet: string;
     payload: Record<string, unknown>;
+    status?: OutboxStatus;
+    lastError?: string;
     origin?: OutboxOrigin;
     blockNumber?: bigint;
     blockHash?: string;
@@ -105,6 +107,8 @@ export class InMemoryDealOutboxRepository implements IDealOutboxRepository {
     event: string;
     recipientWallet: string;
     payload: Record<string, unknown>;
+    status?: OutboxStatus;
+    lastError?: string;
     origin?: OutboxOrigin;
     blockNumber?: bigint;
     blockHash?: string;
@@ -117,6 +121,8 @@ export class InMemoryDealOutboxRepository implements IDealOutboxRepository {
 
     const now = new Date();
     const allowed = await isNotificationAllowed(event.recipientWallet, event.event);
+    const resolvedStatus: OutboxStatus = event.status || (allowed ? 'pending' : 'skipped');
+    const resolvedError: string | null = event.lastError || (allowed ? null : 'Skipped at staging: recipient opted out of notification category');
     const created: DealOutboxEvent = {
       id: event.id,
       chainId: event.chainId,
@@ -124,12 +130,12 @@ export class InMemoryDealOutboxRepository implements IDealOutboxRepository {
       event: event.event.toLowerCase(),
       recipientWallet: normalizeWallet(event.recipientWallet),
       payload: { ...event.payload },
-      status: allowed ? 'pending' : 'skipped',
+      status: resolvedStatus,
       retryCount: 0,
       claimToken: null,
       claimedAt: null,
       nextRetryAt: now,
-      lastError: allowed ? null : 'Skipped at staging: recipient opted out of notification category',
+      lastError: resolvedError,
       origin: event.origin || 'off_chain',
       blockNumber: event.blockNumber ?? null,
       blockHash: event.blockHash ?? null,
@@ -315,6 +321,8 @@ export class DrizzleDealOutboxRepository implements IDealOutboxRepository {
     event: string;
     recipientWallet: string;
     payload: Record<string, unknown>;
+    status?: OutboxStatus;
+    lastError?: string;
     origin?: OutboxOrigin;
     blockNumber?: bigint;
     blockHash?: string;
@@ -329,6 +337,8 @@ export class DrizzleDealOutboxRepository implements IDealOutboxRepository {
 
       const now = new Date();
       const allowed = await isNotificationAllowed(event.recipientWallet, event.event);
+      const resolvedStatus = event.status || (allowed ? 'pending' : 'skipped');
+      const resolvedError = event.lastError || (allowed ? null : 'Skipped at staging: recipient opted out of notification category');
       const res = await db
         .insert(dealEventsOutbox)
         .values({
@@ -338,7 +348,7 @@ export class DrizzleDealOutboxRepository implements IDealOutboxRepository {
           event: event.event.toLowerCase(),
           recipientWallet: normalizeWallet(event.recipientWallet),
           payload: event.payload,
-          status: allowed ? 'pending' : 'skipped',
+          status: resolvedStatus,
           retryCount: 0,
           origin: event.origin || 'off_chain',
           blockNumber: event.blockNumber ? event.blockNumber.toString() : null,
@@ -346,7 +356,7 @@ export class DrizzleDealOutboxRepository implements IDealOutboxRepository {
           txHash: event.txHash || null,
           logIndex: event.logIndex ?? null,
           nextRetryAt: now,
-          lastError: allowed ? null : 'Skipped at staging: recipient opted out of notification category',
+          lastError: resolvedError,
           createdAt: now,
           updatedAt: now,
         })

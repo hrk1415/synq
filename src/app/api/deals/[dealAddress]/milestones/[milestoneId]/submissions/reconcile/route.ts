@@ -82,6 +82,7 @@ export async function POST(req: NextRequest, context: RouteContext) {
           milestoneAmount: msAmount,
           evidenceSummary,
           txHash,
+          blockNumber: result.blockNumber,
         });
       } catch (notifErr: any) {
         console.warn('[POST /api/deals/.../submissions/reconcile] work_submitted dispatch warning:', notifErr?.message || notifErr);

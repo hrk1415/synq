@@ -128,6 +128,7 @@ describe('SYNQ — B.12.3.24: Mail Correctness & Historical Replay Repairs', () 
   const inMemoryUsers = new Map<string, any>();
 
   beforeEach(() => {
+    process.env.NOTIFICATION_LIVE_START_BLOCK = '1';
     inMemoryUsers.clear();
     notifRepo = new InMemoryNotificationsRepository();
     setNotificationsRepository(notifRepo);
@@ -168,6 +169,7 @@ describe('SYNQ — B.12.3.24: Mail Correctness & Historical Replay Repairs', () 
   });
 
   afterEach(() => {
+    delete process.env.NOTIFICATION_LIVE_START_BLOCK;
     resetNotificationsRepository();
     resetDealOutboxRepository();
     resetTrackedContractsRepository();
@@ -209,6 +211,7 @@ describe('SYNQ — B.12.3.24: Mail Correctness & Historical Replay Repairs', () 
         milestones: [defaultMilestone],
         cachedStatus: 'ACCEPTED',
         dealAddress,
+        deploymentBlock: 100n,
       });
 
       const token = signToken({ userId: buyerWallet, walletAddress: buyerWallet });
@@ -240,7 +243,7 @@ describe('SYNQ — B.12.3.24: Mail Correctness & Historical Replay Repairs', () 
         dealId: dealAddress,
         contractAddress: dealAddress,
         event: 'deal_confirmed',
-        recipientRole: 'seller',
+        recipientRole: 'buyer',
       });
 
       const record = await notifRepo.get(expectedKey);
@@ -299,6 +302,7 @@ describe('SYNQ — B.12.3.24: Mail Correctness & Historical Replay Repairs', () 
     });
 
     it('3. OutboxProcessor defers log-only without burning retry attempts', async () => {
+      process.env.NOTIFICATION_LIVE_START_BLOCK = '10000000';
       const mockDispatcher: INotificationDispatcher = {
         async dispatch(): Promise<DispatchResult> {
           return {
@@ -315,11 +319,14 @@ describe('SYNQ — B.12.3.24: Mail Correctness & Historical Replay Repairs', () 
         dealId: '0xdeal1',
         event: 'deal_confirmed',
         recipientWallet: sellerWallet,
+        origin: 'on_chain',
+        blockNumber: 11000000n,
         payload: { title: 'Test Deal' },
       });
 
       const processor = new OutboxProcessor(outboxRepo, notifRepo, mockDispatcher);
       const batchResult = await processor.processBatch(10);
+      delete process.env.NOTIFICATION_LIVE_START_BLOCK;
 
       assert.equal(batchResult.deferredCount, 1);
       assert.equal(batchResult.processedCount, 0);

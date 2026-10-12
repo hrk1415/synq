@@ -7,7 +7,7 @@
 
 import { getDb } from '@/db';
 import { dealNotifications } from '@/db/schema';
-import { eq, and, or, lt } from 'drizzle-orm';
+import { eq, and, or, lt, inArray } from 'drizzle-orm';
 import { normalizeWallet } from '@/lib/utils';
 
 export type NotificationStatus = 'pending' | 'delivered' | 'skipped' | 'failed' | 'deferred';
@@ -115,6 +115,41 @@ export function generateCanonicalDealEventKey(params: CanonicalDealEventKeyParam
   return parts.join(':');
 }
 
+/**
+ * Generates all candidate notification keys (canonical and legacy representations)
+ * for a given event, ensuring backward compatibility with historical records.
+ */
+export function getEquivalentNotificationKeys(
+  params: CanonicalDealEventKeyParams & { rawNotifKey?: string }
+): string[] {
+  const canonical = generateCanonicalDealEventKey({ ...params, includeLogIndex: false });
+  const keys = new Set<string>([canonical]);
+
+  if (params.rawNotifKey) {
+    keys.add(params.rawNotifKey);
+  }
+
+  // Legacy variants with tx and logIndex if txHash is available
+  if (params.txHash) {
+    keys.add(generateCanonicalDealEventKey({ ...params, includeLogIndex: true }));
+    if (params.logIndex !== undefined) {
+      keys.add(generateCanonicalDealEventKey({ ...params, includeLogIndex: true, logIndex: undefined }));
+    }
+  }
+
+  // Cross-role compatibility for deal_confirmed (where scanner historically used role:seller instead of role:buyer)
+  if (params.event.toLowerCase() === 'deal_confirmed') {
+    keys.add(generateCanonicalDealEventKey({ ...params, recipientRole: 'buyer', includeLogIndex: false }));
+    keys.add(generateCanonicalDealEventKey({ ...params, recipientRole: 'seller', includeLogIndex: false }));
+    if (params.txHash) {
+      keys.add(generateCanonicalDealEventKey({ ...params, recipientRole: 'buyer', includeLogIndex: true }));
+      keys.add(generateCanonicalDealEventKey({ ...params, recipientRole: 'seller', includeLogIndex: true }));
+    }
+  }
+
+  return Array.from(keys);
+}
+
 export type NotificationClaimStatus = 'claimed' | 'duplicate_delivered' | 'duplicate_pending';
 
 export interface NotificationClaimResult {
@@ -122,14 +157,23 @@ export interface NotificationClaimResult {
   claimToken?: string;
 }
 
-export type ClaimPendingOptions = { fenced?: boolean; claimToken?: string; bypassCooldown?: boolean } | string;
+export type ClaimPendingOptions =
+  | {
+      fenced?: boolean;
+      claimToken?: string;
+      bypassCooldown?: boolean;
+      fallbackKeys?: string[];
+    }
+  | string;
 
 export interface INotificationsRepository {
   get(id: string): Promise<NotificationRecord | null>;
   claimPending(
     id: string,
     metadata: { dealId: string; event: string; recipientWallet: string },
-    options: { fenced: true; bypassCooldown?: boolean } | { claimToken: string; bypassCooldown?: boolean },
+    options:
+      | { fenced: true; bypassCooldown?: boolean; fallbackKeys?: string[] }
+      | { claimToken: string; bypassCooldown?: boolean; fallbackKeys?: string[] },
   ): Promise<NotificationClaimResult>;
   claimPending(
     id: string,
@@ -161,12 +205,39 @@ export class InMemoryNotificationsRepository implements INotificationsRepository
     );
     const customToken = typeof options === 'string' ? options : (typeof options === 'object' ? options?.claimToken : undefined);
     const bypassCooldown = typeof options === 'object' && Boolean(options?.bypassCooldown);
+    const fallbackKeys = typeof options === 'object' ? options?.fallbackKeys : undefined;
     const token = customToken || crypto.randomUUID();
     const now = new Date();
+
+    // Check equivalent fallback keys for existing delivered / pending records
+    if (fallbackKeys && fallbackKeys.length > 0) {
+      for (const fk of fallbackKeys) {
+        if (fk === id) continue;
+        const existingFk = this.records.get(fk);
+        if (existingFk) {
+          if (existingFk.status === 'delivered' || existingFk.status === 'skipped') {
+            return isFenced ? { status: 'duplicate_delivered' } : 'duplicate_delivered';
+          }
+          if (existingFk.status === 'pending') {
+            const isFkStale = now.getTime() - new Date(existingFk.updatedAt).getTime() > PENDING_TIMEOUT_MS;
+            if (!isFkStale) {
+              return isFenced ? { status: 'duplicate_pending' } : 'duplicate_pending';
+            }
+          }
+          if (existingFk.status === 'deferred') {
+            const isFkDeferred = now.getTime() - new Date(existingFk.updatedAt).getTime() < DEFERRED_COOLDOWN_MS;
+            if (isFkDeferred && !bypassCooldown) {
+              return isFenced ? { status: 'duplicate_pending' } : 'duplicate_pending';
+            }
+          }
+        }
+      }
+    }
+
     const existing = this.records.get(id);
 
     if (existing) {
-      if (existing.status === 'delivered') {
+      if (existing.status === 'delivered' || existing.status === 'skipped') {
         return isFenced ? { status: 'duplicate_delivered' } : 'duplicate_delivered';
       }
       const isStale = existing.status === 'pending' && (now.getTime() - new Date(existing.updatedAt).getTime() > PENDING_TIMEOUT_MS);
@@ -318,6 +389,36 @@ export class DrizzleNotificationsRepository implements INotificationsRepository 
       const staleCutoff = new Date(Date.now() - PENDING_TIMEOUT_MS);
       const deferredCutoff = new Date(Date.now() - DEFERRED_COOLDOWN_MS);
 
+      // Check equivalent fallback keys for existing delivered / pending records
+      const fallbackKeys = typeof options === 'object' ? options?.fallbackKeys : undefined;
+      if (fallbackKeys && fallbackKeys.length > 0) {
+        const otherKeys = fallbackKeys.filter((k) => k !== id);
+        if (otherKeys.length > 0) {
+          const matchedFallbacks = await db
+            .select({ id: dealNotifications.id, status: dealNotifications.status, updatedAt: dealNotifications.updatedAt })
+            .from(dealNotifications)
+            .where(inArray(dealNotifications.id, otherKeys));
+
+          for (const fb of matchedFallbacks) {
+            if (fb.status === 'delivered' || fb.status === 'skipped') {
+              return isFenced ? { status: 'duplicate_delivered' } : 'duplicate_delivered';
+            }
+            if (fb.status === 'pending') {
+              const isFkStale = now.getTime() - new Date(fb.updatedAt).getTime() > PENDING_TIMEOUT_MS;
+              if (!isFkStale) {
+                return isFenced ? { status: 'duplicate_pending' } : 'duplicate_pending';
+              }
+            }
+            if (fb.status === 'deferred') {
+              const isFkDeferred = now.getTime() - new Date(fb.updatedAt).getTime() < DEFERRED_COOLDOWN_MS;
+              if (isFkDeferred && !bypassCooldown) {
+                return isFenced ? { status: 'duplicate_pending' } : 'duplicate_pending';
+              }
+            }
+          }
+        }
+      }
+
       // 1. Try to insert new record with onConflictDoNothing
       try {
         const inserted = await db
@@ -380,7 +481,7 @@ export class DrizzleNotificationsRepository implements INotificationsRepository 
 
       // 3. Update did not claim row: inspect existing row state
       const current = await this.get(id);
-      if (current?.status === 'delivered') {
+      if (current?.status === 'delivered' || current?.status === 'skipped') {
         return isFenced ? { status: 'duplicate_delivered' } : 'duplicate_delivered';
       }
       return isFenced ? { status: 'duplicate_pending' } : 'duplicate_pending';
