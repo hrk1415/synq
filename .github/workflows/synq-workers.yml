@@ -1,0 +1,160 @@
+name: Synq Background Workers
+
+# Preparation-only background worker dispatcher for Synq.
+# Currently configured for manual execution (workflow_dispatch) only.
+#
+# To activate the 5-minute automated schedule in Phase 2, uncomment the following block:
+# on:
+#   schedule:
+#     - cron: '*/5 * * * *'
+#   workflow_dispatch:
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: synq-cron-workers
+  cancel-in-progress: false
+
+jobs:
+  run-workers:
+    name: Execute Production Workers
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate Authentication Secret
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::CRON_SECRET is missing or empty. Please configure the CRON_SECRET repository secret in GitHub Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          echo "Authentication secret presence verified."
+
+      - name: Process Deal Events Outbox
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          echo "### 📨 Outbox Processor" >> $GITHUB_STEP_SUMMARY
+
+          HTTP_CODE=$(curl -s -S \
+            --connect-timeout 5 \
+            --max-time 20 \
+            --retry 0 \
+            -X POST "https://synqaii.vercel.app/api/cron/outbox" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            -H "Content-Type: application/json" \
+            -d '{"limit": 5}' \
+            -o outbox_response.json \
+            -w "%{http_code}" 2>/dev/null || echo "000")
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            if jq -e '.status == "success"' outbox_response.json >/dev/null 2>&1; then
+              CLAIMED=$(jq -r '.summary.claimed // 0' outbox_response.json)
+              PROCESSED=$(jq -r '.summary.processed // 0' outbox_response.json)
+              SKIPPED=$(jq -r '.summary.skipped // 0' outbox_response.json)
+              FAILED=$(jq -r '.summary.failed // 0' outbox_response.json)
+              DUPLICATES=$(jq -r '.summary.duplicates // 0' outbox_response.json)
+              DEFERRED=$(jq -r '.summary.deferred // 0' outbox_response.json)
+              echo "✅ **Status:** Success (HTTP 200)" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "| Claimed | Processed | Skipped | Failed | Duplicates | Deferred |" >> $GITHUB_STEP_SUMMARY
+              echo "| :---: | :---: | :---: | :---: | :---: | :---: |" >> $GITHUB_STEP_SUMMARY
+              echo "| $CLAIMED | $PROCESSED | $SKIPPED | $FAILED | $DUPLICATES | $DEFERRED |" >> $GITHUB_STEP_SUMMARY
+            else
+              ERR_MSG=$(jq -r '.error // "Unknown error in response payload"' outbox_response.json 2>/dev/null || echo "Malformed JSON")
+              echo "❌ **Status:** Failed (HTTP 200 with non-success status: $ERR_MSG)" >> $GITHUB_STEP_SUMMARY
+              echo "::error::Outbox processor returned HTTP 200 but status was not 'success': $ERR_MSG"
+              exit 1
+            fi
+          elif [ "$HTTP_CODE" = "403" ]; then
+            MSG=$(jq -r '.message // "Worker disabled"' outbox_response.json 2>/dev/null || echo "Worker disabled by default")
+            echo "⚠️ **Status:** Disabled in Vercel (HTTP 403)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "> *Notice:* $MSG (Set \`ENABLE_OUTBOX_PROCESSOR=true\` in Vercel to activate)." >> $GITHUB_STEP_SUMMARY
+            echo "::warning::Outbox processor is disabled in Vercel (HTTP 403)"
+          elif [ "$HTTP_CODE" = "401" ]; then
+            echo "❌ **Status:** Authentication Failed (HTTP 401)" >> $GITHUB_STEP_SUMMARY
+            echo "::error::Authentication failed for Outbox processor. Verify that GitHub secret CRON_SECRET matches Vercel CRON_SECRET."
+            exit 1
+          elif [ "$HTTP_CODE" = "503" ]; then
+            echo "❌ **Status:** Service Unavailable (HTTP 503)" >> $GITHUB_STEP_SUMMARY
+            echo "::error::CRON_SECRET is not configured in Vercel environment."
+            exit 1
+          elif [ "$HTTP_CODE" = "000" ]; then
+            echo "❌ **Status:** Connection / Network Timeout (HTTP 000)" >> $GITHUB_STEP_SUMMARY
+            echo "::error::Could not connect to production outbox endpoint within timeout limits."
+            exit 1
+          else
+            ERR_MSG=$(jq -r '.error // .message // "Unexpected server response"' outbox_response.json 2>/dev/null || echo "Unexpected response")
+            echo "❌ **Status:** Failed (HTTP $HTTP_CODE: $ERR_MSG)" >> $GITHUB_STEP_SUMMARY
+            echo "::error::Outbox processor failed with HTTP $HTTP_CODE: $ERR_MSG"
+            exit 1
+          fi
+
+      - name: Scan Blockchain Events
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          echo "### ⛓️ Chain Scanner" >> $GITHUB_STEP_SUMMARY
+
+          HTTP_CODE=$(curl -s -S \
+            --connect-timeout 5 \
+            --max-time 20 \
+            --retry 0 \
+            -X POST "https://synqaii.vercel.app/api/cron/scanner" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            -H "Content-Type: application/json" \
+            -d '{"scope": "live_v1_v2", "maxBatchSize": 100}' \
+            -o scanner_response.json \
+            -w "%{http_code}" 2>/dev/null || echo "000")
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            if jq -e '.status == "success"' scanner_response.json >/dev/null 2>&1; then
+              SCANNED=$(jq -r '.scanned // false' scanner_response.json)
+              FROM_BLOCK=$(jq -r '.fromBlock // "n/a"' scanner_response.json)
+              TO_BLOCK=$(jq -r '.toBlock // "n/a"' scanner_response.json)
+              LOGS=$(jq -r '.logsFound // 0' scanner_response.json)
+              EVENTS=$(jq -r '.eventsProcessed // 0' scanner_response.json)
+              DISCOVERED=$(jq -r '.newContractsDiscovered // 0' scanner_response.json)
+              ADVANCED=$(jq -r '.cursorAdvanced // false' scanner_response.json)
+              REASON=$(jq -r '.reason // ""' scanner_response.json)
+              echo "✅ **Status:** Success (HTTP 200)" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "| Scanned | From Block | To Block | Logs Found | Events Processed | New Contracts | Cursor Advanced |" >> $GITHUB_STEP_SUMMARY
+              echo "| :---: | :---: | :---: | :---: | :---: | :---: | :---: |" >> $GITHUB_STEP_SUMMARY
+              echo "| $SCANNED | $FROM_BLOCK | $TO_BLOCK | $LOGS | $EVENTS | $DISCOVERED | $ADVANCED |" >> $GITHUB_STEP_SUMMARY
+              if [ -n "$REASON" ] && [ "$REASON" != "null" ]; then
+                echo "" >> $GITHUB_STEP_SUMMARY
+                echo "> *Info:* $REASON" >> $GITHUB_STEP_SUMMARY
+              fi
+            else
+              ERR_MSG=$(jq -r '.error // "Unknown error in response payload"' scanner_response.json 2>/dev/null || echo "Malformed JSON")
+              echo "❌ **Status:** Failed (HTTP 200 with non-success status: $ERR_MSG)" >> $GITHUB_STEP_SUMMARY
+              echo "::error::Scanner returned HTTP 200 but status was not 'success': $ERR_MSG"
+              exit 1
+            fi
+          elif [ "$HTTP_CODE" = "403" ]; then
+            MSG=$(jq -r '.message // "Worker disabled"' scanner_response.json 2>/dev/null || echo "Worker disabled by default")
+            echo "⚠️ **Status:** Disabled in Vercel (HTTP 403)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "> *Notice:* $MSG (Set \`ENABLE_CHAIN_SCANNER=true\` in Vercel to activate)." >> $GITHUB_STEP_SUMMARY
+            echo "::warning::Chain scanner is disabled in Vercel (HTTP 403)"
+          elif [ "$HTTP_CODE" = "401" ]; then
+            echo "❌ **Status:** Authentication Failed (HTTP 401)" >> $GITHUB_STEP_SUMMARY
+            echo "::error::Authentication failed for Chain scanner. Verify that GitHub secret CRON_SECRET matches Vercel CRON_SECRET."
+            exit 1
+          elif [ "$HTTP_CODE" = "503" ]; then
+            echo "❌ **Status:** Service Unavailable (HTTP 503)" >> $GITHUB_STEP_SUMMARY
+            echo "::error::CRON_SECRET is not configured in Vercel environment."
+            exit 1
+          elif [ "$HTTP_CODE" = "000" ]; then
+            echo "❌ **Status:** Connection / Network Timeout (HTTP 000)" >> $GITHUB_STEP_SUMMARY
+            echo "::error::Could not connect to production scanner endpoint within timeout limits."
+            exit 1
+          else
+            ERR_MSG=$(jq -r '.error // .message // "Unexpected server response"' scanner_response.json 2>/dev/null || echo "Unexpected response")
+            echo "❌ **Status:** Failed (HTTP $HTTP_CODE: $ERR_MSG)" >> $GITHUB_STEP_SUMMARY
+            echo "::error::Chain scanner failed with HTTP $HTTP_CODE: $ERR_MSG"
+            exit 1
+          fi
