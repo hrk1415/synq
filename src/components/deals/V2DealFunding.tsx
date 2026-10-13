@@ -395,6 +395,25 @@ export function V2DealFunding({ dealData, refetchDealData }: V2DealFundingProps)
         throw new Error(eventVerification.error || 'Deal funding receipt validation failed');
       }
 
+      // Direct in-band notification dispatch for escrow_funded
+      try {
+        const token = await ensureAuthenticated();
+        await fetch('/api/notify', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            dealId: dealData.dealAddress,
+            txHash,
+            event: 'escrow_funded',
+          }),
+        }).catch((e) => console.warn('[V2DealFunding] escrow_funded notify warning:', e));
+      } catch (notifyErr) {
+        console.warn('[V2DealFunding] escrow_funded notification dispatch failed:', notifyErr);
+      }
+
       // Refresh on-chain Deal data
       try {
         await refetchDealData();

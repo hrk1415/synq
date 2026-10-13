@@ -19,8 +19,10 @@ import {
 } from './notifications-db';
 import {
   notifyProposalReceived,
+  notifyProposalDeclined,
   notifyBuyerDealConfirmed,
   notifyDealConfirmedToSeller,
+  notifyEscrowFunded,
   notifyBuyerWorkSubmitted,
   notifyFreelancerRevisionRequested,
   notifySellerPaymentReleased,
@@ -97,6 +99,17 @@ export class DefaultNotificationDispatcher implements INotificationDispatcher {
           });
           break;
 
+        case 'proposal_declined':
+          mailRes = await notifyProposalDeclined({
+            event,
+            dealId: p.dealId,
+            dealTitle: p.dealTitle,
+            dealAmount: p.dealAmount,
+            recipientWallet: p.recipientWallet,
+            note: p.note,
+          });
+          break;
+
         case 'deal_confirmed':
           if (p.recipientRole === 'seller') {
             mailRes = await notifyDealConfirmedToSeller({
@@ -117,6 +130,17 @@ export class DefaultNotificationDispatcher implements INotificationDispatcher {
               note: p.note,
             });
           }
+          break;
+
+        case 'escrow_funded':
+          mailRes = await notifyEscrowFunded({
+            event,
+            dealId: p.dealId,
+            dealTitle: p.dealTitle,
+            dealAmount: p.dealAmount,
+            recipientWallet: p.recipientWallet,
+            note: p.note,
+          });
           break;
 
         case 'work_submitted':

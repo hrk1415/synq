@@ -9,6 +9,8 @@ import {
   notifyDealCancelled,
   notifySellerPaymentReleased,
   notifyBuyerMilestoneRefunded,
+  notifyProposalDeclined,
+  notifyEscrowFunded,
   formatAppUrl,
   formatDealAmount,
   formatUsdcBaseUnits,
@@ -17,7 +19,7 @@ import {
 import { getAuthenticatedWallet, unauthorized } from '@/lib/auth';
 import { normalizeWallet } from '@/lib/utils';
 import { sepoliaPublicClient } from '@/lib/chain';
-import { nexotiqDealABI, synqDealV1ABI } from '@/lib/contracts/abis';
+import { nexotiqDealABI, synqDealV1ABI, synqFactoryV2ABI } from '@/lib/contracts/abis';
 import { getDealProposalById, getDealProposalByDealAddress } from '@/lib/deals/proposals-db';
 import { getMilestoneSubmissionRepository } from '@/lib/deals/submissions-db';
 import {
@@ -44,6 +46,8 @@ export async function GET() {
 
 const ALLOWED_CLIENT_EVENTS = new Set([
   'deal_confirmed',
+  'proposal_declined',
+  'escrow_funded',
   'work_submitted',
   'revision_requested',
   'deal_completed',
@@ -70,6 +74,8 @@ export async function POST(req: NextRequest) {
 
     const fnMap: Record<string, (p: NotifyPayload) => Promise<any>> = {
       deal_confirmed: notifyBuyerDealConfirmed,
+      proposal_declined: notifyProposalDeclined,
+      escrow_funded: notifyEscrowFunded,
       work_submitted: notifyBuyerWorkSubmitted,
       revision_requested: notifyFreelancerRevisionRequested,
       deal_completed: notifyBuyerDealCompleted,
@@ -285,9 +291,23 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (event === 'escrow_funded' && !isBuyer) {
+      return Response.json(
+        { error: 'Forbidden: Only the buyer can dispatch escrow_funded notifications' },
+        { status: 403 },
+      );
+    }
+
     if (event === 'revision_requested' && !isBuyer) {
       return Response.json(
         { error: 'Forbidden: Only the buyer can dispatch revision_requested notifications' },
+        { status: 403 },
+      );
+    }
+
+    if (event === 'proposal_declined' && !isBuyer && !isSeller) {
+      return Response.json(
+        { error: 'Forbidden: Authenticated wallet is not a participant of this deal' },
         { status: 403 },
       );
     }
@@ -306,6 +326,88 @@ export async function POST(req: NextRequest) {
       } else if (onChainStatus === 1 || onChainStatus === 2) {
         // Active or Completed on-chain
         eventVerified = true;
+      }
+    } else if (event === 'proposal_declined') {
+      if (proposal && (proposal.cachedStatus === 'DECLINED' || proposal.declinedTxHash)) {
+        eventVerified = true;
+      }
+      if (!eventVerified && txHash && /^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+        try {
+          const receipt = await sepoliaPublicClient.getTransactionReceipt({ hash: txHash as `0x${string}` });
+          if (receipt && receipt.status === 'success') {
+            const parsedLogs = parseEventLogs({
+              abi: synqFactoryV2ABI,
+              logs: receipt.logs,
+            }) as any[];
+            for (const log of parsedLogs) {
+              if (log.eventName === 'DealProposalDeclined') {
+                const targetId = (proposal?.proposalId || dealId).toLowerCase();
+                if (log.args?.proposalId && String(log.args.proposalId).toLowerCase() === targetId) {
+                  eventVerified = true;
+                  verifiedBlockNumber = receipt.blockNumber;
+                  verifiedTxHash = txHash.toLowerCase();
+                  break;
+                }
+              }
+            }
+          }
+        } catch {}
+      }
+    } else if (event === 'escrow_funded') {
+      // 1. Transaction receipt verification (if txHash provided)
+      if (txHash && /^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+        try {
+          const receipt = await sepoliaPublicClient.getTransactionReceipt({ hash: txHash as `0x${string}` });
+          if (receipt && receipt.status === 'success') {
+            const matchesDealContract =
+              (receipt.to && targetDealAddress && receipt.to.toLowerCase() === targetDealAddress) ||
+              receipt.logs.some((l) => targetDealAddress && l.address.toLowerCase() === targetDealAddress);
+
+            if (matchesDealContract) {
+              const relevantLogs = targetDealAddress
+                ? receipt.logs.filter((l) => l.address.toLowerCase() === targetDealAddress)
+                : receipt.logs;
+
+              const parsedLogs = parseEventLogs({
+                abi: synqDealV1ABI,
+                logs: relevantLogs,
+              }) as any[];
+
+              for (const log of parsedLogs) {
+                if (log.eventName === 'DealFunded') {
+                  eventVerified = true;
+                  if (verifiedLogIndex === undefined && (log as any).logIndex !== undefined) {
+                    verifiedLogIndex = Number((log as any).logIndex);
+                  }
+                  if ((log as any).args?.totalEscrow !== undefined) {
+                    trustedAmount = formatUsdcBaseUnits(BigInt((log as any).args.totalEscrow));
+                  }
+                  verifiedBlockNumber = receipt.blockNumber;
+                  verifiedTxHash = txHash.toLowerCase();
+                  break;
+                }
+              }
+            }
+          }
+        } catch {}
+      }
+
+      // 2. On-chain contract state verification (if contract exists and already active)
+      if (!eventVerified && targetDealAddress && /^0x[0-9a-fA-F]{40}$/.test(targetDealAddress)) {
+        try {
+          if (onChainStatus === 1 || onChainStatus === 2) {
+            eventVerified = true;
+          } else {
+            const contractState = await sepoliaPublicClient.readContract({
+              address: targetDealAddress as `0x${string}`,
+              abi: synqDealV1ABI,
+              functionName: 'state',
+            });
+            if (Number(contractState) >= 1 && Number(contractState) <= 3) {
+              eventVerified = true;
+            }
+          }
+        } catch {}
       }
     } else if (event === 'work_submitted') {
       // Must verify confirmed deliverable submission against authoritative persisted DB or on-chain state.
@@ -775,10 +877,10 @@ export async function POST(req: NextRequest) {
     let trustedRecipient: string;
     let recipientRole: 'buyer' | 'seller';
 
-    if (event === 'payment_released' || event === 'deal_completed_seller' || event === 'revision_requested') {
+    if (event === 'payment_released' || event === 'deal_completed_seller' || event === 'revision_requested' || event === 'escrow_funded') {
       trustedRecipient = trustedSeller;
       recipientRole = 'seller';
-    } else if (event === 'deal_confirmed' || event === 'work_submitted' || event === 'deal_completed' || event === 'milestone_refunded') {
+    } else if (event === 'deal_confirmed' || event === 'work_submitted' || event === 'deal_completed' || event === 'milestone_refunded' || event === 'proposal_declined') {
       trustedRecipient = trustedBuyer;
       recipientRole = 'buyer';
     } else {
@@ -864,7 +966,9 @@ export async function POST(req: NextRequest) {
       freelancerWallet: trustedSeller,
       counterpartyWallet: isBuyer ? trustedSeller : trustedBuyer,
       dealTitle: trustedTitle || (body.dealTitle ? String(body.dealTitle).slice(0, 100) : 'Untitled deal'),
-      dealAmount: trustedAmount || (body.dealAmount ? formatDealAmount(String(body.dealAmount).slice(0, 50)) : ''),
+      dealAmount: event === 'escrow_funded'
+        ? (trustedAmount || '')
+        : (trustedAmount || (body.dealAmount ? formatDealAmount(String(body.dealAmount).slice(0, 50)) : '')),
       note: body.note ? String(body.note).slice(0, 500) : undefined,
       evidence: body.evidence ? String(body.evidence).slice(0, 500) : undefined,
       link: validatedLink,

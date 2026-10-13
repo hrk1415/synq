@@ -111,6 +111,8 @@ export function extractSafeBlockNumber(raw: unknown): {
  */
 export const ON_CHAIN_DEAL_EVENTS = new Set([
   'deal_confirmed',
+  'proposal_declined',
+  'escrow_funded',
   'work_submitted',
   'revision_requested',
   'payment_released',

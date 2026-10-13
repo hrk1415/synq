@@ -311,6 +311,8 @@ export interface NotifyPayload {
     | 'chat_message'
     | 'order_confirmed'
     | 'proposal_received'
+    | 'proposal_declined'
+    | 'escrow_funded'
     | 'milestone_disputed'
     | 'milestone_refunded'
     | 'mutual_settlement_proposed'
@@ -747,6 +749,44 @@ export async function notifyProposalReceived(p: NotifyPayload): Promise<MailResu
   if (p.note) rows.push(['Note', p.note]);
   const dealLink = formatAppUrl(p.dealId ? `/deals/proposals/${p.dealId}` : '/deals');
   const { html, text } = layout(title, heading, rows, `Sign in to view and accept or decline the proposal: ${dealLink}`);
+  const res = await sendMail(email, title, html, text);
+  return { ...res, event: p.event, recipientResolved: true };
+}
+
+export async function notifyProposalDeclined(p: NotifyPayload): Promise<MailResult> {
+  const { email, skip } = await resolveRecipientForNotification(String(p.recipientWallet || ''), p.event);
+  if (skip || !email) return skip!;
+  const title = 'Deal proposal declined';
+  const heading = 'The freelancer has declined your deal proposal.';
+  const displayAmount = formatDealAmount(p.dealAmount);
+  const rows: [string, string][] = [
+    ['Deal', p.dealTitle || 'Untitled deal'],
+    ['Freelancer', p.freelancerWallet || p.counterpartyWallet || '—'],
+    ['Amount', displayAmount || '—'],
+    ['Reference', p.dealId || '—'],
+  ];
+  if (p.note) rows.push(['Note', p.note]);
+  const dealLink = formatAppUrl(p.link || (p.dealId ? `/deals/proposals/${p.dealId}` : '/deals'));
+  const { html, text } = layout(title, heading, rows, `Open the proposal to view details or create a new proposal: ${dealLink}`);
+  const res = await sendMail(email, title, html, text);
+  return { ...res, event: p.event, recipientResolved: true };
+}
+
+export async function notifyEscrowFunded(p: NotifyPayload): Promise<MailResult> {
+  const { email, skip } = await resolveRecipientForNotification(String(p.recipientWallet || ''), p.event);
+  if (skip || !email) return skip!;
+  const title = 'Escrow funded — deal is active';
+  const heading = 'Escrow funding has been confirmed on-chain. Funds are locked in escrow and you may begin work on Milestone #1.';
+  const displayAmount = formatDealAmount(p.dealAmount);
+  const rows: [string, string][] = [
+    ['Deal', p.dealTitle || 'Untitled deal'],
+    ['Client', p.clientWallet || p.counterpartyWallet || '—'],
+    ['Amount', displayAmount || '—'],
+    ['Reference', p.dealId || '—'],
+  ];
+  if (p.note) rows.push(['Note', p.note]);
+  const dealLink = formatAppUrl(p.link || (p.dealId ? `/deals/${p.dealId}` : '/deals'));
+  const { html, text } = layout(title, heading, rows, `Open the deal to view milestones and submit deliverables: ${dealLink}`);
   const res = await sendMail(email, title, html, text);
   return { ...res, event: p.event, recipientResolved: true };
 }
