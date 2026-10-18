@@ -50,7 +50,7 @@ export default function DealProposalPage() {
   const proposalId = rawProposalId?.toLowerCase();
 
   const { address, isConnected } = useAccount();
-  const { ensureAuthenticated } = useAuthSession();
+  const { ensureAuthenticated, getToken } = useAuthSession();
   const { ensureSepolia, networkReady, isSwitching } = useSepoliaNetwork();
   const { writeContractAsync } = useWriteContract();
 
@@ -76,12 +76,7 @@ export default function DealProposalPage() {
     try {
       setLoading(true);
       setError(null);
-      let token: string | undefined;
-      try {
-        token = await ensureAuthenticated();
-      } catch (authErr: any) {
-        // Not authenticated yet
-      }
+      const token = getToken() || undefined;
 
       const headers: Record<string, string> = {};
       if (token) {
@@ -112,7 +107,7 @@ export default function DealProposalPage() {
     } finally {
       setLoading(false);
     }
-  }, [proposalId, ensureAuthenticated]);
+  }, [proposalId, getToken]);
 
   useEffect(() => {
     loadProposal();
@@ -344,7 +339,24 @@ export default function DealProposalPage() {
             <AlertTriangle className="mx-auto h-12 w-12 text-red-400" />
             <h3 className="text-lg font-semibold text-white">Proposal Unavailable</h3>
             <p className="text-sm text-red-200/80">{error || 'Could not load proposal data'}</p>
-            <div className="pt-2">
+            <div className="pt-2 flex items-center justify-center gap-3">
+              {isConnected && !getToken() && (
+                <Button
+                  variant="default"
+                  onClick={async () => {
+                    try {
+                      setLoading(true);
+                      await ensureAuthenticated();
+                      await loadProposal();
+                    } catch {
+                      setLoading(false);
+                    }
+                  }}
+                  className="bg-blue-600 hover:bg-blue-500 text-white"
+                >
+                  Verify Wallet to View
+                </Button>
+              )}
               <Button variant="outline" onClick={() => router.push('/messages')}>
                 <ArrowLeft className="mr-2 h-4 w-4" /> Return to Messages
               </Button>

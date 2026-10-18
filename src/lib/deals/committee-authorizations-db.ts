@@ -3,6 +3,7 @@ import { getDb } from '@/db';
 import {
   committeeResolutionAuthorizations,
   committeeResolutionSignatures,
+  milestoneDisputes,
   type CommitteeResolutionAuthorizationRow,
   type NewCommitteeResolutionAuthorizationRow,
   type CommitteeResolutionSignatureRow,
@@ -31,6 +32,7 @@ import {
 import {
   getResolutionProposalTypedData,
   getFinalResolutionTypedData,
+  serializeTypedDataForJson,
   hashResolutionProposalAuth,
   hashFinalResolutionAuth,
   verifyCommitteeSignerSignature,
@@ -84,6 +86,14 @@ export interface ICommitteeAuthorizationRepository {
     phase: ResolutionReportPhase,
     nonce: string
   ): Promise<CommitteeResolutionAuthorizationRow | null>;
+
+  getMaxNonce?(
+    chainId: number,
+    committeeAddress: string,
+    dealAddress: string,
+    milestoneId: number,
+    phase: ResolutionReportPhase
+  ): Promise<bigint | null>;
 
   getAuthByReportId(reportId: string): Promise<CommitteeResolutionAuthorizationRow | null>;
 
@@ -162,6 +172,45 @@ export class DrizzleCommitteeAuthorizationRepository implements ICommitteeAuthor
     return rows[0] ?? null;
   }
 
+  async getMaxNonce(
+    chainId: number,
+    committeeAddress: string,
+    dealAddress: string,
+    milestoneId: number,
+    phase: ResolutionReportPhase
+  ): Promise<bigint | null> {
+    const db = getDb();
+    const rows = await db
+      .select({ resolutionNonce: committeeResolutionAuthorizations.resolutionNonce })
+      .from(committeeResolutionAuthorizations)
+      .where(
+        and(
+          eq(committeeResolutionAuthorizations.chainId, chainId),
+          eq(committeeResolutionAuthorizations.committeeAddress, committeeAddress.toLowerCase()),
+          eq(committeeResolutionAuthorizations.dealAddress, dealAddress.toLowerCase()),
+          eq(committeeResolutionAuthorizations.milestoneId, milestoneId),
+          eq(committeeResolutionAuthorizations.phase, phase)
+        )
+      );
+
+    if (!rows || rows.length === 0) {
+      return null;
+    }
+
+    let maxNonce: bigint | null = null;
+    for (const row of rows) {
+      try {
+        const n = BigInt(row.resolutionNonce);
+        if (maxNonce === null || n > maxNonce) {
+          maxNonce = n;
+        }
+      } catch {
+        // ignore malformed numeric
+      }
+    }
+    return maxNonce;
+  }
+
   async listAuthsByMilestone(
     chainId: number,
     dealAddress: string,
@@ -178,7 +227,11 @@ export class DrizzleCommitteeAuthorizationRepository implements ICommitteeAuthor
           eq(committeeResolutionAuthorizations.milestoneId, milestoneId)
         )
       )
-      .orderBy(desc(committeeResolutionAuthorizations.createdAt));
+      .orderBy(
+        desc(committeeResolutionAuthorizations.createdAt),
+        desc(committeeResolutionAuthorizations.resolutionNonce),
+        desc(committeeResolutionAuthorizations.id)
+      );
   }
 
   async createAuth(row: NewCommitteeResolutionAuthorizationRow): Promise<CommitteeResolutionAuthorizationRow> {
@@ -441,6 +494,73 @@ export async function createCommitteeAuthorization(params: {
     functionName: 'committeeEpoch',
   }) as bigint;
 
+  // 6b. Expired-Only Authorization Recovery Check
+  // Inspect previous authorizations for this deal, milestone, and phase.
+  const existingMilestoneAuths = await authRepo.listAuthsByMilestone(SEPOLIA_CHAIN_ID, dealAddress, milestoneId);
+  const phaseAuths = existingMilestoneAuths.filter((a) => a.phase === phase);
+
+  // Sort deterministically: createdAt DESC, resolutionNonce DESC, id DESC
+  phaseAuths.sort((a, b) => {
+    const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    if (timeB !== timeA) return timeB - timeA;
+
+    const nonceA = BigInt(a.resolutionNonce || '0');
+    const nonceB = BigInt(b.resolutionNonce || '0');
+    if (nonceB > nonceA) return 1;
+    if (nonceB < nonceA) return -1;
+
+    const idA = String(a.id || '');
+    const idB = String(b.id || '');
+    return idB.localeCompare(idA);
+  });
+
+  const latestAuth = phaseAuths[0] ?? null;
+
+  if (latestAuth) {
+    // Check 1: Never create a new authorization when resolution has already executed on-chain
+    if (latestAuth.status === 'executed' || Boolean(latestAuth.executionTxHash)) {
+      throw new CommitteeAuthConflictError(
+        'Resolution has already executed on-chain for this milestone phase. Further authorizations are prohibited.'
+      );
+    }
+
+    // Check 2: Check whether latest authorization's nonce was consumed on-chain (executed-but-unreconciled)
+    const latestNonceUsedOnChain = await isNonceUsedOnChain({
+      committeeAddress: authorizedCommittee,
+      dealAddress,
+      milestoneId,
+      phase,
+      nonce: BigInt(latestAuth.resolutionNonce),
+      publicClient: client,
+    });
+
+    if (latestNonceUsedOnChain) {
+      if (latestAuth.status !== 'executed') {
+        await authRepo.updateAuthStatus(latestAuth.id, 'executed');
+      }
+      throw new CommitteeAuthConflictError(
+        `Resolution authorization nonce ${latestAuth.resolutionNonce} has already been consumed on-chain. Resolution is executed; recovery prohibited.`
+      );
+    }
+
+    // Check 3: Mandatory Security Rule: Recovery is permitted ONLY when the latest authorization has actually expired on-chain.
+    // block.timestamp <= auth.validUntil means it is still unexpired.
+    // Database 'invalidated' status alone is NEVER sufficient to permit recovery.
+    // EIP-712 signatures are not revoked by database invalidation.
+    const latestValidUntilBn = BigInt(latestAuth.validUntil);
+    if (chainTimestamp <= latestValidUntilBn) {
+      throw new CommitteeAuthConflictError(
+        `Active authorization is still within its valid signing window (valid until block timestamp ${latestValidUntilBn.toString()}, current block timestamp is ${chainTimestamp.toString()}). Recovery is strictly prohibited for unexpired authorizations.`
+      );
+    }
+
+    // Check 4: Mark expired authorization status in DB if not already updated
+    if (latestAuth.status !== 'expired') {
+      await authRepo.updateAuthStatus(latestAuth.id, 'expired');
+    }
+  }
+
   // 7. Nonce Allocation & Validation
   let resolutionNonce: bigint;
   if (params.resolutionNonce !== undefined) {
@@ -448,9 +568,47 @@ export async function createCommitteeAuthorization(params: {
     if (resolutionNonce < 0n || resolutionNonce > 18446744073709551615n) {
       throw new CommitteeAuthValidationError('resolutionNonce must be a valid uint64');
     }
+    const existingWithNonce = await authRepo.getAuthByNonce(
+      SEPOLIA_CHAIN_ID,
+      authorizedCommittee,
+      dealAddress,
+      milestoneId,
+      phase,
+      resolutionNonce.toString()
+    );
+    if (existingWithNonce) {
+      throw new CommitteeAuthConflictError(
+        `Resolution nonce ${resolutionNonce.toString()} is already allocated in database for this milestone phase`
+      );
+    }
   } else {
-    // Propose an unused nonce starting at 1
-    resolutionNonce = 1n;
+    // Propose an unused nonce accounting for both previously allocated DB nonces and on-chain consumption
+    let maxDbNonce: bigint | null = null;
+    if (typeof authRepo.getMaxNonce === 'function') {
+      maxDbNonce = await authRepo.getMaxNonce(
+        SEPOLIA_CHAIN_ID,
+        authorizedCommittee,
+        dealAddress,
+        milestoneId,
+        phase
+      );
+    } else {
+      for (const a of phaseAuths) {
+        if (a.committeeAddress.toLowerCase() === authorizedCommittee.toLowerCase()) {
+          try {
+            const n = BigInt(a.resolutionNonce);
+            if (maxDbNonce === null || n > maxDbNonce) {
+              maxDbNonce = n;
+            }
+          } catch {}
+        }
+      }
+    }
+
+    // If maxDbNonce exists, start proposal candidate at maxDbNonce + 1n, otherwise start at 1n
+    resolutionNonce = maxDbNonce !== null && maxDbNonce >= 1n ? maxDbNonce + 1n : 1n;
+
+    // Check on-chain consumption and advance if needed
     while (true) {
       const isUsed = await isNonceUsedOnChain({
         committeeAddress: authorizedCommittee,
@@ -510,15 +668,18 @@ export async function createCommitteeAuthorization(params: {
     submissionVersion: reportRow.submissionVersion,
   };
 
+  let rawTypedData: any;
   let typedData: Record<string, unknown>;
   let typedDataHash: `0x${string}`;
 
   if (phase === 'INITIAL_RESOLUTION') {
-    typedData = getResolutionProposalTypedData(authData) as unknown as Record<string, unknown>;
+    rawTypedData = getResolutionProposalTypedData(authData);
     typedDataHash = hashResolutionProposalAuth(authData);
+    typedData = serializeTypedDataForJson(rawTypedData) as unknown as Record<string, unknown>;
   } else {
-    typedData = getFinalResolutionTypedData(authData) as unknown as Record<string, unknown>;
+    rawTypedData = getFinalResolutionTypedData(authData);
     typedDataHash = hashFinalResolutionAuth(authData);
+    typedData = serializeTypedDataForJson(rawTypedData) as unknown as Record<string, unknown>;
   }
 
   // 10. Persist Authorization Record
@@ -545,7 +706,22 @@ export async function createCommitteeAuthorization(params: {
     createdBySigner: callerWallet.toLowerCase(),
   };
 
-  const createdAuth = await authRepo.createAuth(newRow);
+  let createdAuth: CommitteeResolutionAuthorizationRow;
+  try {
+    createdAuth = await authRepo.createAuth(newRow);
+  } catch (err: any) {
+    if (
+      err?.code === '23505' ||
+      err?.message?.includes('uq_comm_auth_nonce') ||
+      err?.message?.includes('unique constraint') ||
+      err?.message?.includes('duplicate key')
+    ) {
+      throw new CommitteeAuthConflictError(
+        'Concurrent authorization creation detected for this milestone phase. Please refresh.'
+      );
+    }
+    throw err;
+  }
 
   return {
     authorization: createdAuth,
@@ -1281,53 +1457,187 @@ export async function reconcileCommitteeAuthorization(params: {
         ? 'ResolutionProposalSubmitted'
         : 'FinalResolutionSubmitted';
 
-    const logs = await (client as any).getLogs({
-      address: auth.committeeAddress as `0x${string}`,
-      event: {
-        type: 'event',
-        name: eventName,
-        inputs: [
-          { indexed: true, name: 'deal', type: 'address' },
-          { indexed: true, name: 'milestoneId', type: 'uint256' },
-          { indexed: false, name: 'freelancerAmount', type: 'uint256' },
-          { indexed: false, name: 'clientAmount', type: 'uint256' },
-          { indexed: false, name: 'justificationHash', type: 'bytes32' },
-          { indexed: false, name: 'resolutionNonce', type: 'uint64' },
-        ],
-      },
-      args: {
-        deal: auth.dealAddress as `0x${string}`,
-        milestoneId: BigInt(auth.milestoneId),
-      },
-    });
+    // 1. Determine safe case-specific starting block
+    // Sepolia V2 deployment block baseline floor (11833191) to prevent querying uninitialized chain history
+    const SEPOLIA_V2_DEPLOYMENT_BLOCK = 11833191n;
+    const baselineFloor = auth.chainId === SEPOLIA_CHAIN_ID ? SEPOLIA_V2_DEPLOYMENT_BLOCK : 0n;
+    let caseStartBlock: bigint | null = null;
 
+    // A. Query dispute transaction receipt block if available in database
+    try {
+      const db = getDb();
+      const disputeRows = await db
+        .select({ txHash: milestoneDisputes.txHash })
+        .from(milestoneDisputes)
+        .where(
+          and(
+            eq(milestoneDisputes.chainId, auth.chainId),
+            eq(milestoneDisputes.dealAddress, auth.dealAddress.toLowerCase()),
+            eq(milestoneDisputes.milestoneId, auth.milestoneId)
+          )
+        )
+        .limit(1);
+
+      if (disputeRows[0]?.txHash && typeof (client as any).getTransactionReceipt === 'function') {
+        const disputeReceipt = await (client as any).getTransactionReceipt({
+          hash: disputeRows[0].txHash as `0x${string}`,
+        });
+        if (disputeReceipt?.blockNumber) {
+          caseStartBlock = BigInt(disputeReceipt.blockNumber);
+        }
+      }
+    } catch {
+      // Graceful fallback to baselineFloor if dispute receipt is unreachable
+    }
+
+    // B. For FINAL_RESOLUTION, check the confirmed INITIAL_RESOLUTION report receipt block
+    if (auth.phase === 'FINAL_RESOLUTION') {
+      try {
+        const initialReport = await reportRepo.getByMilestoneAndPhase(
+          auth.chainId,
+          auth.dealAddress,
+          auth.milestoneId,
+          'INITIAL_RESOLUTION'
+        );
+        if (initialReport?.txHash && typeof (client as any).getTransactionReceipt === 'function') {
+          const initialReceipt = await (client as any).getTransactionReceipt({
+            hash: initialReport.txHash as `0x${string}`,
+          });
+          if (initialReceipt?.blockNumber) {
+            const initialBlock = BigInt(initialReceipt.blockNumber);
+            if (caseStartBlock === null || initialBlock > caseStartBlock) {
+              caseStartBlock = initialBlock;
+            }
+          }
+        }
+      } catch {
+        // Graceful fallback
+      }
+    }
+
+    const effectiveStartBlock =
+      caseStartBlock !== null && caseStartBlock > baselineFloor
+        ? caseStartBlock
+        : baselineFloor;
+
+    // 2. Query latest block
+    let latestBlock: bigint;
+    if (typeof (client as any).getBlockNumber === 'function') {
+      try {
+        latestBlock = await (client as any).getBlockNumber();
+      } catch (err: any) {
+        throw new CommitteeExecutionRecoveryError(
+          `Unable to query current block number from RPC: ${err?.message || String(err)}. Please retry or provide the transaction hash directly.`
+        );
+      }
+    } else {
+      throw new CommitteeExecutionRecoveryError(
+        'PublicClient does not support getBlockNumber. Please provide the transaction hash directly.'
+      );
+    }
+
+    const safeStartBlock = effectiveStartBlock <= latestBlock ? effectiveStartBlock : latestBlock;
     const expectedFreelancerAmount = BigInt(auth.freelancerAmount);
     const expectedClientAmount = BigInt(auth.clientAmount);
     const expectedHash = auth.justificationHash.toLowerCase();
     const expectedNonce = BigInt(auth.resolutionNonce);
 
-    const matching = logs.filter((l: any) => {
-      const args = l.args;
-      return (
-        BigInt(args.freelancerAmount) === expectedFreelancerAmount &&
-        BigInt(args.clientAmount) === expectedClientAmount &&
-        String(args.justificationHash).toLowerCase() === expectedHash &&
-        BigInt(args.resolutionNonce) === expectedNonce
-      );
-    });
+    // 3. Bounded chunked backwards scan (from latestBlock to safeStartBlock)
+    const INITIAL_CHUNK_SIZE = 10000n;
+    const MIN_CHUNK_SIZE = 1000n;
 
-    if (matching.length === 0) {
+    let currentTo = latestBlock;
+    let chunkSize = INITIAL_CHUNK_SIZE;
+    const matchingLogs: any[] = [];
+
+    while (currentTo >= safeStartBlock) {
+      const currentFrom =
+        currentTo >= chunkSize && currentTo - chunkSize + 1n >= safeStartBlock
+          ? currentTo - chunkSize + 1n
+          : safeStartBlock;
+
+      try {
+        const chunkLogs = await (client as any).getLogs({
+          address: auth.committeeAddress as `0x${string}`,
+          event: {
+            type: 'event',
+            name: eventName,
+            inputs: [
+              { indexed: true, name: 'deal', type: 'address' },
+              { indexed: true, name: 'milestoneId', type: 'uint256' },
+              { indexed: false, name: 'freelancerAmount', type: 'uint256' },
+              { indexed: false, name: 'clientAmount', type: 'uint256' },
+              { indexed: false, name: 'justificationHash', type: 'bytes32' },
+              { indexed: false, name: 'resolutionNonce', type: 'uint64' },
+            ],
+          },
+          args: {
+            deal: auth.dealAddress as `0x${string}`,
+            milestoneId: BigInt(auth.milestoneId),
+          },
+          fromBlock: currentFrom,
+          toBlock: currentTo,
+        });
+
+        if (Array.isArray(chunkLogs) && chunkLogs.length > 0) {
+          for (const l of chunkLogs) {
+            const args = l.args;
+            if (
+              args &&
+              BigInt(args.freelancerAmount) === expectedFreelancerAmount &&
+              BigInt(args.clientAmount) === expectedClientAmount &&
+              String(args.justificationHash).toLowerCase() === expectedHash &&
+              BigInt(args.resolutionNonce) === expectedNonce
+            ) {
+              matchingLogs.push(l);
+            }
+          }
+        }
+
+        // On-chain nonce replay protection guarantees this resolutionNonce is unique per (deal, milestoneId)
+        if (matchingLogs.length > 0) {
+          break;
+        }
+
+        if (currentFrom <= safeStartBlock) {
+          break;
+        }
+        currentTo = currentFrom - 1n;
+      } catch (err: any) {
+        const errStr = String(err?.message || err || '').toLowerCase();
+        const isRangeError =
+          errStr.includes('block range') ||
+          errStr.includes('range limit') ||
+          errStr.includes('exceed') ||
+          errStr.includes('limit') ||
+          errStr.includes('-32005') ||
+          errStr.includes('-32600') ||
+          errStr.includes('too many') ||
+          errStr.includes('more than');
+
+        if (isRangeError && chunkSize > MIN_CHUNK_SIZE) {
+          chunkSize = chunkSize / 2n;
+          continue;
+        }
+
+        throw new CommitteeExecutionRecoveryError(
+          `RPC log scan could not be completed for block range ${currentFrom.toString()}–${currentTo.toString()} (${err?.message || String(err)}). If your transaction was broadcasted, you can reconcile it directly by providing the transaction hash.`
+        );
+      }
+    }
+
+    if (matchingLogs.length === 0) {
       throw new CommitteeExecutionRecoveryError(
-        `Crash recovery failed: zero matching ${eventName} events found on-chain`
+        `No matching ${eventName} event found on-chain across scanned blocks ${safeStartBlock.toString()} to ${latestBlock.toString()}. If your transaction was recently submitted, please wait a moment for block confirmation or provide the transaction hash directly.`
       );
     }
-    if (matching.length > 1) {
+    if (matchingLogs.length > 1) {
       throw new CommitteeExecutionRecoveryError(
-        `Crash recovery failed: ambiguous multiple matching ${eventName} events found`
+        `Crash recovery failed: ambiguous multiple matching ${eventName} events found on-chain`
       );
     }
 
-    verifiedTxHash = matching[0].transactionHash;
+    verifiedTxHash = matchingLogs[0].transactionHash;
     if (typeof (client as any).getTransactionReceipt !== 'function') {
       throw new CommitteeExecutionReceiptError('PublicClient does not support getTransactionReceipt');
     }

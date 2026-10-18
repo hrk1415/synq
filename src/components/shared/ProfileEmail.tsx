@@ -18,7 +18,7 @@ export default function ProfileEmail({
   address?: string;
   onEmailChange?: (email: string | null) => void;
 }) {
-  const { ensureAuthenticated } = useAuthSession();
+  const { ensureAuthenticated, getToken } = useAuthSession();
   const [email, setEmail] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<'view' | 'email' | 'code' | 'unlink'>('view');
@@ -39,11 +39,17 @@ export default function ProfileEmail({
 
   const refresh = useCallback(() => {
     if (!address) { setEmail(null); onEmailChange?.(null); return; }
+    const token = getToken();
+    if (!token) {
+      setEmail(null);
+      onEmailChange?.(null);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     let cancelled = false;
     void (async () => {
       try {
-        const token = await ensureAuthenticated();
         const response = await fetch(`/api/profile?wallet=${address}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -60,7 +66,7 @@ export default function ProfileEmail({
       }
     })();
     return () => { cancelled = true; };
-  }, [address, ensureAuthenticated, onEmailChange]);
+  }, [address, getToken, onEmailChange]);
 
   useEffect(() => {
     const cleanup = refresh();

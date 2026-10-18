@@ -380,9 +380,10 @@ export function V2MilestoneLifecycle({ dealData, refetchDealData }: V2MilestoneL
     setSubmittedRecordError(null);
 
     try {
-      let token = getToken();
+      const token = getToken();
       if (!token) {
-        token = await ensureAuthenticated();
+        setLoadingSubmittedRecord(false);
+        return;
       }
 
       const res = await fetch(
@@ -430,7 +431,7 @@ export function V2MilestoneLifecycle({ dealData, refetchDealData }: V2MilestoneL
     } finally {
       setLoadingSubmittedRecord(false);
     }
-  }, [isSubmitted, isParticipant, dealData.dealAddress, currentIndex, currentMilestone.version, currentMilestone.evidenceRootHash, currentMilestone.specHash, getToken, ensureAuthenticated]);
+  }, [isSubmitted, isParticipant, dealData.dealAddress, currentIndex, currentMilestone.version, currentMilestone.evidenceRootHash, currentMilestone.specHash, getToken]);
 
   useEffect(() => {
     if (isSubmitted && isParticipant) {
@@ -445,9 +446,10 @@ export function V2MilestoneLifecycle({ dealData, refetchDealData }: V2MilestoneL
     setRevisionRecordError(null);
 
     try {
-      let token = getToken();
+      const token = getToken();
       if (!token) {
-        token = await ensureAuthenticated();
+        setLoadingRevisionRecord(false);
+        return;
       }
 
       const res = await fetch(
@@ -498,7 +500,6 @@ export function V2MilestoneLifecycle({ dealData, refetchDealData }: V2MilestoneL
     currentMilestone.specHash,
     currentMilestone.evidenceRootHash,
     getToken,
-    ensureAuthenticated,
   ]);
 
   useEffect(() => {

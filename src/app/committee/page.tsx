@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Press_Start_2P } from 'next/font/google';
 
 const pressStart2P = Press_Start_2P({
@@ -15,8 +15,11 @@ import { Button } from '@/components/ui/button';
 import { useAuthSession } from '@/hooks/useAuthSession';
 import { useSepoliaNetwork } from '@/hooks/useSepoliaNetwork';
 import { checkCommitteeSignerStatus, type CommitteeQueueItem, type CommitteeSignerStatus } from '@/lib/deals/v2-committee-signer';
-import { CommitteeQueue } from '@/components/committee/CommitteeQueue';
+import { CommitteeQueue, type CommitteeQueueFilter } from '@/components/committee/CommitteeQueue';
 import { CommitteeResolutionWorkspace } from '@/components/committee/CommitteeResolutionWorkspace';
+import { CommitteeHistory, type HighlightedCaseTarget } from '@/components/committee/CommitteeHistory';
+import { CommitteePendingSync } from '@/components/committee/CommitteePendingSync';
+import type { PendingSyncItem } from '@/lib/deals/committee-pending-sync';
 import { Scale, ShieldAlert, Loader2, RefreshCw } from 'lucide-react';
 
 export default function CommitteePortalPage() {
@@ -30,8 +33,20 @@ export default function CommitteePortalPage() {
   const [loadingQueue, setLoadingQueue] = useState<boolean>(false);
   const [queueError, setQueueError] = useState<string | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'initial' | 'final'>('initial');
+  const [activeTab, setActiveTab] = useState<'initial' | 'final' | 'history'>('initial');
   const [selectedMilestone, setSelectedMilestone] = useState<CommitteeQueueItem | null>(null);
+
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [quickFilter, setQuickFilter] = useState<CommitteeQueueFilter>('all');
+  const [highlightedCase, setHighlightedCase] = useState<HighlightedCaseTarget | null>(null);
+
+  const [pendingSyncItems, setPendingSyncItems] = useState<PendingSyncItem[]>([]);
+  const [loadingPendingSync, setLoadingPendingSync] = useState<boolean>(false);
+  const [pendingSyncError, setPendingSyncError] = useState<string | null>(null);
+
+  // Active wallet reference and request-generation counter for strict async isolation
+  const activeWalletRef = useRef<string | null>(null);
+  const pendingSyncReqGenRef = useRef<number>(0);
 
   // 1. Verify Signer Access
   const verifySignerAccess = useCallback(async () => {
@@ -54,6 +69,18 @@ export default function CommitteePortalPage() {
   useEffect(() => {
     verifySignerAccess();
   }, [verifySignerAccess]);
+
+  // Reset search, filters, and pending navigation when connected wallet address changes
+  useEffect(() => {
+    activeWalletRef.current = address ? address.toLowerCase() : null;
+    pendingSyncReqGenRef.current += 1;
+    setSearchQuery('');
+    setQuickFilter('all');
+    setHighlightedCase(null);
+    setPendingSyncItems([]);
+    setPendingSyncError(null);
+    setLoadingPendingSync(false);
+  }, [address]);
 
   // 2. Fetch Queue
   const fetchQueue = useCallback(async () => {
@@ -79,11 +106,53 @@ export default function CommitteePortalPage() {
     }
   }, [signerStatus?.isAnySigner, getToken]);
 
+  // 3. Fetch Pending Synchronization Authorizations with strict generation & active wallet guards
+  const fetchPendingSync = useCallback(async () => {
+    if (!signerStatus?.isAnySigner || !address) {
+      setPendingSyncItems([]);
+      setLoadingPendingSync(false);
+      return;
+    }
+    const reqGen = ++pendingSyncReqGenRef.current;
+    const targetWallet = address.toLowerCase();
+
+    setLoadingPendingSync(true);
+    setPendingSyncError(null);
+    try {
+      const token = await getToken();
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await fetch('/api/committee/pending-sync', { headers });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      // Ensure async response strictly matches the active wallet address and request generation
+      if (reqGen === pendingSyncReqGenRef.current && activeWalletRef.current === targetWallet) {
+        setPendingSyncItems(data.items || []);
+      }
+    } catch (err: any) {
+      if (reqGen === pendingSyncReqGenRef.current && activeWalletRef.current === targetWallet) {
+        setPendingSyncError(err?.message || 'Failed to check pending synchronizations');
+      }
+    } finally {
+      if (reqGen === pendingSyncReqGenRef.current && activeWalletRef.current === targetWallet) {
+        setLoadingPendingSync(false);
+      }
+    }
+  }, [signerStatus?.isAnySigner, address, getToken]);
+
+  const refreshAll = useCallback(async () => {
+    await Promise.all([fetchQueue(), fetchPendingSync()]);
+  }, [fetchQueue, fetchPendingSync]);
+
   useEffect(() => {
     if (signerStatus?.isAnySigner) {
-      fetchQueue();
+      refreshAll();
     }
-  }, [signerStatus?.isAnySigner, fetchQueue]);
+  }, [signerStatus?.isAnySigner, refreshAll]);
 
   if (checkingAccess) {
     return (
@@ -143,11 +212,11 @@ export default function CommitteePortalPage() {
           <Button
             size="sm"
             variant="outline"
-            onClick={fetchQueue}
-            disabled={loadingQueue}
+            onClick={refreshAll}
+            disabled={loadingQueue || loadingPendingSync}
             className="h-8 text-xs border border-white/20 bg-[#252525] text-white hover:bg-neutral-800 flex items-center gap-1.5"
           >
-            <RefreshCw className={`h-3 w-3 ${loadingQueue ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`h-3 w-3 ${loadingQueue || loadingPendingSync ? 'animate-spin' : ''}`} />
             Refresh Queue
           </Button>
         </div>
@@ -158,53 +227,113 @@ export default function CommitteePortalPage() {
           item={selectedMilestone}
           onBack={() => {
             setSelectedMilestone(null);
-            fetchQueue();
+            refreshAll();
           }}
           onSettled={() => {
             setSelectedMilestone(null);
-            fetchQueue();
+            refreshAll();
+          }}
+          onViewInHistory={(caseInfo) => {
+            setHighlightedCase(caseInfo);
+            setActiveTab('history');
+            setSelectedMilestone(null);
+            refreshAll();
           }}
         />
       ) : (
         <div className="space-y-4">
+          <CommitteePendingSync
+            connectedWallet={address}
+            items={pendingSyncItems}
+            isLoading={loadingPendingSync}
+            error={pendingSyncError}
+            onRefresh={refreshAll}
+            onViewInHistory={(caseInfo) => {
+              setHighlightedCase(caseInfo);
+              setActiveTab('history');
+              setSelectedMilestone(null);
+              refreshAll();
+            }}
+          />
+
           {/* Tabs */}
           <div className="flex border-b border-white/10">
             <button
               type="button"
-              onClick={() => setActiveTab('initial')}
-              className={`pb-2 px-4 text-xs font-semibold border-b-2 transition-colors ${
+              onClick={() => {
+                setActiveTab('initial');
+                setHighlightedCase(null);
+              }}
+              className={`pb-2 px-4 text-xs font-semibold border-b-2 transition-colors flex items-center gap-2 ${
                 activeTab === 'initial'
                   ? 'border-white text-white'
                   : 'border-transparent text-[#A3A3A3] hover:text-white'
               }`}
             >
-              Needs Initial Review
+              <span>Needs Initial Review</span>
+              <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full ${activeTab === 'initial' ? 'bg-white/20 text-white' : 'bg-white/5 text-zinc-400'}`}>
+                {queueItems.filter((item) => item.phase === 'INITIAL_RESOLUTION').length}
+              </span>
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab('final')}
-              className={`pb-2 px-4 text-xs font-semibold border-b-2 transition-colors ${
+              onClick={() => {
+                setActiveTab('final');
+                setHighlightedCase(null);
+              }}
+              className={`pb-2 px-4 text-xs font-semibold border-b-2 transition-colors flex items-center gap-2 ${
                 activeTab === 'final'
                   ? 'border-white text-white'
                   : 'border-transparent text-[#A3A3A3] hover:text-white'
               }`}
             >
-              Needs Final Review
+              <span>Needs Final Review</span>
+              <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full ${activeTab === 'final' ? 'bg-white/20 text-white' : 'bg-white/5 text-zinc-400'}`}>
+                {queueItems.filter((item) => item.phase === 'FINAL_RESOLUTION').length}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('history')}
+              className={`pb-2 px-4 text-xs font-semibold border-b-2 transition-colors flex items-center gap-2 ${
+                activeTab === 'history'
+                  ? 'border-white text-white'
+                  : 'border-transparent text-[#A3A3A3] hover:text-white'
+              }`}
+            >
+              <span>Resolution History</span>
             </button>
           </div>
 
-          {queueError && (
-            <div className="rounded-lg border border-red-500/40 bg-red-950/30 p-3 text-xs text-red-300">
-              {queueError}
-            </div>
-          )}
+          {activeTab === 'history' ? (
+            <CommitteeHistory
+              onRefresh={fetchQueue}
+              highlightedCase={highlightedCase}
+              onClearHighlight={() => setHighlightedCase(null)}
+            />
+          ) : (
+            <>
+              {queueError && (
+                <div className="rounded-lg border border-red-500/40 bg-red-950/30 p-3 text-xs text-red-300">
+                  {queueError}
+                </div>
+              )}
 
-          <CommitteeQueue
-            items={queueItems}
-            activeTab={activeTab}
-            onSelectMilestone={(item) => setSelectedMilestone(item)}
-            isLoading={loadingQueue}
-          />
+              <CommitteeQueue
+                items={queueItems}
+                activeTab={activeTab}
+                onSelectMilestone={(item) => {
+                  setSelectedMilestone(item);
+                  setHighlightedCase(null);
+                }}
+                isLoading={loadingQueue}
+                searchQuery={searchQuery}
+                onSearchChange={setSearchQuery}
+                quickFilter={quickFilter}
+                onFilterChange={setQuickFilter}
+              />
+            </>
+          )}
         </div>
       )}
     </div>

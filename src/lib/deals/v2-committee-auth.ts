@@ -269,6 +269,103 @@ export function hashFinalResolutionAuth(auth: FinalResolutionAuthData): `0x${str
 }
 
 /**
+ * Deterministically converts an EIP-712 typed data object into a JSON-safe representation.
+ * - Converts large integer values in message to exact decimal strings (preserving 100% precision).
+ * - Converts domain.chainId to safe JavaScript number (compatible with Viem's getTypesForEIP712Domain and TypedDataDomain).
+ * - Preserves all EIP-712 field names, types, primaryType, and hex values exactly.
+ */
+export function serializeTypedDataForJson<
+  T extends {
+    domain: { name: string; version: string; chainId: number | bigint; verifyingContract: `0x${string}` };
+    types: Record<string, readonly { name: string; type: string }[]>;
+    primaryType: string;
+    message: Record<string, unknown>;
+  }
+>(typedData: T) {
+  const serializedMessage: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(typedData.message)) {
+    if (typeof value === 'bigint') {
+      serializedMessage[key] = value.toString();
+    } else {
+      serializedMessage[key] = value;
+    }
+  }
+
+  return {
+    domain: {
+      name: typedData.domain.name,
+      version: typedData.domain.version,
+      chainId: Number(typedData.domain.chainId),
+      verifyingContract: typedData.domain.verifyingContract,
+    },
+    types: typedData.types,
+    primaryType: typedData.primaryType,
+    message: serializedMessage,
+  };
+}
+
+/**
+ * Deterministically serializes a CommitteeExecutionTransactionRequest for JSON transport.
+ * - Converts BigInt contract arguments in authArg to exact decimal strings.
+ * - Converts advisory countdown seconds to exact decimal strings.
+ * - Preserves function name, ABI, contract address, and signature hex strings.
+ */
+export function serializeExecutionTransactionRequestForJson(
+  txReq: CommitteeExecutionTransactionRequest
+): CommitteeExecutionTransactionRequest {
+  const [authArg, sig1, sig2] = txReq.args;
+  return {
+    address: txReq.address,
+    abi: txReq.abi,
+    functionName: txReq.functionName,
+    args: [
+      {
+        committee: authArg.committee,
+        chainId: authArg.chainId.toString(),
+        deal: authArg.deal,
+        milestoneId: authArg.milestoneId.toString(),
+        freelancerAmount: authArg.freelancerAmount.toString(),
+        clientAmount: authArg.clientAmount.toString(),
+        justificationHash: authArg.justificationHash,
+        resolutionNonce: authArg.resolutionNonce.toString(),
+        validUntil: authArg.validUntil.toString(),
+        evidenceRootHash: authArg.evidenceRootHash,
+        specHash: authArg.specHash,
+        submissionVersion: authArg.submissionVersion,
+      },
+      sig1,
+      sig2,
+    ],
+    advisory: {
+      ...txReq.advisory,
+      ...(txReq.advisory.remainingResolverSeconds !== undefined
+        ? { remainingResolverSeconds: txReq.advisory.remainingResolverSeconds.toString() }
+        : {}),
+      remainingExpirySeconds: txReq.advisory.remainingExpirySeconds.toString(),
+    },
+  };
+}
+
+/**
+ * Deterministically serializes a VerifiedThresholdBundle for JSON transport.
+ * - Converts BigInt values in bundle.auth to exact decimal strings.
+ */
+export function serializeThresholdBundleForJson(bundle: VerifiedThresholdBundle): Record<string, unknown> {
+  return {
+    ...bundle,
+    auth: {
+      ...bundle.auth,
+      chainId: bundle.auth.chainId.toString(),
+      milestoneId: bundle.auth.milestoneId.toString(),
+      freelancerAmount: bundle.auth.freelancerAmount.toString(),
+      clientAmount: bundle.auth.clientAmount.toString(),
+      resolutionNonce: bundle.auth.resolutionNonce.toString(),
+      validUntil: bundle.auth.validUntil.toString(),
+    },
+  };
+}
+
+/**
  * Computes the on-chain nonceKey used in SynqResolutionCommittee.sol:
  * keccak256(abi.encode(auth.deal, auth.milestoneId, auth.resolutionNonce))
  */
@@ -433,14 +530,14 @@ export function buildVerifiedThresholdBundle(params: {
 
 export interface CommitteeResolutionAuthContractArg {
   committee: `0x${string}`;
-  chainId: bigint;
+  chainId: bigint | string;
   deal: `0x${string}`;
-  milestoneId: bigint;
-  freelancerAmount: bigint;
-  clientAmount: bigint;
+  milestoneId: bigint | string;
+  freelancerAmount: bigint | string;
+  clientAmount: bigint | string;
   justificationHash: `0x${string}`;
-  resolutionNonce: bigint;
-  validUntil: bigint;
+  resolutionNonce: bigint | string;
+  validUntil: bigint | string;
   evidenceRootHash: `0x${string}`;
   specHash: `0x${string}`;
   submissionVersion: number;
@@ -455,8 +552,8 @@ export interface CommitteeExecutionTransactionRequest {
     nearResolverBoundary?: boolean;
     nearExpiry: boolean;
     recommendedToSubmit: boolean;
-    remainingResolverSeconds?: bigint;
-    remainingExpirySeconds: bigint;
+    remainingResolverSeconds?: bigint | string;
+    remainingExpirySeconds: bigint | string;
   };
 }
 
@@ -481,24 +578,11 @@ export function formatCommitteeExecutionTransaction(params: {
       ? ('submitResolutionProposal' as const)
       : ('submitFinalResolution' as const);
 
-  const authArg: CommitteeResolutionAuthContractArg = {
-    committee: bundle.auth.committee.toLowerCase() as `0x${string}`,
-    chainId: BigInt(bundle.auth.chainId),
-    deal: bundle.auth.deal.toLowerCase() as `0x${string}`,
-    milestoneId: BigInt(bundle.auth.milestoneId),
-    freelancerAmount: BigInt(bundle.auth.freelancerAmount),
-    clientAmount: BigInt(bundle.auth.clientAmount),
-    justificationHash: bundle.auth.justificationHash.toLowerCase() as `0x${string}`,
-    resolutionNonce: BigInt(bundle.auth.resolutionNonce),
-    validUntil: BigInt(bundle.auth.validUntil),
-    evidenceRootHash: bundle.auth.evidenceRootHash.toLowerCase() as `0x${string}`,
-    specHash: bundle.auth.specHash.toLowerCase() as `0x${string}`,
-    submissionVersion: Number(bundle.auth.submissionVersion),
-  };
+  const validUntilBn = BigInt(bundle.auth.validUntil);
 
   // Advisory calculations
   const remainingExpirySeconds =
-    authArg.validUntil > latestBlockTimestamp ? authArg.validUntil - latestBlockTimestamp : 0n;
+    validUntilBn > latestBlockTimestamp ? validUntilBn - latestBlockTimestamp : 0n;
   const nearExpiry = remainingExpirySeconds <= EXPIRY_ADVISORY_BUFFER_SECONDS;
 
   let nearResolverBoundary: boolean | undefined;
@@ -513,6 +597,21 @@ export function formatCommitteeExecutionTransaction(params: {
   const recommendedToSubmit =
     !nearExpiry && (nearResolverBoundary === undefined || !nearResolverBoundary);
 
+  const authArg: CommitteeResolutionAuthContractArg = {
+    committee: bundle.auth.committee.toLowerCase() as `0x${string}`,
+    chainId: bundle.auth.chainId.toString(),
+    deal: bundle.auth.deal.toLowerCase() as `0x${string}`,
+    milestoneId: bundle.auth.milestoneId.toString(),
+    freelancerAmount: bundle.auth.freelancerAmount.toString(),
+    clientAmount: bundle.auth.clientAmount.toString(),
+    justificationHash: bundle.auth.justificationHash.toLowerCase() as `0x${string}`,
+    resolutionNonce: bundle.auth.resolutionNonce.toString(),
+    validUntil: bundle.auth.validUntil.toString(),
+    evidenceRootHash: bundle.auth.evidenceRootHash.toLowerCase() as `0x${string}`,
+    specHash: bundle.auth.specHash.toLowerCase() as `0x${string}`,
+    submissionVersion: Number(bundle.auth.submissionVersion),
+  };
+
   return {
     address: bundle.committeeAddress,
     abi: synqResolutionCommitteeABI,
@@ -520,10 +619,10 @@ export function formatCommitteeExecutionTransaction(params: {
     args: [authArg, bundle.signatures[0], bundle.signatures[1]],
     advisory: {
       ...(nearResolverBoundary !== undefined ? { nearResolverBoundary } : {}),
-      ...(remainingResolverSeconds !== undefined ? { remainingResolverSeconds } : {}),
+      ...(remainingResolverSeconds !== undefined ? { remainingResolverSeconds: remainingResolverSeconds.toString() } : {}),
       nearExpiry,
       recommendedToSubmit,
-      remainingExpirySeconds,
+      remainingExpirySeconds: remainingExpirySeconds.toString(),
     },
   };
 }

@@ -218,7 +218,7 @@ export default function Messages() {
   const router = useRouter();
   const params = useSearchParams();
   const { address, isConnected } = useAccount();
-  const { ensureAuthenticated, clearSession } = useAuthSession();
+  const { ensureAuthenticated, clearSession, getToken } = useAuthSession();
   const me = address ? lc(address) : '';
 
   const toParam = params.get('to');
@@ -304,7 +304,10 @@ export default function Messages() {
     const wallet = me;
     const generation = walletGeneration.current;
     if (!wallet) throw new Error('Connect your wallet to access messages.');
-    const token = await ensureAuthenticated();
+    const token = getToken();
+    if (!token) {
+      throw new Error('Wallet verification required to access messages.');
+    }
     if (currentWallet.current !== wallet || walletGeneration.current !== generation) {
       throw new Error('Wallet changed while authenticating.');
     }
@@ -319,7 +322,7 @@ export default function Messages() {
       clearPrivateState('Your messaging session expired. Sign again to continue.');
     }
     return response;
-  }, [clearPrivateState, clearSession, ensureAuthenticated, me]);
+  }, [clearPrivateState, clearSession, getToken, me]);
 
   // Private messaging state is wallet-scoped. Invalidate outstanding work and
   // clear the previous wallet's data before any request for the new wallet.
@@ -557,7 +560,10 @@ export default function Messages() {
     );
 
     try {
-      await ensureAuthenticated();
+      if (!getToken()) {
+        if (isCurrentSearch()) setDiscoveryError('Verify your wallet to search Synq users.');
+        return;
+      }
       if (!isCurrentSearch()) return;
 
       let targetWallet = '';
@@ -904,6 +910,32 @@ export default function Messages() {
         <CardContent className="py-16 text-center">
           <MessageSquare size={28} className="mx-auto text-zinc-600 mb-3" />
           <p className="text-sm text-zinc-400">Connect your wallet to access SynqChat.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (isConnected && me && !getToken()) {
+    return (
+      <Card>
+        <CardContent className="py-16 text-center space-y-4">
+          <MessageSquare size={28} className="mx-auto text-zinc-600 mb-2" />
+          <p className="text-sm text-zinc-300 font-medium">Wallet Verification Needed</p>
+          <p className="text-xs text-zinc-400 max-w-md mx-auto">
+            Verify your wallet signature to access your encrypted conversations.
+          </p>
+          <Button
+            type="button"
+            onClick={async () => {
+              try {
+                await ensureAuthenticated();
+                loadList();
+              } catch {}
+            }}
+            className="mt-2 bg-blue-600 hover:bg-blue-500 text-white"
+          >
+            Verify Wallet to Access Messages
+          </Button>
         </CardContent>
       </Card>
     );

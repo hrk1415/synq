@@ -246,3 +246,150 @@ export function buildGridWalletItems(connectors: readonly Connector[]): GridWall
 
   return items;
 }
+
+// ---------------------------------------------------------------------------
+// Explicit Wallet Selection Persistence (Phase Refresh Fix)
+// ---------------------------------------------------------------------------
+
+export const SYNQ_WALLET_PREFERENCE_KEY = 'synq_wallet_preference';
+
+export interface StoredWalletPreference {
+  connectorId: string;
+  rdns?: string;
+  address: string;
+  timestamp: number;
+}
+
+/**
+ * Persists non-secret metadata about the user's explicitly approved wallet connector.
+ */
+export function setStoredWalletPreference(connector: Connector, address: string): void {
+  if (typeof window === 'undefined' || !address) return;
+  try {
+    const rawRdns = typeof connector.rdns === 'string'
+      ? connector.rdns.toLowerCase()
+      : (Array.isArray(connector.rdns) ? connector.rdns[0]?.toLowerCase() : undefined);
+
+    const pref: StoredWalletPreference = {
+      connectorId: connector.id.toLowerCase(),
+      rdns: rawRdns,
+      address: address.toLowerCase(),
+      timestamp: Date.now(),
+    };
+    window.localStorage.setItem(SYNQ_WALLET_PREFERENCE_KEY, JSON.stringify(pref));
+  } catch {
+    // Non-blocking storage quota / privacy mode failure
+  }
+}
+
+/**
+ * Retrieves the previously stored wallet preference, or null if none exists.
+ */
+export function getStoredWalletPreference(): StoredWalletPreference | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(SYNQ_WALLET_PREFERENCE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (
+      parsed &&
+      typeof parsed.connectorId === 'string' &&
+      typeof parsed.address === 'string' &&
+      parsed.address.startsWith('0x')
+    ) {
+      return {
+        connectorId: parsed.connectorId.toLowerCase(),
+        rdns: typeof parsed.rdns === 'string' ? parsed.rdns.toLowerCase() : undefined,
+        address: parsed.address.toLowerCase(),
+        timestamp: typeof parsed.timestamp === 'number' ? parsed.timestamp : Date.now(),
+      };
+    }
+  } catch {
+    clearStoredWalletPreference();
+  }
+  return null;
+}
+
+/**
+ * Clears the stored wallet preference upon explicit disconnect.
+ */
+export function clearStoredWalletPreference(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.removeItem(SYNQ_WALLET_PREFERENCE_KEY);
+  } catch {
+    // Non-blocking
+  }
+}
+
+/**
+ * Finds the exact connector matching a saved wallet preference.
+ * Strictly prevents generic injected fallbacks from binding to the wrong provider.
+ */
+export function findMatchingConnector(
+  connectors: readonly Connector[],
+  pref: StoredWalletPreference
+): Connector | null {
+  if (!connectors || connectors.length === 0 || !pref) return null;
+
+  // 1. If RDNS is specified (EIP-6963 wallet e.g. 'io.metamask', 'app.phantom', 'io.rabby', 'com.coinbase.wallet')
+  // Or if connectorId is a known EIP-6963 identifier (e.g. 'io.metamask')
+  const targetRdns = pref.rdns || (pref.connectorId !== 'injected' && pref.connectorId !== 'coinbasewalletsdk' && pref.connectorId !== 'walletconnect' ? pref.connectorId : undefined);
+
+  if (targetRdns) {
+    const rdnsMatch = connectors.find((c) => {
+      const cRdns = typeof c.rdns === 'string'
+        ? c.rdns.toLowerCase()
+        : (Array.isArray(c.rdns) ? c.rdns[0]?.toLowerCase() : undefined);
+      return cRdns === targetRdns;
+    });
+    if (rdnsMatch) return rdnsMatch;
+
+    // Secondary check: connector.id equals the target RDNS / connectorId
+    const idMatch = connectors.find(
+      (c) => c.type === 'injected' && c.id.toLowerCase() === targetRdns
+    );
+    if (idMatch) return idMatch;
+
+    // Direct ID check across all connectors (including non-injected types)
+    const exactIdMatch = connectors.find(
+      (c) => c.id.toLowerCase() === targetRdns
+    );
+    if (exactIdMatch) return exactIdMatch;
+
+    // Target provider extension is not (yet) present: DO NOT fallback to generic injected!
+    return null;
+  }
+
+  // 2. Non-RDNS SDK connectors (Coinbase SDK, WalletConnect)
+  if (pref.connectorId === 'coinbasewalletsdk' || pref.connectorId === 'coinbasewallet') {
+    return (
+      connectors.find(
+        (c) => c.id === 'coinbaseWalletSDK' || c.type === 'coinbaseWallet'
+      ) ?? null
+    );
+  }
+
+  if (pref.connectorId === 'walletconnect') {
+    return (
+      connectors.find(
+        (c) => c.id === 'walletConnect' || c.type === 'walletConnect'
+      ) ?? null
+    );
+  }
+
+  // 3. If preference was generic 'injected' without RDNS, only match if generic injected exists
+  // and no EIP-6963 wallets are registered to prevent ambiguous hijacking
+  if (pref.connectorId === 'injected') {
+    const hasDetectedWallets = connectors.some(
+      (c) => c.type === 'injected' && c.id !== 'injected'
+    );
+    if (hasDetectedWallets) {
+      // Ambiguous: multiple providers exist, do not blindly connect generic injected
+      return null;
+    }
+    return connectors.find((c) => c.id === 'injected') ?? null;
+  }
+
+  return null;
+}

@@ -184,7 +184,7 @@ function NewDealForm() {
   const { address } = useAccount();
   const { collapsed } = useSidebar();
   const { ensureSepolia } = useSepoliaNetwork();
-  const { ensureAuthenticated } = useAuthSession();
+  const { ensureAuthenticated, getToken } = useAuthSession();
   const { signTypedDataAsync } = useSignTypedData();
 
   const directory = useDirectoryContract(address);
@@ -493,7 +493,14 @@ function NewDealForm() {
 
     (async () => {
       try {
-        const token = await ensureAuthenticated();
+        const token = getToken();
+        if (!token) {
+          if (!cancelled) {
+            setHandoffError('Wallet verification required to load negotiated deal draft. Please verify your wallet.');
+            setHandoffLoading(false);
+          }
+          return;
+        }
         if (cancelled) return;
 
         const isEditMode = negotiatorMode === 'edit';

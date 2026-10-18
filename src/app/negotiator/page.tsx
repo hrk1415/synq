@@ -151,25 +151,27 @@ function NegotiatorContent() {
   const [mounted, setMounted] = useState(false);
   const { address, isConnected, status } = useAccount();
   const factory = useFactoryContract();
-  const { ensureAuthenticated } = useAuthSession();
+  const { ensureAuthenticated, getToken } = useAuthSession();
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
   // Smooth emergence from #242424 charcoal when arriving from landing Enter transition (B.11.5 Part C / B.11.6 Fix)
-  const [emergingFromLanding, setEmergingFromLanding] = useState(() => {
-    if (typeof window === 'undefined') return false;
+  const [emergingFromLanding, setEmergingFromLanding] = useState(false);
+
+  useEffect(() => {
     try {
       const flag = sessionStorage.getItem('synq_enter_transition');
       if (flag === '1') {
         sessionStorage.removeItem('synq_enter_transition');
         const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-        return !prefersReduced;
+        if (!prefersReduced) {
+          setEmergingFromLanding(true);
+        }
       }
     } catch {}
-    return false;
-  });
+  }, []);
 
   // Strict-mode safe auto-unmount fallback for the emergence overlay
   useEffect(() => {
@@ -492,7 +494,15 @@ function NegotiatorContent() {
     async (reqWallet: string, reqGen: number, isForcedNewChat?: boolean) => {
       setHistoryLoading(true);
       try {
-        const token = await ensureAuthenticated();
+        const token = getToken();
+        if (!token) {
+          setHistoryLoading(false);
+          activeConversationIdRef.current = null;
+          setActiveConversationId(null);
+          setMessages([freshInitialMessage()]);
+          setDraftState(null);
+          return;
+        }
         if (currentWalletRef.current !== reqWallet || sessionGenerationRef.current !== reqGen) return;
 
         const res = await fetch('/api/negotiator/conversations', {
@@ -563,7 +573,7 @@ function NegotiatorContent() {
         }
       }
     },
-    [ensureAuthenticated]
+    [getToken]
   );
 
   useEffect(() => {

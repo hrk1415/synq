@@ -60,6 +60,9 @@ import {
   MutualSettlementProposalData,
 } from '@/lib/deals/v2-mutual-settlement';
 import type { MutualSettlementProposalView } from '@/lib/deals/mutual-settlements-db';
+import { DisputeOverviewHeader } from '@/components/deals/dispute/DisputeOverviewHeader';
+import { PaymentDisputeResolutionSection } from '@/components/deals/dispute/PaymentDisputeResolutionSection';
+import { ActiveDisputeWorkspace } from '@/components/deals/dispute/ActiveDisputeWorkspace';
 
 interface V2MilestoneDisputeProps {
   dealData: StandardV2DealData;
@@ -147,7 +150,7 @@ export function V2MilestoneDispute({
   // Propose Settlement Form State
   const [freelancerAmountInput, setFreelancerAmountInput] = useState<string>('');
   const [clientAmountInput, setClientAmountInput] = useState<string>('');
-  const [validUntilInput, setValidUntilInput] = useState<string>('');
+  const [proposalDurationHours, setProposalDurationHours] = useState<number>(24);
   const [proposeError, setProposeError] = useState<string | null>(null);
   const [proposeInProgress, setProposeInProgress] = useState<boolean>(false);
 
@@ -176,11 +179,9 @@ export function V2MilestoneDispute({
   const [initialReport, setInitialReport] = useState<CanonicalResolutionReportV1 | null>(null);
   const [loadingInitialReport, setLoadingInitialReport] = useState<boolean>(false);
   const [initialReportNotice, setInitialReportNotice] = useState<string | null>(null);
-  const [showReportDrawer, setShowReportDrawer] = useState<boolean>(false);
 
   const [finalReport, setFinalReport] = useState<CanonicalResolutionReportV1 | null>(null);
   const [loadingFinalReport, setLoadingFinalReport] = useState<boolean>(false);
-  const [showFinalReportDrawer, setShowFinalReportDrawer] = useState<boolean>(false);
 
   // Modals for Reconsideration & Execute Resolution
   const [showReconsiderModal, setShowReconsiderModal] = useState<boolean>(false);
@@ -244,7 +245,13 @@ export function V2MilestoneDispute({
   // Load Resolution Proposal & Chain Time Anchor (Phase 3M-F)
   // ---------------------------------------------------------------------------
   const loadResolutionProposal = useCallback(async () => {
-    if ((!isResolutionProposed && !isFinalReview) || !dealData.dealAddress) {
+    const shouldLoad =
+      (isResolutionProposed ||
+        isFinalReview ||
+        currentMilestone.status === MilestoneStatus.SettledSplit) &&
+      Boolean(dealData.dealAddress);
+
+    if (!shouldLoad) {
       setResolutionProposal(null);
       return;
     }
@@ -269,7 +276,7 @@ export function V2MilestoneDispute({
     } finally {
       setLoadingResolutionProposal(false);
     }
-  }, [isResolutionProposed, isFinalReview, dealData.dealAddress, currentIndex]);
+  }, [isResolutionProposed, isFinalReview, currentMilestone.status, dealData.dealAddress, currentIndex]);
 
   useEffect(() => {
     loadResolutionProposal();
@@ -429,7 +436,15 @@ export function V2MilestoneDispute({
   // Load Mutual Settlement Proposals (Participant-only)
   // ---------------------------------------------------------------------------
   const loadProposals = useCallback(async () => {
-    if (!canUseMutualSettlement || !isParticipant || !dealData.dealAddress) return;
+    const shouldLoad =
+      (canUseMutualSettlement || currentMilestone.status === MilestoneStatus.SettledSplit) &&
+      isParticipant &&
+      Boolean(dealData.dealAddress);
+
+    if (!shouldLoad) {
+      setProposals([]);
+      return;
+    }
 
     setLoadingProposals(true);
     try {
@@ -459,7 +474,7 @@ export function V2MilestoneDispute({
     } finally {
       setLoadingProposals(false);
     }
-  }, [canUseMutualSettlement, isParticipant, dealData.dealAddress, currentIndex, getToken]);
+  }, [canUseMutualSettlement, currentMilestone.status, isParticipant, dealData.dealAddress, currentIndex, getToken]);
 
   useEffect(() => {
     loadProposals();
@@ -728,17 +743,7 @@ export function V2MilestoneDispute({
       return;
     }
 
-    if (!validUntilInput) {
-      setProposeError('Please choose an expiration date and time for this proposal.');
-      return;
-    }
-
-    const validUntilSec = BigInt(Math.floor(new Date(validUntilInput).getTime() / 1000));
-    const nowSec = BigInt(Math.floor(Date.now() / 1000));
-    if (validUntilSec <= nowSec + 300n) {
-      setProposeError('Proposal expiration must be at least 5 minutes in the future.');
-      return;
-    }
+    const validUntilSec = BigInt(Math.floor(Date.now() / 1000) + proposalDurationHours * 3600);
 
     setProposeInProgress(true);
     setProposeError(null);
@@ -850,7 +855,7 @@ export function V2MilestoneDispute({
       setShowProposeModal(false);
       setFreelancerAmountInput('');
       setClientAmountInput('');
-      setValidUntilInput('');
+      setProposalDurationHours(24);
       await loadProposals();
     } catch (err: any) {
       if (isRejected(err)) {
@@ -1284,8 +1289,9 @@ export function V2MilestoneDispute({
         throw new Error('Post-transaction check failed: Milestone is not in SettledSplit status on-chain.');
       }
 
-      // Step 6: Refetch Canonical Deal Data
+      // Step 6: Refetch Canonical Deal Data & Proposal
       await refetchDealData();
+      await loadResolutionProposal();
       setShowExecuteModal(false);
     } catch (err: any) {
       if (isRejected(err)) {
@@ -1298,95 +1304,147 @@ export function V2MilestoneDispute({
     }
   };
 
-  // Render collapsible resolution report drawer
-  const renderResolutionReportDrawer = () => {
-    if (loadingInitialReport) {
+
+
+  // Render mutual settlement proposals list (reused in pre-dispute and active-dispute views)
+  const renderMutualSettlementProposalsList = () => {
+    if (loadingProposals) {
       return (
         <div className="rounded-lg border border-zinc-800 p-3 text-center text-xs text-zinc-400 flex items-center justify-center gap-2">
-          <Loader2 className="h-3.5 w-3.5 animate-spin text-purple-400" />
-          Loading resolution report…
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-purple-400" /> Loading proposals…
         </div>
       );
     }
 
-    if (initialReportNotice && !initialReport) {
+    if (proposals.length === 0) {
       return (
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3 text-xs text-zinc-400 flex items-center gap-2">
-          <Info className="h-4 w-4 text-zinc-500 shrink-0" />
-          <span>{initialReportNotice}</span>
+        <div className="rounded-lg border border-zinc-800/80 bg-zinc-900/30 p-3 text-center text-xs text-zinc-400">
+          No active settlement proposals. Either participant can propose an agreed escrow split.
         </div>
       );
     }
-
-    if (!initialReport) return null;
 
     return (
-      <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-3 space-y-3">
-        <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-          <span className="text-[11px] font-semibold text-zinc-300 flex items-center gap-1.5">
-            <FileText className="h-3.5 w-3.5 text-purple-400" /> Committee Resolution Report
-          </span>
-          <Badge variant="outline" className="border-purple-500/30 bg-purple-500/10 text-[10px] text-purple-300">
-            Confirmed Explanatory Record
-          </Badge>
-        </div>
+      <div className="space-y-2">
+        {proposals.map((p) => {
+          const isProposer =
+            address && p.proposerWallet.toLowerCase() === address.toLowerCase();
+          const isCounterparty =
+            address && p.counterpartyWallet.toLowerCase() === address.toLowerCase();
 
-        <div className="space-y-1">
-          <div className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Summary</div>
-          <div className="rounded-md bg-zinc-950/70 p-2.5 text-xs text-zinc-200 whitespace-pre-wrap leading-relaxed border border-zinc-800/80">
-            {initialReport.summary}
-          </div>
-        </div>
+          return (
+            <div
+              key={p.id}
+              className={cn(
+                'rounded-lg border p-3 text-xs transition-colors space-y-2.5',
+                p.status === 'executed'
+                  ? 'border-emerald-500/30 bg-emerald-950/10'
+                  : p.status === 'cancelled'
+                  ? 'border-zinc-800 bg-zinc-900/20 opacity-60'
+                  : p.isExpired
+                  ? 'border-zinc-800 bg-zinc-900/20 opacity-60'
+                  : 'border-zinc-800 bg-zinc-900/50'
+              )}
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-white">
+                    {isProposer
+                      ? 'Your Proposal'
+                      : `Proposal from ${isClient ? 'Freelancer' : 'Client'}`}
+                  </span>
+                  <span className="font-mono text-[10px] text-zinc-400">
+                    Nonce #{p.proposalNonce}
+                  </span>
+                </div>
 
-        <div className="space-y-1">
-          <div className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Findings</div>
-          <div className="rounded-md bg-zinc-950/70 p-2.5 text-xs text-zinc-200 whitespace-pre-wrap leading-relaxed border border-zinc-800/80">
-            {initialReport.findings}
-          </div>
-        </div>
+                {p.status === 'executed' ? (
+                  <Badge variant="outline" className="border-emerald-500/40 text-emerald-300 text-[10px]">
+                    Executed
+                  </Badge>
+                ) : p.status === 'cancelled' ? (
+                  <Badge variant="outline" className="border-zinc-700 text-zinc-400 text-[10px]">
+                    Cancelled
+                  </Badge>
+                ) : p.isExpired ? (
+                  <Badge variant="outline" className="border-zinc-700 text-zinc-400 text-[10px]">
+                    Expired
+                  </Badge>
+                ) : p.status === 'invalidated' ? (
+                  <Badge variant="outline" className="border-zinc-700 text-zinc-400 text-[10px]">
+                    Invalidated
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="border-amber-500/40 text-amber-300 text-[10px]">
+                    Pending
+                  </Badge>
+                )}
+              </div>
 
-        <div className="space-y-1">
-          <div className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Justification</div>
-          <div className="rounded-md bg-zinc-950/70 p-2.5 text-xs text-zinc-200 whitespace-pre-wrap leading-relaxed border border-zinc-800/80">
-            {initialReport.justification}
-          </div>
-        </div>
-
-        {initialReport.evidenceReferences && initialReport.evidenceReferences.length > 0 && (
-          <div className="space-y-1.5 pt-1">
-            <div className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">
-              Evidence References ({initialReport.evidenceReferences.length})
-            </div>
-            <div className="space-y-1">
-              {initialReport.evidenceReferences.map((ref, idx) => {
-                const isSafeUrl =
-                  ref.url && (ref.url.startsWith('https://') || ref.url.startsWith('http://'));
-                return (
-                  <div
-                    key={idx}
-                    className="flex flex-col gap-1 rounded border border-zinc-800 bg-zinc-950/50 px-2.5 py-2 text-xs text-zinc-200"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-semibold text-white">{ref.title}</span>
-                      {isSafeUrl && (
-                        <a
-                          href={ref.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-1 text-[11px] text-purple-400 hover:text-purple-300"
-                        >
-                          <span>Open Evidence</span>
-                          <ExternalLink className="h-3 w-3 shrink-0" />
-                        </a>
-                      )}
-                    </div>
-                    {ref.hash && <div className="text-[10px] text-zinc-500 font-mono">Hash: {ref.hash}</div>}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                <div className="rounded bg-zinc-950/60 p-2 space-y-0.5">
+                  <div className="text-[10px] text-zinc-400 uppercase">Freelancer Receives</div>
+                  <div className="font-bold text-white flex items-center gap-1.5">
+                    <span>{formatUsdcAmount(BigInt(p.freelancerAmount))} USDC</span>
+                    {isFreelancer && (
+                      <Badge variant="outline" className="border-emerald-500/30 text-[9px] text-emerald-300 font-sans">
+                        Your Payout
+                      </Badge>
+                    )}
                   </div>
-                );
-              })}
+                </div>
+
+                <div className="rounded bg-zinc-950/60 p-2 space-y-0.5">
+                  <div className="text-[10px] text-zinc-400 uppercase">Client Receives</div>
+                  <div className="font-bold text-white flex items-center gap-1.5">
+                    <span>{formatUsdcAmount(BigInt(p.clientAmount))} USDC</span>
+                    {isClient && (
+                      <Badge variant="outline" className="border-indigo-500/30 text-[9px] text-indigo-300 font-sans">
+                        Your Refund
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded bg-zinc-950/60 p-2 space-y-0.5 col-span-2 sm:col-span-1">
+                  <div className="text-[10px] text-zinc-400 uppercase">Expires</div>
+                  <div className="text-zinc-200">
+                    {formatTimestamp(Number(p.validUntil))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center justify-end gap-2 pt-1 border-t border-zinc-800/60">
+                {/* Proposer: Cancel Proposal */}
+                {isProposer && p.status === 'pending' && !p.isExpired && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs border-rose-500/30 text-rose-300 hover:bg-rose-950/40"
+                    disabled={actionInProgress}
+                    onClick={() => setCancellingProposal(p)}
+                  >
+                    Cancel Proposal
+                  </Button>
+                )}
+
+                {/* Counterparty: Accept Settlement (if executable) */}
+                {isCounterparty && p.isExecutable && (
+                  <Button
+                    size="sm"
+                    className="h-7 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-medium flex items-center gap-1.5"
+                    disabled={actionInProgress}
+                    onClick={() => setAcceptingProposal(p)}
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    <span>Accept & Settle Split</span>
+                  </Button>
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })}
       </div>
     );
   };
@@ -1428,623 +1486,115 @@ export function V2MilestoneDispute({
         </div>
       )}
 
-      {/* Open Serious Dispute Trigger Button (when eligible) */}
-      {canOpenSeriousDispute && (
-        <div className="pt-2">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="h-8 text-xs border-rose-500/30 text-rose-300 hover:bg-rose-950/40 hover:border-rose-500/60 font-medium flex items-center gap-1.5"
-            onClick={() => {
+      {/* Dispute Overview & Status Presentation (Phase 1A) */}
+      {(isDisputed ||
+        isResolutionProposed ||
+        isFinalReview ||
+        currentMilestone.status === MilestoneStatus.SettledSplit) && (
+        <DisputeOverviewHeader
+          currentIndex={currentIndex}
+          totalMilestones={dealData.milestones.length}
+          milestone={currentMilestone}
+          clientAddress={dealData.client}
+          freelancerAddress={dealData.freelancer}
+          currentUserAddress={address}
+          disputeRecord={disputeRecord}
+          loadingDisputeRecord={loadingDisputeRecord}
+          disputeRecordError={disputeRecordError}
+          resolutionProposal={resolutionProposal}
+          loadingResolutionProposal={loadingResolutionProposal}
+          finalReport={finalReport}
+        />
+      )}
+
+      {/* Payment & Dispute Resolution Entry Section (Pre-Dispute Experience) */}
+      {!isDisputed &&
+        !isResolutionProposed &&
+        !isFinalReview &&
+        currentMilestone.status !== MilestoneStatus.SettledSplit &&
+        (canOpenSeriousDispute || canUseMutualSettlement) && (
+          <PaymentDisputeResolutionSection
+            milestoneAmount={currentMilestone.amount}
+            canOpenSeriousDispute={canOpenSeriousDispute}
+            canUseMutualSettlement={canUseMutualSettlement}
+            onOpenDispute={() => {
               setShowOpenDisputeModal(true);
               setStagingDisputeError(null);
             }}
+            onProposeSettlement={() => {
+              setShowProposeModal(true);
+              setProposeError(null);
+              setFreelancerAmountInput('');
+              setClientAmountInput('');
+              setProposalDurationHours(24);
+            }}
           >
-            <Scale className="h-3.5 w-3.5 text-rose-400" /> Open Serious Dispute
-          </Button>
-        </div>
-      )}
-
-      {/* --------------------------------------------------------------------- */}
-      {/* FINAL RESOLUTION SETTLED CARD (When milestone Settled via Final Res)   */}
-      {/* --------------------------------------------------------------------- */}
-      {currentMilestone.status === MilestoneStatus.SettledSplit && finalReport && (
-        <div className="rounded-xl border border-indigo-500/30 bg-indigo-950/20 p-4 space-y-4">
-          <div className="flex items-center justify-between border-b border-indigo-500/20 pb-3">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="h-5 w-5 text-indigo-400" />
-              <div>
-                <span className="text-sm font-bold text-white">Final Resolution Executed by Committee</span>
-                <p className="text-[11px] text-indigo-300/80">
-                  The resolution committee completed final review and executed the binding split on-chain.
-                </p>
-              </div>
-            </div>
-            <Badge variant="outline" className="border-indigo-500/40 bg-indigo-500/10 text-xs text-indigo-300">
-              Settled • {formatUsdcAmount(currentMilestone.amount)} USDC
-            </Badge>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 text-xs font-mono">
-            <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-2.5">
-              <div className="text-[10px] text-zinc-400 uppercase font-sans">Freelancer Received</div>
-              <div className="font-bold text-white text-sm">
-                {formatUsdcAmount(finalReport.freelancerAmount)} USDC
-              </div>
-            </div>
-            <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-2.5">
-              <div className="text-[10px] text-zinc-400 uppercase font-sans">Client Received</div>
-              <div className="font-bold text-white text-sm">
-                {formatUsdcAmount(finalReport.clientAmount)} USDC
-              </div>
-            </div>
-          </div>
-
-          <div className="pt-1 flex items-center justify-between">
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              onClick={() => setShowFinalReportDrawer((prev) => !prev)}
-              className="h-8 text-xs text-indigo-300 hover:text-indigo-100 hover:bg-indigo-950/40 flex items-center gap-1.5"
-            >
-              <FileText className="h-3.5 w-3.5" />
-              <span>{showFinalReportDrawer ? 'Hide Final Resolution Report' : 'View Final Resolution Report'}</span>
-              {showFinalReportDrawer ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-            </Button>
-          </div>
-
-          {showFinalReportDrawer && (
-            <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-3 space-y-3">
-              <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                <span className="text-[11px] font-semibold text-zinc-300 flex items-center gap-1.5">
-                  <FileText className="h-3.5 w-3.5 text-indigo-400" /> Final Committee Resolution Report
-                </span>
-                <Badge variant="outline" className="border-indigo-500/30 bg-indigo-500/10 text-[10px] text-indigo-300">
-                  Confirmed Explanatory Record
-                </Badge>
-              </div>
-
-              <div className="space-y-1">
-                <div className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Summary</div>
-                <div className="rounded-md bg-zinc-950/70 p-2.5 text-xs text-zinc-200 whitespace-pre-wrap leading-relaxed border border-zinc-800/80">
-                  {finalReport.summary}
+            {canUseMutualSettlement && (proposals.length > 0 || loadingProposals) && (
+              <div className="space-y-2 pt-1">
+                <div className="text-xs font-semibold text-zinc-300">
+                  Active Settlement Proposals ({proposals.length})
                 </div>
-              </div>
-
-              <div className="space-y-1">
-                <div className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Findings</div>
-                <div className="rounded-md bg-zinc-950/70 p-2.5 text-xs text-zinc-200 whitespace-pre-wrap leading-relaxed border border-zinc-800/80">
-                  {finalReport.findings}
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <div className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Justification</div>
-                <div className="rounded-md bg-zinc-950/70 p-2.5 text-xs text-zinc-200 whitespace-pre-wrap leading-relaxed border border-zinc-800/80">
-                  {finalReport.justification}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* --------------------------------------------------------------------- */}
-      {/* DISPUTED STATE CARD (When milestone is Disputed)                     */}
-      {/* --------------------------------------------------------------------- */}
-      {isDisputed && (
-        <div className="rounded-xl border border-rose-500/30 bg-rose-950/20 p-4 space-y-4">
-          <div className="flex items-center justify-between border-b border-rose-500/20 pb-3">
-            <div className="flex items-center gap-2">
-              <Scale className="h-5 w-5 text-rose-400" />
-              <div>
-                <span className="text-sm font-bold text-white">Dispute Open</span>
-                <p className="text-[11px] text-rose-300/80">
-                  Escrow remains held while resolution is pending.
-                </p>
-              </div>
-            </div>
-            <Badge variant="outline" className="border-rose-500/40 bg-rose-500/10 text-xs text-rose-300">
-              Escrow Held • {formatUsdcAmount(currentMilestone.amount)} USDC
-            </Badge>
-          </div>
-
-          {/* Canonical Dispute Details (Participant View) */}
-          {isParticipant ? (
-            disputeRecord ? (
-              <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 space-y-3">
-                <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                  <span className="text-[11px] font-semibold text-zinc-300 flex items-center gap-1.5">
-                    <FileText className="h-3.5 w-3.5 text-rose-400" /> Canonical Serious Dispute Record
-                  </span>
-                  <Badge variant="outline" className="border-rose-500/30 bg-rose-500/10 text-[10px] text-rose-300">
-                    Cryptographically Verified
-                  </Badge>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                  <div className="rounded-lg border border-zinc-800 bg-zinc-950/50 p-2.5 space-y-1">
-                    <div className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Opened By</div>
-                    <div className="font-mono text-zinc-200 flex items-center gap-1.5">
-                      <span>{shortenAddress(disputeRecord.dispute?.openerWallet || '')}</span>
-                      {address &&
-                      disputeRecord.dispute?.openerWallet?.toLowerCase() === address.toLowerCase() ? (
-                        <Badge variant="outline" className="border-purple-500/40 text-[9px] text-purple-300">
-                          You
-                        </Badge>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  <div className="rounded-lg border border-zinc-800 bg-zinc-950/50 p-2.5 space-y-1">
-                    <div className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Category</div>
-                    <div className="capitalize text-zinc-200">
-                      {(disputeRecord.manifest?.category || disputeRecord.dispute?.canonicalManifest?.category || 'General Dispute').replace('_', ' ')}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <div className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Explanation</div>
-                  <div className="rounded-md bg-zinc-950/70 p-2.5 text-xs text-zinc-200 whitespace-pre-wrap leading-relaxed border border-zinc-800/80">
-                    {disputeRecord.dispute?.canonicalManifest?.explanation || disputeRecord.manifest?.explanation}
-                  </div>
-                </div>
-
-                {/* Evidence Links if present */}
-                {disputeRecord.manifest?.links && disputeRecord.manifest.links.length > 0 && (
-                  <div className="space-y-1.5 pt-1">
-                    <div className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">
-                      Referenced Evidence Links ({disputeRecord.manifest.links.length})
-                    </div>
-                    <div className="space-y-1">
-                      {disputeRecord.manifest.links.map((link: any, idx: number) => (
-                        <a
-                          key={idx}
-                          href={link.value}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="flex items-center justify-between rounded border border-zinc-800 bg-zinc-950/50 px-2.5 py-1.5 text-xs text-purple-300 hover:border-purple-500/40 transition-colors"
-                        >
-                          <span className="truncate">{link.label || link.value}</span>
-                          <ExternalLink className="h-3 w-3 shrink-0 ml-1.5 opacity-70" />
-                        </a>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : loadingDisputeRecord ? (
-              <div className="rounded-lg border border-zinc-800 p-3 text-center text-xs text-zinc-400 flex items-center justify-center gap-2">
-                <Loader2 className="h-3.5 w-3.5 animate-spin text-rose-400" />
-                Retrieving dispute record…
-              </div>
-            ) : disputeRecordError ? (
-              <div className="rounded-lg border border-rose-500/40 bg-rose-950/30 p-3 text-xs text-rose-300 flex items-center justify-between">
-                <span>Dispute details could not be retrieved from the server.</span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={loadDisputeRecord}
-                  className="h-6 text-[11px] border-rose-500/40 text-rose-300 hover:bg-rose-900/40"
-                >
-                  Retry
-                </Button>
-              </div>
-            ) : (
-              // No serious dispute record found: Revision-created dispute
-              <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3 text-xs text-zinc-300 space-y-1">
-                <div className="font-semibold text-white flex items-center gap-1.5">
-                  <AlertCircle className="h-3.5 w-3.5 text-amber-400" /> Revision Escalation
-                </div>
-                <p className="text-[11px] text-zinc-400 leading-relaxed">
-                  This dispute began after a revision request was declined or timed out. Escrow remains held securely while resolution is pending.
-                </p>
-              </div>
-            )
-          ) : (
-            // Outsider View: Generic copy, no private explanation leaked
-            <p className="text-xs text-zinc-400 leading-relaxed">
-              Milestone {currentIndex + 1} is currently in dispute. Escrow funds ({formatUsdcAmount(currentMilestone.amount)} USDC) remain held securely in the Deal clone.
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* --------------------------------------------------------------------- */}
-      {/* RESOLUTION PROPOSED CARD (When milestone is ResolutionProposed)       */}
-      {/* --------------------------------------------------------------------- */}
-      {isResolutionProposed && (
-        <div className="rounded-xl border border-purple-500/30 bg-purple-950/20 p-4 space-y-4">
-          <div className="flex items-center justify-between border-b border-purple-500/20 pb-3">
-            <div className="flex items-center gap-2">
-              <Scale className="h-5 w-5 text-purple-400" />
-              <div>
-                <span className="text-sm font-bold text-white">Committee Resolution Proposed</span>
-                <p className="text-[11px] text-purple-300/80">
-                  The resolver committee has proposed an escrow resolution split.
-                </p>
-              </div>
-            </div>
-            <Badge variant="outline" className="border-purple-500/40 bg-purple-500/10 text-xs text-purple-300">
-              Proposed Split • {formatUsdcAmount(currentMilestone.amount)} USDC
-            </Badge>
-          </div>
-
-          {loadingResolutionProposal ? (
-            <div className="rounded-lg border border-zinc-800 p-4 text-center text-xs text-zinc-400 flex items-center justify-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin text-purple-400" />
-              Reading resolution proposal from blockchain…
-            </div>
-          ) : resolutionProposalError ? (
-            <div className="rounded-lg border border-red-500/40 bg-red-950/30 p-3 text-xs text-red-300 flex items-center justify-between">
-              <span>{resolutionProposalError}</span>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={loadResolutionProposal}
-                className="h-6 text-[11px] border-red-500/40 text-red-300 hover:bg-red-900/40"
-              >
-                Retry
-              </Button>
-            </div>
-          ) : resolutionProposal ? (
-            <div className="space-y-4">
-              {/* Proposed Split Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="rounded-lg border border-purple-500/20 bg-zinc-950/60 p-3 space-y-1">
-                  <div className="text-[10px] text-zinc-400 uppercase font-semibold">Freelancer Receives</div>
-                  <div className="text-lg font-bold text-white font-mono">
-                    {formatUsdcAmount(resolutionProposal.freelancerAmount)} USDC
-                  </div>
-                  {isFreelancer && (
-                    <Badge variant="outline" className="border-purple-500/40 text-[9px] text-purple-300">
-                      Your Payout
-                    </Badge>
-                  )}
-                </div>
-
-                <div className="rounded-lg border border-purple-500/20 bg-zinc-950/60 p-3 space-y-1">
-                  <div className="text-[10px] text-zinc-400 uppercase font-semibold">Client Receives</div>
-                  <div className="text-lg font-bold text-white font-mono">
-                    {formatUsdcAmount(resolutionProposal.clientAmount)} USDC
-                  </div>
-                  {isClient && (
-                    <Badge variant="outline" className="border-purple-500/40 text-[9px] text-purple-300">
-                      Your Refund
-                    </Badge>
-                  )}
-                </div>
-              </div>
-
-              {/* Reconsideration Window & Deadline */}
-              <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3 space-y-2 text-xs">
-                <div className="flex items-center justify-between">
-                  <span className="text-zinc-300 flex items-center gap-1.5 font-medium">
-                    <Clock className="h-3.5 w-3.5 text-purple-400" />
-                    {isReconsiderationWindowClosed ? 'Reconsideration Window Closed' : '72-Hour Reconsideration Window'}
-                  </span>
-                  {isReconsiderationWindowClosed ? (
-                    <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-300 text-[10px]">
-                      Ready to Execute
-                    </Badge>
-                  ) : isReconsiderationWindowClosingSoon ? (
-                    <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-300 text-[10px] animate-pulse">
-                      Closing Soon
-                    </Badge>
-                  ) : (
-                    <Badge variant="outline" className="border-purple-500/40 bg-purple-500/10 text-purple-300 text-[10px]">
-                      Window Active
-                    </Badge>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] pt-1 border-t border-zinc-800/60">
-                  <div>
-                    <span className="text-zinc-400">Deadline: </span>
-                    <span className="text-zinc-200 font-mono">
-                      {formatTimestamp(resolutionProposal.reconsiderationDeadline)}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-zinc-400">Remaining: </span>
-                    <span className={cn('font-mono font-semibold', isReconsiderationWindowClosed ? 'text-zinc-400' : isReconsiderationWindowClosingSoon ? 'text-amber-300' : 'text-purple-300')}>
-                      {remainingReconsiderationSeconds !== null
-                        ? formatCountdown(remainingReconsiderationSeconds)
-                        : '—'}
-                    </span>
-                  </div>
-                </div>
-
-                <p className="text-[11px] text-zinc-400 leading-relaxed pt-1">
-                  {isReconsiderationWindowClosed
-                    ? "The reconsideration window has closed. The committee's proposed split can now be settled on-chain."
-                    : 'If both parties agree with this resolution, no action is required. The proposed split becomes executable after the reconsideration window closes.'}
-                </p>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-purple-500/20">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setShowReportDrawer((prev) => !prev)}
-                  className="h-8 text-xs text-purple-300 hover:text-purple-100 hover:bg-purple-950/40 flex items-center gap-1.5"
-                >
-                  <FileText className="h-3.5 w-3.5" />
-                  <span>{showReportDrawer ? 'Hide Resolution Report' : 'View Resolution Report'}</span>
-                  {showReportDrawer ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                </Button>
-
-                <div className="flex items-center gap-2">
-                  {canRequestReconsideration && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="h-8 text-xs border-amber-500/40 text-amber-300 hover:bg-amber-950/40 hover:border-amber-500/70 font-medium"
-                      onClick={() => {
-                        setShowReconsiderModal(true);
-                        setReconsiderError(null);
-                      }}
-                      disabled={actionInProgress}
-                    >
-                      Request Final Reconsideration
-                    </Button>
-                  )}
-
-                  {canExecuteResolution && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="h-8 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-medium flex items-center gap-1.5"
-                      onClick={() => {
-                        setShowExecuteModal(true);
-                        setExecuteError(null);
-                      }}
-                      disabled={actionInProgress}
-                    >
-                      <CheckCircle2 className="h-3.5 w-3.5" /> Execute Resolution
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              {/* Collapsible Resolution Report Drawer */}
-              {showReportDrawer && renderResolutionReportDrawer()}
-            </div>
-          ) : null}
-        </div>
-      )}
-
-      {/* --------------------------------------------------------------------- */}
-      {/* FINAL REVIEW CARD (When milestone is FinalReview)                     */}
-      {/* --------------------------------------------------------------------- */}
-      {isFinalReview && (
-        <div className="rounded-xl border border-indigo-500/30 bg-indigo-950/20 p-4 space-y-4">
-          <div className="flex items-center justify-between border-b border-indigo-500/20 pb-3">
-            <div className="flex items-center gap-2">
-              <Clock className="h-5 w-5 text-indigo-400" />
-              <div>
-                <span className="text-sm font-bold text-white">Final Review in Progress</span>
-                <p className="text-[11px] text-indigo-300/80">
-                  A final reconsideration was requested. The committee is reviewing the milestone again.
-                </p>
-              </div>
-            </div>
-            <Badge variant="outline" className="border-indigo-500/40 bg-indigo-500/10 text-xs text-indigo-300">
-              Escrow Held • {formatUsdcAmount(currentMilestone.amount)} USDC
-            </Badge>
-          </div>
-
-          <p className="text-xs text-zinc-300 leading-relaxed">
-            The initial proposed resolution is no longer executable because a participant requested final reconsideration. The resolution committee will review the dispute and submit a final binding resolution.
-          </p>
-
-          {/* Historical Initial Proposal Context */}
-          {resolutionProposal && (
-            <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3 space-y-2 text-xs">
-              <div className="text-[10px] text-zinc-400 uppercase font-semibold">
-                Initial Proposed Split (Pending Final Review)
-              </div>
-              <div className="grid grid-cols-2 gap-2 font-mono">
-                <div className="rounded bg-zinc-950/50 p-2">
-                  <div className="text-[10px] text-zinc-400 uppercase font-sans">Freelancer</div>
-                  <div className="font-bold text-zinc-300">
-                    {formatUsdcAmount(resolutionProposal.freelancerAmount)} USDC
-                  </div>
-                </div>
-                <div className="rounded bg-zinc-950/50 p-2">
-                  <div className="text-[10px] text-zinc-400 uppercase font-sans">Client</div>
-                  <div className="font-bold text-zinc-300">
-                    {formatUsdcAmount(resolutionProposal.clientAmount)} USDC
-                  </div>
-                </div>
-              </div>
-              <p className="text-[10px] text-zinc-500 italic">
-                Note: This initial proposal is for historical context and is not directly executable.
-              </p>
-            </div>
-          )}
-
-          <div className="pt-1">
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              onClick={() => setShowReportDrawer((prev) => !prev)}
-              className="h-8 text-xs text-indigo-300 hover:text-indigo-100 hover:bg-indigo-950/40 flex items-center gap-1.5"
-            >
-              <FileText className="h-3.5 w-3.5" />
-              <span>{showReportDrawer ? 'Hide Resolution Report' : 'View Initial Resolution Report'}</span>
-              {showReportDrawer ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-            </Button>
-          </div>
-
-          {showReportDrawer && renderResolutionReportDrawer()}
-        </div>
-      )}
-
-      {/* --------------------------------------------------------------------- */}
-      {/* DIRECT MUTUAL SETTLEMENT SECTION                                     */}
-      {/* Available in: Submitted, RevisionRequested, Disputed,               */}
-      {/* ResolutionProposed, FinalReview                                      */}
-      {/* --------------------------------------------------------------------- */}
-      {canUseMutualSettlement && (
-        <Card className="border-purple-500/20 bg-zinc-950/40">
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <div className="space-y-0.5">
-                <CardTitle className="text-sm font-bold text-white flex items-center gap-2">
-                  <Handshake className="h-4 w-4 text-purple-400" /> Direct Mutual Settlement
-                </CardTitle>
-                <CardDescription className="text-xs text-zinc-400">
-                  {isDisputed
-                    ? 'Both parties can still settle this milestone directly without waiting for a resolver.'
-                    : 'Propose how this milestone escrow should be split between the freelancer and client.'}
-                </CardDescription>
-              </div>
-              <Button
-                size="sm"
-                className="h-7 text-xs bg-purple-600 hover:bg-purple-500 text-white font-medium"
-                onClick={() => {
-                  setShowProposeModal(true);
-                  setProposeError(null);
-                  setFreelancerAmountInput('');
-                  setClientAmountInput('');
-                }}
-              >
-                Propose Settlement
-              </Button>
-            </div>
-          </CardHeader>
-
-          <CardContent className="space-y-3">
-            {loadingProposals ? (
-              <div className="rounded-lg border border-zinc-800 p-3 text-center text-xs text-zinc-400 flex items-center justify-center gap-2">
-                <Loader2 className="h-3.5 w-3.5 animate-spin text-purple-400" /> Loading proposals…
-              </div>
-            ) : proposals.length === 0 ? (
-              <div className="rounded-lg border border-zinc-800/80 bg-zinc-900/30 p-3 text-center text-xs text-zinc-400">
-                No active settlement proposals. Either participant can propose an agreed escrow split.
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {proposals.map((p) => {
-                  const isProposer =
-                    address && p.proposerWallet.toLowerCase() === address.toLowerCase();
-                  const isCounterparty =
-                    address && p.counterpartyWallet.toLowerCase() === address.toLowerCase();
-
-                  return (
-                    <div
-                      key={p.id}
-                      className={cn(
-                        'rounded-lg border p-3 text-xs transition-colors space-y-2.5',
-                        p.status === 'executed'
-                          ? 'border-emerald-500/30 bg-emerald-950/10'
-                          : p.status === 'cancelled'
-                          ? 'border-zinc-800 bg-zinc-900/20 opacity-60'
-                          : p.isExpired
-                          ? 'border-zinc-800 bg-zinc-900/20 opacity-60'
-                          : 'border-zinc-800 bg-zinc-900/50'
-                      )}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold text-white">
-                            {isProposer
-                              ? 'Your Proposal'
-                              : `Proposal from ${isClient ? 'Freelancer' : 'Client'}`}
-                          </span>
-                          <span className="font-mono text-[10px] text-zinc-400">
-                            Nonce #{p.proposalNonce}
-                          </span>
-                        </div>
-
-                        {p.status === 'executed' ? (
-                          <Badge variant="outline" className="border-emerald-500/40 text-emerald-300 text-[10px]">
-                            Executed
-                          </Badge>
-                        ) : p.status === 'cancelled' ? (
-                          <Badge variant="outline" className="border-zinc-700 text-zinc-400 text-[10px]">
-                            Cancelled
-                          </Badge>
-                        ) : p.isExpired ? (
-                          <Badge variant="outline" className="border-zinc-700 text-zinc-400 text-[10px]">
-                            Expired
-                          </Badge>
-                        ) : p.status === 'invalidated' ? (
-                          <Badge variant="outline" className="border-zinc-700 text-zinc-400 text-[10px]">
-                            Invalidated
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="border-amber-500/40 text-amber-300 text-[10px]">
-                            Pending
-                          </Badge>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                        <div className="rounded bg-zinc-950/60 p-2 space-y-0.5">
-                          <div className="text-[10px] text-zinc-400 uppercase">Freelancer Receives</div>
-                          <div className="font-bold text-white">
-                            {formatUsdcAmount(BigInt(p.freelancerAmount))} USDC
-                          </div>
-                        </div>
-
-                        <div className="rounded bg-zinc-950/60 p-2 space-y-0.5">
-                          <div className="text-[10px] text-zinc-400 uppercase">Client Receives</div>
-                          <div className="font-bold text-white">
-                            {formatUsdcAmount(BigInt(p.clientAmount))} USDC
-                          </div>
-                        </div>
-
-                        <div className="rounded bg-zinc-950/60 p-2 space-y-0.5 col-span-2 sm:col-span-1">
-                          <div className="text-[10px] text-zinc-400 uppercase">Expires</div>
-                          <div className="text-zinc-200">
-                            {formatTimestamp(Number(p.validUntil))}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Action Buttons */}
-                      <div className="flex items-center justify-end gap-2 pt-1 border-t border-zinc-800/60">
-                        {/* Proposer: Cancel Proposal */}
-                        {isProposer && p.status === 'pending' && !p.isExpired && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 text-xs border-rose-500/30 text-rose-300 hover:bg-rose-950/40"
-                            disabled={actionInProgress}
-                            onClick={() => setCancellingProposal(p)}
-                          >
-                            Cancel Proposal
-                          </Button>
-                        )}
-
-                        {/* Counterparty: Accept Settlement (if executable) */}
-                        {isCounterparty && p.isExecutable && (
-                          <Button
-                            size="sm"
-                            className="h-7 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-medium"
-                            disabled={actionInProgress}
-                            onClick={() => setAcceptingProposal(p)}
-                          >
-                            Accept Settlement
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+                {renderMutualSettlementProposalsList()}
               </div>
             )}
-          </CardContent>
-        </Card>
+          </PaymentDisputeResolutionSection>
+        )}
+
+      {/* Active Dispute Workspace (Phase 1D) */}
+      {(isDisputed ||
+        isResolutionProposed ||
+        isFinalReview ||
+        currentMilestone.status === MilestoneStatus.SettledSplit) && (
+        <ActiveDisputeWorkspace
+          dealAddress={dealData.dealAddress}
+          currentIndex={currentIndex}
+          milestone={currentMilestone}
+          clientAddress={dealData.client}
+          freelancerAddress={dealData.freelancer}
+          currentUserAddress={address}
+          isClient={isClient}
+          isFreelancer={isFreelancer}
+          isParticipant={isParticipant}
+          canUseMutualSettlement={canUseMutualSettlement}
+          canRequestReconsideration={canRequestReconsideration}
+          canExecuteResolution={canExecuteResolution}
+          disputeRecord={disputeRecord}
+          loadingDisputeRecord={loadingDisputeRecord}
+          disputeRecordError={disputeRecordError}
+          onRetryLoadDisputeRecord={loadDisputeRecord}
+          resolutionProposal={resolutionProposal}
+          loadingResolutionProposal={loadingResolutionProposal}
+          resolutionProposalError={resolutionProposalError}
+          onRetryLoadResolutionProposal={loadResolutionProposal}
+          isReconsiderationWindowClosed={isReconsiderationWindowClosed}
+          isReconsiderationWindowClosingSoon={isReconsiderationWindowClosingSoon}
+          remainingReconsiderationSeconds={remainingReconsiderationSeconds}
+          initialReport={initialReport}
+          loadingInitialReport={loadingInitialReport}
+          initialReportNotice={initialReportNotice}
+          finalReport={finalReport}
+          loadingFinalReport={loadingFinalReport}
+          proposals={proposals}
+          loadingProposals={loadingProposals}
+          actionInProgress={actionInProgress}
+          onOpenProposeModal={() => {
+            setShowProposeModal(true);
+            setProposeError(null);
+            setFreelancerAmountInput('');
+            setClientAmountInput('');
+            setProposalDurationHours(24);
+          }}
+          onAcceptProposal={(p) => setAcceptingProposal(p)}
+          onCancelProposal={(p) => setCancellingProposal(p)}
+          onRequestReconsideration={() => {
+            setShowReconsiderModal(true);
+            setReconsiderError(null);
+          }}
+          onExecuteResolution={() => {
+            setShowExecuteModal(true);
+            setExecuteError(null);
+          }}
+        />
       )}
 
       {/* --------------------------------------------------------------------- */}
@@ -2302,21 +1852,42 @@ export function V2MilestoneDispute({
                 />
               </div>
 
-              <div className="space-y-1.5">
+              <div className="space-y-2">
                 <label className="text-xs font-semibold text-zinc-300">
-                  Proposal Expiration (validUntil)
+                  Offer Duration
                 </label>
-                <input
-                  type="datetime-local"
-                  value={validUntilInput}
-                  onChange={(e) => {
-                    setValidUntilInput(e.target.value);
-                    setProposeError(null);
-                  }}
-                  min={new Date(Date.now() + 300 * 1000).toISOString().slice(0, 16)}
-                  className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs text-white focus:border-purple-500 focus:outline-none"
-                  disabled={proposeInProgress}
-                />
+                <div className="grid grid-cols-4 gap-2">
+                  {[
+                    { label: '12 Hours', value: 12 },
+                    { label: '24 Hours', value: 24 },
+                    { label: '48 Hours', value: 48 },
+                    { label: '72 Hours', value: 72 },
+                  ].map((preset) => {
+                    const isSelected = proposalDurationHours === preset.value;
+                    return (
+                      <button
+                        key={preset.value}
+                        type="button"
+                        onClick={() => {
+                          setProposalDurationHours(preset.value);
+                          setProposeError(null);
+                        }}
+                        disabled={proposeInProgress}
+                        className={cn(
+                          'rounded-md border py-2 text-xs font-medium transition-colors text-center',
+                          isSelected
+                            ? 'border-purple-500 bg-purple-500/20 text-purple-200'
+                            : 'border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700 hover:text-white'
+                        )}
+                      >
+                        {preset.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-zinc-400 leading-relaxed pt-0.5">
+                  Your offer expires after the selected period. The committee review continues independently.
+                </p>
               </div>
             </div>
 
@@ -2338,7 +1909,7 @@ export function V2MilestoneDispute({
                 type="button"
                 size="sm"
                 onClick={handleProposeSettlement}
-                disabled={proposeInProgress || !freelancerAmountInput || !clientAmountInput || !validUntilInput}
+                disabled={proposeInProgress || !freelancerAmountInput || !clientAmountInput}
                 className="h-8 text-xs bg-purple-600 hover:bg-purple-500 text-white font-medium"
               >
                 {proposeInProgress ? (

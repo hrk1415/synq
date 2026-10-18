@@ -40,6 +40,7 @@ import {
 import { formatUsdcAmount, ZERO_BYTES32 } from '@/lib/deals/v2';
 import { V2DealFunding } from '@/components/deals/V2DealFunding';
 import { V2MilestoneLifecycle } from '@/components/deals/V2MilestoneLifecycle';
+import { MilestoneSettledSplitCard } from '@/components/deals/settlement/MilestoneSettledSplitCard';
 
 interface V2DealDetailViewProps {
   dealAddress: `0x${string}`;
@@ -335,6 +336,14 @@ export function V2DealDetailView({ dealAddress }: V2DealDetailViewProps) {
                       <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-[10px] text-emerald-400">
                         Settled & Paid
                       </Badge>
+                    ) : m.status === MilestoneStatus.SettledSplit ? (
+                      <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-[10px] text-emerald-400">
+                        Settled (Split)
+                      </Badge>
+                    ) : m.status === MilestoneStatus.SettledRefunded ? (
+                      <Badge variant="outline" className="border-indigo-500/40 bg-indigo-500/10 text-[10px] text-indigo-300">
+                        Settled (Refunded)
+                      </Badge>
                     ) : m.status === MilestoneStatus.RevisionRequested ? (
                       <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-[10px] text-amber-400">
                         Changes Requested
@@ -372,6 +381,18 @@ export function V2DealDetailView({ dealAddress }: V2DealDetailViewProps) {
                   </div>
                 )}
 
+                {m.status === MilestoneStatus.SettledRefunded && (
+                  <div className="rounded-md border border-indigo-500/30 bg-indigo-950/20 p-2.5 text-xs text-indigo-300 flex items-center justify-between">
+                    <span className="flex items-center gap-2">
+                      <CheckCircle2 className="h-4 w-4 text-indigo-400 shrink-0" />
+                      <span>Full Refund Completed — {formatUsdcAmount(m.amount)} USDC returned to client</span>
+                    </span>
+                    <Badge variant="outline" className="border-indigo-500/40 text-[10px] text-indigo-300">
+                      Refund Final
+                    </Badge>
+                  </div>
+                )}
+
                 {m.status === MilestoneStatus.RevisionRequested && (
                   <div className="rounded-md border border-amber-500/30 bg-amber-950/20 p-2.5 text-xs text-amber-300 flex items-center justify-between">
                     <span className="flex items-center gap-2">
@@ -385,14 +406,9 @@ export function V2DealDetailView({ dealAddress }: V2DealDetailViewProps) {
                 )}
 
                 {m.status === MilestoneStatus.Disputed && (
-                  <div className="rounded-md border border-rose-500/30 bg-rose-950/20 p-2.5 text-xs text-rose-300 flex items-center justify-between">
-                    <span className="flex items-center gap-2">
-                      <AlertCircle className="h-4 w-4 text-rose-400 shrink-0" />
-                      <span>Dispute Open • Milestone is in dispute. Escrow remains held pending resolution.</span>
-                    </span>
-                    <Badge variant="outline" className="border-rose-500/40 text-[10px] text-rose-300">
-                      Dispute Pending
-                    </Badge>
+                  <div className="text-[11px] text-rose-300/90 flex items-center gap-1.5 py-0.5">
+                    <AlertCircle className="h-3.5 w-3.5 text-rose-400 shrink-0" />
+                    <span>Dispute pending — milestone escrow remains locked.</span>
                   </div>
                 )}
 
@@ -474,6 +490,17 @@ export function V2DealDetailView({ dealAddress }: V2DealDetailViewProps) {
                       <div className="font-semibold text-white">{formatTimestamp(m.submittedAt + m.reviewWindow)}</div>
                     </div>
                   </div>
+                )}
+
+                {/* SettledSplit Settlement Summary */}
+                {m.status === MilestoneStatus.SettledSplit && (
+                  <MilestoneSettledSplitCard
+                    dealAddress={dealData.dealAddress}
+                    milestone={m}
+                    clientAddress={dealData.client}
+                    freelancerAddress={dealData.freelancer}
+                    currentUserAddress={address}
+                  />
                 )}
               </div>
             );
