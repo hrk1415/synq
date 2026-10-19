@@ -30,7 +30,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { shortenAddress, cn } from '@/lib/utils';
 import { SEPOLIA_CHAIN_ID, SYNQ_V2_SEPOLIA_CONFIG, getSynqPremiumConfig } from '@/lib/contracts/addresses';
-import { CANONICAL_PROTECTION_MANAGER_V1_1_SEPOLIA } from '@/lib/deals/v2-protection-committee';
+import {
+  CANONICAL_PROTECTION_MANAGER_V1_1_SEPOLIA,
+  CANONICAL_PROTECTION_POOL_SEPOLIA,
+} from '@/lib/deals/v2-protection-committee';
 import { synqProtectionPoolABI } from '@/lib/contracts/abis';
 import { getSepoliaExplorerUrl, sepoliaPublicClient } from '@/lib/chain';
 import { useSepoliaNetwork, isRejected } from '@/hooks/useSepoliaNetwork';
@@ -122,8 +125,7 @@ export function V2MilestoneClaim({
 
   const poolAddress =
     getSynqPremiumConfig().pool ||
-    SYNQ_V2_SEPOLIA_CONFIG.premiumProtectionPool ||
-    ('0xA1f4991597869ba11EbD94edED4d69960063cbc2' as `0x${string}`);
+    CANONICAL_PROTECTION_POOL_SEPOLIA;
 
   // Payout & Pool State (Phase 3E)
   const [poolAvailableBalance, setPoolAvailableBalance] = useState<bigint | null>(null);
