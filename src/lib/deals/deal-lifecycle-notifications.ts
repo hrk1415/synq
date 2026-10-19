@@ -17,8 +17,10 @@
 
 import {
   notifyProposalReceived,
+  notifyProposalDeclined,
   notifyBuyerDealConfirmed,
   notifyDealConfirmedToSeller,
+  notifyEscrowFunded,
   notifyBuyerWorkSubmitted,
   notifySellerPaymentReleased,
   notifyBuyerDealCompleted,
@@ -261,6 +263,260 @@ export async function dispatchProposalAcceptedNotification(
     }
   } catch (err: any) {
     console.warn('[LifecycleNotify] Failed to dispatch deal_confirmed:', err?.message || err);
+    return { event, recipientWallet, dispatched: false, skipped: false, reason: err?.message || 'Dispatch error' };
+  }
+}
+
+/**
+ * 2b. Proposal Declined -> Notify Client (proposal_declined)
+ * Freelancer declined proposal on-chain; client/buyer is notified.
+ */
+export async function dispatchProposalDeclinedNotification(
+  proposal: DealProposalRow,
+  txHash?: string,
+  blockNumber?: bigint | number | string,
+): Promise<LifecycleNotificationResult> {
+  const event = 'proposal_declined';
+  const recipientWallet = normalizeWallet(proposal.clientWallet);
+  const freelancerWallet = normalizeWallet(proposal.freelancerWallet);
+  const chainId = proposal.chainId || 11155111;
+  const targetDeal = proposal.proposalId.toLowerCase();
+  const effectiveBlock = blockNumber ?? proposal.deploymentBlock;
+
+  try {
+    const notifRepo = getNotificationsRepository();
+    const eventKey = generateCanonicalDealEventKey({
+      chainId,
+      dealId: targetDeal,
+      event,
+      recipientRole: 'buyer',
+    });
+
+    // Enforce Shared Freshness Guard (Fresh Notifications Only policy)
+    const freshness = evaluateNotificationFreshness({
+      event,
+      origin: 'on_chain',
+      blockNumber: effectiveBlock,
+      txHash,
+    });
+
+    if (!freshness.eligible) {
+      if (freshness.reason === 'historical') {
+        try {
+          const claim = await notifRepo.claimPending(
+            eventKey,
+            { dealId: targetDeal, event, recipientWallet },
+            { fenced: true },
+          );
+          if (claim && typeof claim === 'object' && claim.claimToken) {
+            await notifRepo.markSkipped(eventKey, freshness.message, claim.claimToken);
+          }
+        } catch {}
+      }
+      return {
+        event,
+        recipientWallet,
+        dispatched: false,
+        skipped: true,
+        reason: freshness.message,
+      };
+    }
+
+    const fallbackKeys = getEquivalentNotificationKeys({
+      chainId,
+      dealId: targetDeal,
+      event,
+      txHash,
+      recipientRole: 'buyer',
+    });
+
+    const claim: NotificationClaimResult = await notifRepo.claimPending(
+      eventKey,
+      {
+        dealId: targetDeal,
+        event,
+        recipientWallet,
+      },
+      { fenced: true, fallbackKeys },
+    );
+
+    if (claim.status === 'duplicate_delivered' || String(claim) === 'duplicate_delivered') {
+      return { event, recipientWallet, dispatched: false, skipped: true, reason: 'Duplicate event already delivered' };
+    }
+
+    if (claim.status === 'duplicate_pending' || String(claim) === 'duplicate_pending') {
+      return { event, recipientWallet, dispatched: false, skipped: true, reason: 'Notification delivery in-flight' };
+    }
+
+    const email = await resolveEmailFromDb(recipientWallet);
+    const allowed = await isNotificationAllowed(recipientWallet, event);
+
+    if (!email) {
+      await notifRepo.markSkipped(eventKey, 'No verified email linked to recipient wallet', claim.claimToken);
+      return { event, recipientWallet, dispatched: false, skipped: true, reason: 'No verified email' };
+    }
+
+    if (!allowed) {
+      await notifRepo.markSkipped(eventKey, `Recipient opted out of ${event} notifications`, claim.claimToken);
+      return { event, recipientWallet, dispatched: false, skipped: true, reason: 'Recipient opted out' };
+    }
+
+    const displayAmount = formatDealAmount(proposal.totalAmount);
+    const mailRes: MailResult = await notifyProposalDeclined({
+      event,
+      dealId: targetDeal,
+      recipientWallet,
+      freelancerWallet,
+      clientWallet: recipientWallet,
+      dealTitle: proposal.title || 'Untitled deal',
+      dealAmount: displayAmount,
+      note: 'The freelancer has declined this proposal.',
+      link: `/deals/proposals/${proposal.proposalId}`,
+    });
+
+    if (mailRes.deliveryStatus === 'delivered' || (mailRes.mode === 'smtp' && !mailRes.error)) {
+      await notifRepo.markDelivered(eventKey, mailRes.messageId, mailRes.to, claim.claimToken);
+      return { event, recipientWallet, dispatched: true, skipped: false, deliveryStatus: 'delivered', messageId: mailRes.messageId };
+    } else if (mailRes.deliveryStatus === 'log_only' || mailRes.mode === 'log') {
+      await notifRepo.markDeferred(eventKey, mailRes.error || 'SMTP delivery disabled (log mode)', claim.claimToken);
+      return { event, recipientWallet, dispatched: true, skipped: false, deliveryStatus: 'log_only' };
+    } else {
+      await notifRepo.markFailed(eventKey, mailRes.error || 'Transient delivery failure', claim.claimToken);
+      return { event, recipientWallet, dispatched: false, skipped: false, deliveryStatus: 'failed', reason: mailRes.error };
+    }
+  } catch (err: any) {
+    console.warn('[LifecycleNotify] Failed to dispatch proposal_declined:', err?.message || err);
+    return { event, recipientWallet, dispatched: false, skipped: false, reason: err?.message || 'Dispatch error' };
+  }
+}
+
+/**
+ * 2c. Escrow Funded -> Notify Freelancer (escrow_funded)
+ * Client deposited collateral funds into the escrow deal contract; freelancer/seller is notified.
+ */
+export async function dispatchEscrowFundedNotification(params: {
+  dealAddress: string;
+  clientWallet: string;
+  freelancerWallet: string;
+  dealTitle?: string;
+  totalAmount?: string | bigint;
+  txHash?: string;
+  blockNumber?: bigint | number | string;
+}): Promise<LifecycleNotificationResult> {
+  const event = 'escrow_funded';
+  const recipientWallet = normalizeWallet(params.freelancerWallet);
+  const clientWallet = normalizeWallet(params.clientWallet);
+  const chainId = 11155111;
+  const targetDeal = params.dealAddress.toLowerCase();
+
+  try {
+    const notifRepo = getNotificationsRepository();
+    const eventKey = generateCanonicalDealEventKey({
+      chainId,
+      dealId: targetDeal,
+      contractAddress: params.dealAddress,
+      event,
+      recipientRole: 'seller',
+    });
+
+    // Enforce Shared Freshness Guard (Fresh Notifications Only policy)
+    const freshness = evaluateNotificationFreshness({
+      event,
+      origin: 'on_chain',
+      blockNumber: params.blockNumber,
+      txHash: params.txHash,
+    });
+
+    if (!freshness.eligible) {
+      if (freshness.reason === 'historical') {
+        try {
+          const claim = await notifRepo.claimPending(
+            eventKey,
+            { dealId: targetDeal, event, recipientWallet },
+            { fenced: true },
+          );
+          if (claim && typeof claim === 'object' && claim.claimToken) {
+            await notifRepo.markSkipped(eventKey, freshness.message, claim.claimToken);
+          }
+        } catch {}
+      }
+      return {
+        event,
+        recipientWallet,
+        dispatched: false,
+        skipped: true,
+        reason: freshness.message,
+      };
+    }
+
+    const fallbackKeys = getEquivalentNotificationKeys({
+      chainId,
+      dealId: targetDeal,
+      contractAddress: params.dealAddress,
+      event,
+      txHash: params.txHash,
+      recipientRole: 'seller',
+    });
+
+    const claim: NotificationClaimResult = await notifRepo.claimPending(
+      eventKey,
+      {
+        dealId: targetDeal,
+        event,
+        recipientWallet,
+      },
+      { fenced: true, fallbackKeys },
+    );
+
+    if (claim.status === 'duplicate_delivered' || String(claim) === 'duplicate_delivered') {
+      return { event, recipientWallet, dispatched: false, skipped: true, reason: 'Duplicate event already delivered' };
+    }
+
+    if (claim.status === 'duplicate_pending' || String(claim) === 'duplicate_pending') {
+      return { event, recipientWallet, dispatched: false, skipped: true, reason: 'Notification delivery in-flight' };
+    }
+
+    const email = await resolveEmailFromDb(recipientWallet);
+    const allowed = await isNotificationAllowed(recipientWallet, event);
+
+    if (!email) {
+      await notifRepo.markSkipped(eventKey, 'No verified email linked to recipient wallet', claim.claimToken);
+      return { event, recipientWallet, dispatched: false, skipped: true, reason: 'No verified email' };
+    }
+
+    if (!allowed) {
+      await notifRepo.markSkipped(eventKey, `Recipient opted out of ${event} notifications`, claim.claimToken);
+      return { event, recipientWallet, dispatched: false, skipped: true, reason: 'Recipient opted out' };
+    }
+
+    const displayAmount = params.totalAmount !== undefined
+      ? formatDealAmount(params.totalAmount)
+      : '';
+
+    const mailRes: MailResult = await notifyEscrowFunded({
+      event,
+      dealId: targetDeal,
+      recipientWallet,
+      freelancerWallet: recipientWallet,
+      clientWallet,
+      dealTitle: params.dealTitle || 'Untitled deal',
+      dealAmount: displayAmount,
+      note: 'Funds are locked in escrow. You may begin work on Milestone #1.',
+      link: `/deals/${params.dealAddress}`,
+    });
+
+    if (mailRes.deliveryStatus === 'delivered' || (mailRes.mode === 'smtp' && !mailRes.error)) {
+      await notifRepo.markDelivered(eventKey, mailRes.messageId, mailRes.to, claim.claimToken);
+      return { event, recipientWallet, dispatched: true, skipped: false, deliveryStatus: 'delivered', messageId: mailRes.messageId };
+    } else if (mailRes.deliveryStatus === 'log_only' || mailRes.mode === 'log') {
+      await notifRepo.markDeferred(eventKey, mailRes.error || 'SMTP delivery disabled (log mode)', claim.claimToken);
+      return { event, recipientWallet, dispatched: true, skipped: false, deliveryStatus: 'log_only' };
+    } else {
+      await notifRepo.markFailed(eventKey, mailRes.error || 'Transient delivery failure', claim.claimToken);
+      return { event, recipientWallet, dispatched: false, skipped: false, deliveryStatus: 'failed', reason: mailRes.error };
+    }
+  } catch (err: any) {
+    console.warn('[LifecycleNotify] Failed to dispatch escrow_funded:', err?.message || err);
     return { event, recipientWallet, dispatched: false, skipped: false, reason: err?.message || 'Dispatch error' };
   }
 }

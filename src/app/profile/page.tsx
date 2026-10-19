@@ -105,7 +105,7 @@ function ProfileContent() {
   const { address, isConnected, status } = useAccount();
   const isAccountRestoring = status === 'connecting' || status === 'reconnecting';
   const effectiveAddress = (mounted && isConnected && !!address && !isAccountRestoring) ? address : undefined;
-  const { ensureAuthenticated, clearSession } = useAuthSession();
+  const { ensureAuthenticated, clearSession, getToken } = useAuthSession();
   const { networkReady } = useSepoliaNetwork();
   const registry = useRegistry(effectiveAddress);
   const directory = useDirectoryContract(effectiveAddress);
@@ -457,14 +457,16 @@ function ProfileContent() {
     // 1 & 2. Fetch the owner-only personal profile and public market profile.
     void (async () => {
       let personalData: any = {};
-      try {
-        const token = await ensureAuthenticated(effectiveAddress);
-        const response = await fetch(`/api/profile?wallet=${effectiveAddress}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (response.ok) personalData = await response.json();
-      } catch {
-        // Leave owner-only fields empty when authentication or loading fails.
+      const token = getToken();
+      if (token) {
+        try {
+          const response = await fetch(`/api/profile?wallet=${effectiveAddress}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (response.ok) personalData = await response.json();
+        } catch {
+          // Leave owner-only fields empty when authentication or loading fails.
+        }
       }
       const marketData = await fetch(`/api/profile/market/${effectiveAddress}`)
         .then((r) => (r.ok ? r.json() : null))
@@ -556,7 +558,7 @@ function ProfileContent() {
     return () => {
       cancelled = true;
     };
-  }, [effectiveAddress, directory.myRegistered, ensureAuthenticated]);
+  }, [effectiveAddress, directory.myRegistered, getToken]);
 
   // Synchronize canonical Directory profile when registered
   useEffect(() => {

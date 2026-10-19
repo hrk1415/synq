@@ -14,6 +14,7 @@ import {
   type DealProposalRow,
   type IDealProposalRepository,
   defaultDealProposalRepository,
+  getDealProposalRepository,
   ProposalAuthError,
   ProposalConflictError,
   ProposalValidationError,
@@ -220,7 +221,7 @@ export async function reconcileProposalWithReceipt(
     throw new ProposalValidationError('Invalid proposalId format');
   }
 
-  const repo = options?.repo || defaultDealProposalRepository;
+  const repo = options?.repo || getDealProposalRepository();
   const proposal = await repo.getById(cleanProposalId);
   if (!proposal) {
     throw new ProposalValidationError('Proposal not found');

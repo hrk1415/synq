@@ -2,11 +2,12 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { useAccount, useAccountEffect, useConnect, useDisconnect, useBalance, useReadContract, useConnectors, type Connector } from 'wagmi';
+import { useAccount, useAccountEffect, useConnect, useDisconnect, useConfig, useBalance, useReadContract, useConnectors, type Connector } from 'wagmi';
+import { reconnect } from 'wagmi/actions';
 import { useAuthSession, getStoredSession, clearAuthSession } from '@/hooks/useAuthSession';
 import Link from 'next/link';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
-import { Wallet, ChevronDown, ChevronRight, LogOut, Copy, Check, X, Loader2, AlertTriangle, ArrowRightLeft, ShieldCheck } from 'lucide-react';
+import { Wallet, ChevronDown, ChevronRight, ChevronLeft, LogOut, Copy, Check, X, Loader2, AlertTriangle, ArrowRightLeft, ShieldCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSynqIdentity } from '@/hooks/useSynqIdentity';
 import { useSepoliaNetwork, isRejected, clearRejectedSwitchSession, hasRejectedSwitchSession, getConnectorChainId } from '@/hooks/useSepoliaNetwork';
@@ -20,6 +21,10 @@ import {
   KNOWN_WALLETS_BY_RDNS,
   isSafeIconUri,
   getWalletDisplayName,
+  setStoredWalletPreference,
+  getStoredWalletPreference,
+  clearStoredWalletPreference,
+  findMatchingConnector,
   type GridWalletItem,
 } from '@/lib/wallet/discovery';
 
@@ -198,11 +203,27 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
   const [mounted, setMounted] = useState(false);
   const { address, isConnected, connector, chainId } = useAccount();
   const { connectAsync } = useConnect();
-  const { disconnect } = useDisconnect();
+  const config = useConfig();
+  const { disconnectAsync } = useDisconnect();
+  const isDisconnectingRef = useRef(false);
+  const connectAbortRef = useRef(false);
   const { ensureAuthenticated } = useAuthSession();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [authError, setAuthError] = useState('');
+
+  type OnboardingStep = 'idle' | 'connecting' | 'network' | 'verifying' | 'ready';
+  const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>('idle');
+  const [onboardingConnector, setOnboardingConnector] = useState<Connector | null>(null);
+  const [onboardingWalletName, setOnboardingWalletName] = useState<string>('');
+  const [onboardingWalletItem, setOnboardingWalletItem] = useState<GridWalletItem | null>(null);
+  const [onboardingAddress, setOnboardingAddress] = useState<string | null>(null);
+  const [onboardingError, setOnboardingError] = useState<string | null>(null);
+  const [onboardingActionLoading, setOnboardingActionLoading] = useState(false);
+  const completeTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const activeOperationIdRef = useRef<number>(0);
+  const isRestoredRef = useRef<boolean>(false);
+  const isRestoringRef = useRef<boolean>(false);
 
   const checkAuth = useCallback(() => {
     if (!address) {
@@ -216,15 +237,38 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
     checkAuth();
   }, [checkAuth]);
 
+  const resetOnboarding = useCallback(() => {
+    activeOperationIdRef.current = 0;
+    if (completeTimerRef.current) {
+      clearTimeout(completeTimerRef.current);
+      completeTimerRef.current = null;
+    }
+    setOnboardingStep('idle');
+    setOnboardingConnector(null);
+    setOnboardingWalletName('');
+    setOnboardingWalletItem(null);
+    setOnboardingAddress(null);
+    setOnboardingError(null);
+    setOnboardingActionLoading(false);
+    setConnecting(null);
+  }, []);
+
   useAccountEffect({
     onDisconnect() {
-      if (address) clearAuthSession(address);
+      // Avoid false-positive disconnect clearing during initial hydration/restoration
+      // If user explicitly initiated disconnect (isDisconnectingRef.current is true) or no preference exists, clear auth.
+      // If a stored preference exists and restoration has not settled or failed, avoid wiping the cached JWT.
+      const hasStoredPref = Boolean(getStoredWalletPreference());
+      if (isDisconnectingRef.current || (!hasStoredPref && isRestoredRef.current)) {
+        if (address) clearAuthSession(address);
+      }
       if (connector) clearRejectedSwitchSession(connector.uid);
       autoSwitchSessionRef.current = null;
       setIsAuthenticated(false);
       setIsVerifying(false);
       setAuthError('');
       setConnectionError('');
+      resetOnboarding();
     },
   });
   const {
@@ -279,14 +323,25 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
   }, [onOpenChange]);
 
   const handleOpenModal = useCallback(() => {
+    resetOnboarding();
     setShowModal(true);
     onOpenChange?.(true);
-  }, [onOpenChange]);
+  }, [onOpenChange, resetOnboarding]);
 
   const handleCloseModal = useCallback(() => {
+    connectAbortRef.current = true;
     setShowModal(false);
     onOpenChange?.(false);
-  }, [onOpenChange]);
+    resetOnboarding();
+  }, [onOpenChange, resetOnboarding]);
+
+  useEffect(() => {
+    return () => {
+      if (completeTimerRef.current) {
+        clearTimeout(completeTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -331,31 +386,209 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
     setMounted(true);
   }, []);
 
-  // One automatic Sepolia request per established account/connector session.
-  // Suppressed during explicit connection flows or if switch was already rejected/handled.
+  // ---------------------------------------------------------------------------
+  // Controlled Passive Wallet Restoration Across Browser Refresh (Approach B)
+  // ---------------------------------------------------------------------------
+  const restorationGenRef = useRef<number>(0);
+  const discoveryTimerRef = useRef<NodeJS.Timeout | null>(null);
+
   useEffect(() => {
-    if (!isConnected || !address || !connector) {
-      autoSwitchSessionRef.current = null;
+    // Only run on client after mount
+    if (!mounted) return;
+    if (isRestoredRef.current) return;
+    if (isDisconnectingRef.current) return;
+
+    const pref = getStoredWalletPreference();
+    if (!pref) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('[SYNQ Wallet Restore] No saved wallet preference found in storage.');
+      }
+      isRestoredRef.current = true;
       return;
     }
-    const sessionKey = `${connector.uid}:${address.toLowerCase()}`;
-    if (autoSwitchSessionRef.current === sessionKey) return;
 
-    const connKey = connector.uid || connector.id || 'default_connector';
-    if (hasRejectedSwitchSession(connKey)) {
-      autoSwitchSessionRef.current = sessionKey;
+    // If Wagmi already has an active connection (e.g. fast HMR or external sync), mark restored
+    if (isConnected && address) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('[SYNQ Wallet Restore] Already connected in Wagmi state on mount. Marking restored.');
+      }
+      isRestoredRef.current = true;
       return;
     }
 
-    autoSwitchSessionRef.current = sessionKey;
-    if (!networkReady) {
-      void getConnectorChainId(connector, chainId).then((actualChainId) => {
-        if (actualChainId !== undefined && actualChainId !== SEPOLIA_CHAIN_ID && !hasRejectedSwitchSession(connKey)) {
-          void requestSepolia(connector).catch(() => {});
+    // If an attempt is currently executing, do not duplicate
+    if (isRestoringRef.current) return;
+
+    const currentGen = ++restorationGenRef.current;
+    isRestoringRef.current = true;
+
+    const attemptRestoration = async () => {
+      try {
+        if (process.env.NODE_ENV !== 'production') {
+          const masked = pref.address ? `${pref.address.slice(0, 6)}...${pref.address.slice(-4)}` : 'none';
+          console.log(`[SYNQ Wallet Restore] (gen ${currentGen}) Saved preference detected: connectorId=${pref.connectorId}, rdns=${pref.rdns || 'none'}, address=${masked}`);
+          console.log(`[SYNQ Wallet Restore] (gen ${currentGen}) Connectors available: count=${config.connectors.length}, list=`, config.connectors.map(c => ({ id: c.id, name: c.name, rdns: (c as any).rdns })));
         }
-      }).catch(() => {});
-    }
-  }, [address, connector, isConnected, networkReady, requestSepolia, chainId]);
+
+        // Use live config.connectors instead of closure-captured connectors array
+        let matchedConnector = findMatchingConnector(config.connectors, pref);
+        if (!matchedConnector) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.log(`[SYNQ Wallet Restore] (gen ${currentGen}) Matching connector not found yet. Waiting for EIP-6963 discovery...`);
+          }
+
+          // Allow EIP-6963 extension announcements to populate config.connectors over a 1000ms window
+          const startTime = Date.now();
+          while (!matchedConnector && Date.now() - startTime < 1200) {
+            await new Promise((r) => setTimeout(r, 100));
+            if (restorationGenRef.current !== currentGen || isDisconnectingRef.current) {
+              if (process.env.NODE_ENV !== 'production') {
+                console.log(`[SYNQ Wallet Restore] (gen ${currentGen}) Superseded or cancelled during discovery wait.`);
+              }
+              return;
+            }
+            matchedConnector = findMatchingConnector(config.connectors, pref);
+          }
+
+          if (!matchedConnector) {
+            if (process.env.NODE_ENV !== 'production') {
+              console.log(`[SYNQ Wallet Restore] (gen ${currentGen}) Matching connector never appeared after 1200ms. Disconnect preserved.`);
+            }
+            isRestoredRef.current = true;
+            return;
+          }
+        }
+
+        const target = matchedConnector;
+        if (process.env.NODE_ENV !== 'production') {
+          console.log(`[SYNQ Wallet Restore] (gen ${currentGen}) Target connector matched: id=${target.id}, name=${target.name}. Checking silent authorization via getAccounts()...`);
+        }
+
+        // Silent check: check whether provider is already authorized (non-prompting)
+        // getAccounts() on an authorized EIP-1193 provider returns existing accounts without a popup
+        let authorizedAccounts: readonly string[] = [];
+        try {
+          authorizedAccounts = (await target.getAccounts()) || [];
+        } catch (authErr) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn(`[SYNQ Wallet Restore] (gen ${currentGen}) target.getAccounts() threw:`, authErr);
+          }
+          authorizedAccounts = [];
+        }
+
+        if (restorationGenRef.current !== currentGen || isDisconnectingRef.current) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.log(`[SYNQ Wallet Restore] (gen ${currentGen}) Superseded after getAccounts().`);
+          }
+          return;
+        }
+
+        if (process.env.NODE_ENV !== 'production') {
+          const maskedAccounts = authorizedAccounts.map(a => `${a.slice(0, 6)}...${a.slice(-4)}`);
+          console.log(`[SYNQ Wallet Restore] (gen ${currentGen}) getAccounts() returned: count=${authorizedAccounts.length}, accounts=`, maskedAccounts);
+        }
+
+        // If no authorized accounts, provider requires user consent. Do NOT prompt passively on refresh.
+        if (!authorizedAccounts || authorizedAccounts.length === 0) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.log(`[SYNQ Wallet Restore] (gen ${currentGen}) Zero authorized accounts returned. Aborting silent restore to prevent prompt.`);
+          }
+          isRestoredRef.current = true;
+          return;
+        }
+
+        const activeAccount = authorizedAccounts[0]?.toLowerCase();
+        // Strict safety check: account must match the saved preference
+        if (!activeAccount || activeAccount !== pref.address.toLowerCase()) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.log(`[SYNQ Wallet Restore] (gen ${currentGen}) Active account mismatch. expected=${pref.address.slice(0, 6)}..., got=${activeAccount ? activeAccount.slice(0, 6) + '...' : 'none'}`);
+          }
+          isRestoredRef.current = true;
+          return;
+        }
+
+        if (process.env.NODE_ENV !== 'production') {
+          console.log(`[SYNQ Wallet Restore] (gen ${currentGen}) Starting silent reconnect with target connector: id=${target.id}...`);
+        }
+
+        // Silent restoration: use Wagmi core reconnect to restore without triggering eth_requestAccounts or popups
+        const connections = await reconnect(config, { connectors: [target] });
+
+        if (restorationGenRef.current !== currentGen || isDisconnectingRef.current) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.log(`[SYNQ Wallet Restore] (gen ${currentGen}) Superseded or cancelled after silent reconnect.`);
+          }
+          return;
+        }
+
+        // Validate that a connection was returned
+        if (!connections || connections.length === 0) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.log(`[SYNQ Wallet Restore] (gen ${currentGen}) Silent reconnect returned no connection. Aborting passive restore.`);
+          }
+          isRestoredRef.current = true;
+          return;
+        }
+
+        // Validate that the reconnected connector matches our target connector
+        const restoredConn = connections.find(c => c.connector.uid === target.uid || c.connector.id === target.id);
+        if (!restoredConn) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn(`[SYNQ Wallet Restore] (gen ${currentGen}) Unexpected connector restored:`, connections.map(c => c.connector.id));
+          }
+          isRestoredRef.current = true;
+          return;
+        }
+
+        // Validate that the restored account matches our expected saved address
+        const restoredAccounts = restoredConn.accounts;
+        const restoredAddr = (Array.isArray(restoredAccounts) ? restoredAccounts[0] : (typeof restoredAccounts === 'object' && restoredAccounts !== null ? (restoredAccounts as any).address : ''))?.toLowerCase();
+        if (!restoredAddr || restoredAddr !== pref.address.toLowerCase()) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn(`[SYNQ Wallet Restore] (gen ${currentGen}) Reconnected account mismatch. expected=${pref.address.slice(0, 6)}..., got=${restoredAddr ? restoredAddr.slice(0, 6) + '...' : 'none'}`);
+          }
+          isRestoredRef.current = true;
+          return;
+        }
+
+        if (process.env.NODE_ENV !== 'production') {
+          console.log(`[SYNQ Wallet Restore] (gen ${currentGen}) Silent reconnect succeeded! Restored account=${restoredAddr.slice(0, 6)}... chainId=${restoredConn.chainId}`);
+          console.log(`[SYNQ Wallet Restore] (gen ${currentGen}) Passive network verification state: chainId=${restoredConn.chainId}, isSepolia=${restoredConn.chainId === SEPOLIA_CHAIN_ID}`);
+        }
+
+        isRestoredRef.current = true;
+
+        // Restore authentication session ONLY for the validated matching address
+        const storedToken = getStoredSession(restoredAddr);
+        if (storedToken) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.log(`[SYNQ Wallet Restore] (gen ${currentGen}) Valid cached auth token found for ${restoredAddr.slice(0, 6)}... Setting isAuthenticated(true).`);
+          }
+          setIsAuthenticated(true);
+        } else if (process.env.NODE_ENV !== 'production') {
+          console.log(`[SYNQ Wallet Restore] (gen ${currentGen}) No valid auth token found in localStorage for ${restoredAddr.slice(0, 6)}...`);
+        }
+      } catch (err) {
+        // Safe fail: never show errors or modals during passive refresh restoration
+        console.warn(`[SYNQ Wallet Restore] (gen ${currentGen}) Silent restoration caught error:`, err);
+        isRestoredRef.current = true;
+      } finally {
+        isRestoringRef.current = false;
+        if (process.env.NODE_ENV !== 'production') {
+          console.log(`[SYNQ Wallet Restore] (gen ${currentGen}) Restoration cycle finished.`);
+        }
+      }
+    };
+
+    attemptRestoration();
+
+    return () => {
+      // In development Strict Mode, unmount happens immediately.
+      // Reset isRestoringRef so the immediate second mount can execute.
+      isRestoringRef.current = false;
+    };
+  }, [mounted, connectors, connectAsync, isConnected, address, config]);
+
 
   const [displayName, setDisplayName] = useState<string>('');
   const [avatarSrc, setAvatarSrc] = useState<string | null>(null);
@@ -502,78 +735,291 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
     }
   };
 
-  const handleConnect = async (targetConnector: Connector) => {
+  const handleDisconnect = async () => {
+    if (isDisconnectingRef.current) return;
+    isDisconnectingRef.current = true;
+    connectAbortRef.current = true;
+    setConnecting(null);
+    setIsVerifying(false);
+    resetOnboarding();
+
+    try {
+      if (address) clearAuthSession(address);
+
+      // Disconnect all connections in Wagmi state to prevent silent fallback to another wallet
+      const activeConns = Array.from(config.state.connections.values());
+      for (const conn of activeConns) {
+        if (Array.isArray(conn.accounts)) {
+          for (const acct of conn.accounts) {
+            clearAuthSession(acct);
+          }
+        }
+        try {
+          await disconnectAsync({ connector: conn.connector });
+        } catch {
+          // Continue disconnecting remaining connectors
+        }
+      }
+
+      try {
+        await disconnectAsync();
+      } catch {}
+
+      try {
+        await config.storage?.removeItem('recentConnectorId');
+      } catch {}
+
+      clearStoredWalletPreference();
+
+      if (connector) clearRejectedSwitchSession(connector.uid);
+      autoSwitchSessionRef.current = null;
+      setIsAuthenticated(false);
+      setAuthError('');
+      setConnectionError('');
+      handleClose();
+    } catch {
+      handleClose();
+    } finally {
+      isDisconnectingRef.current = false;
+    }
+  };
+
+  const completeOnboarding = useCallback(() => {
+    setOnboardingStep('ready');
+    setOnboardingError(null);
+    setOnboardingActionLoading(false);
+    if (completeTimerRef.current) clearTimeout(completeTimerRef.current);
+    completeTimerRef.current = setTimeout(() => {
+      handleCloseModal();
+    }, 1400);
+  }, [handleCloseModal]);
+
+  const proceedToVerification = useCallback(
+    async (targetAddr?: string, targetConn?: Connector, opId?: number, autoTrigger: boolean = true) => {
+      const addr = targetAddr || address;
+      if (!addr) {
+        completeOnboarding();
+        return;
+      }
+
+      // Strictly validate operation scoping to prevent stale or race-condition calls
+      if (opId !== undefined && opId !== activeOperationIdRef.current) return;
+      if (connectAbortRef.current || isDisconnectingRef.current) return;
+
+      setOnboardingStep('verifying');
+      setOnboardingError(null);
+
+      // Check whether a valid SYNQ authentication session already exists for this address
+      const existingToken = getStoredSession(addr);
+      if (existingToken) {
+        // Valid session exists! Skip verification signature completely
+        setIsAuthenticated(true);
+        completeOnboarding();
+        return;
+      }
+
+      // If autoTrigger is false (e.g. skipped network switch or manual fallback), pause for user action
+      if (!autoTrigger) {
+        setOnboardingActionLoading(false);
+        return;
+      }
+
+      // Validate connector and address before requesting signature
+      const conn = targetConn || onboardingConnector || connector;
+      if (!conn) {
+        setOnboardingActionLoading(false);
+        return;
+      }
+
+      setOnboardingActionLoading(true);
+      try {
+        await ensureAuthenticated(addr);
+        if (
+          connectAbortRef.current ||
+          isDisconnectingRef.current ||
+          (opId !== undefined && activeOperationIdRef.current !== opId)
+        ) {
+          return;
+        }
+        setIsAuthenticated(true);
+        completeOnboarding();
+      } catch (err: any) {
+        if (
+          connectAbortRef.current ||
+          isDisconnectingRef.current ||
+          (opId !== undefined && activeOperationIdRef.current !== opId)
+        ) {
+          return;
+        }
+        const isDeclined =
+          err?.code === 4001 ||
+          err?.message?.includes('rejected') ||
+          err?.message?.includes('User rejected');
+        const isGestureRequired =
+          err?.message?.includes('user gesture') ||
+          err?.message?.includes('popup') ||
+          err?.message?.includes('user activation') ||
+          err?.message?.includes('User activation');
+
+        if (isDeclined) {
+          setOnboardingError(
+            'SYNQ verification was declined. Your wallet remains connected, but some features require sign-in.'
+          );
+        } else if (isGestureRequired) {
+          setOnboardingError('Your wallet requires an explicit click to open the signature prompt. Click below to sign.');
+        } else {
+          setOnboardingError(err?.message || 'Verification failed');
+        }
+      } finally {
+        setOnboardingActionLoading(false);
+      }
+    },
+    [address, completeOnboarding, ensureAuthenticated, onboardingConnector, connector]
+  );
+
+  const handleStartOnboarding = async (targetConnector: Connector, walletName: string, item?: GridWalletItem) => {
+    if (connecting !== null || isDisconnectingRef.current || (onboardingStep !== 'idle' && onboardingStep !== 'ready')) return;
+    connectAbortRef.current = false;
+    const currentOpId = ++activeOperationIdRef.current;
     const connId = targetConnector.uid || targetConnector.id;
     setConnecting(connId);
+    setOnboardingConnector(targetConnector);
+    setOnboardingWalletName(walletName);
+    setOnboardingWalletItem(item || null);
+    setOnboardingStep('connecting');
+    setOnboardingError(null);
     setConnectionError('');
     setAuthError('');
+
+    let connectedAddr: string | undefined;
+
+    // Step 1: Connect only the explicitly selected wallet
     try {
       const res = await connectAsync({ connector: targetConnector });
-      let connectedAddr = res?.accounts?.[0] || address;
-      if (connectedAddr) {
-        // Immediately claim session key to prevent background auto-switch race
-        const sessionKey = `${targetConnector.uid}:${connectedAddr.toLowerCase()}`;
-        autoSwitchSessionRef.current = sessionKey;
+      if (connectAbortRef.current || isDisconnectingRef.current || activeOperationIdRef.current !== currentOpId) return;
 
-        // 1. Check actual provider chain state before prompting switch or signing
-        let currentChain: number | undefined;
-        try {
-          currentChain = await getConnectorChainId(targetConnector, chainId);
-        } catch {
-          currentChain = undefined;
-        }
-
-        if (currentChain !== SEPOLIA_CHAIN_ID) {
-          try {
-            await requestSepolia(targetConnector);
-          } catch (netErr: any) {
-            handleCloseModal();
-            const msg = netErr?.message || '';
-            if (!isRejected(netErr)) {
-              setConnectionError(msg || 'Unable to switch to Ethereum Sepolia');
-            }
-            return;
-          }
-        }
-
-        // 2. Account verification check before signature
-        const activeAccounts = await targetConnector.getAccounts().catch(() => []);
-        const activeAddr = activeAccounts?.[0];
-        if (activeAddr && activeAddr.toLowerCase() !== connectedAddr.toLowerCase()) {
-          connectedAddr = activeAddr;
-        }
-
-        // 3. Authenticate if no existing session
-        const existing = getStoredSession(connectedAddr);
-        if (!existing) {
-          setIsVerifying(true);
-          try {
-            await ensureAuthenticated(connectedAddr);
-            setIsAuthenticated(true);
-            handleCloseModal();
-          } catch (authErr: any) {
-            handleCloseModal();
-            const msg = authErr?.message || '';
-            if (!msg.includes('cancelled') && !msg.includes('rejected')) {
-              setConnectionError(msg || 'Wallet verification failed');
-            }
-          } finally {
-            setIsVerifying(false);
-          }
-        } else {
-          setIsAuthenticated(true);
-          handleCloseModal();
-        }
-      } else {
-        handleCloseModal();
+      connectedAddr = res?.accounts?.[0] || address;
+      const activeAccounts = await targetConnector.getAccounts().catch(() => []);
+      const activeAddr = activeAccounts?.[0];
+      if (activeAddr && (!connectedAddr || activeAddr.toLowerCase() !== connectedAddr.toLowerCase())) {
+        connectedAddr = activeAddr;
       }
+      if (!connectedAddr) {
+        setOnboardingError('No account found for connected wallet.');
+        return;
+      }
+      setOnboardingAddress(connectedAddr);
+      setStoredWalletPreference(targetConnector, connectedAddr);
     } catch (e: any) {
-      if (!(e?.message?.includes('rejected') || e?.code === 4001)) {
-        setConnectionError(`Connection failed: ${e?.message || 'Unknown error'}`);
-      }
+      if (connectAbortRef.current || isDisconnectingRef.current || activeOperationIdRef.current !== currentOpId) return;
+      setConnecting(null);
+      const isCancelled = e?.code === 4001 || e?.message?.includes('rejected') || e?.message?.includes('User rejected');
+      setOnboardingError(
+        isCancelled
+          ? 'Connection request was cancelled in your wallet.'
+          : `Connection failed: ${e?.message || 'Unknown error'}`
+      );
+      return;
     } finally {
       setConnecting(null);
     }
+
+    if (connectAbortRef.current || isDisconnectingRef.current || activeOperationIdRef.current !== currentOpId) return;
+
+    // Step 2: Validate Network (Sepolia)
+    setOnboardingStep('network');
+    setOnboardingError(null);
+
+    let currentChainId: number | null = null;
+    try {
+      currentChainId = (await getConnectorChainId(targetConnector)) ?? null;
+    } catch {
+      // ignore
+    }
+
+    if (currentChainId === SEPOLIA_CHAIN_ID) {
+      // Already on Sepolia! Advance directly to automatic verification
+      await proceedToVerification(connectedAddr, targetConnector, currentOpId, true);
+    } else {
+      // Request network switch to Sepolia
+      try {
+        setOnboardingActionLoading(true);
+        await requestSepolia(targetConnector);
+        if (connectAbortRef.current || isDisconnectingRef.current || activeOperationIdRef.current !== currentOpId) return;
+        // Switch succeeded! Advance to automatic verification
+        await proceedToVerification(connectedAddr, targetConnector, currentOpId, true);
+      } catch (err: any) {
+        if (connectAbortRef.current || isDisconnectingRef.current || activeOperationIdRef.current !== currentOpId) return;
+        const isRejectedSwitch = isRejected(err) || err?.code === 4001 || err?.message?.includes('rejected') || err?.message?.includes('User rejected');
+        setOnboardingError(
+          isRejectedSwitch
+            ? 'Network switch to Sepolia was rejected. Sepolia is required to transact on SYNQ.'
+            : (err instanceof Error ? err.message : 'Unable to switch to Ethereum Sepolia.')
+        );
+      } finally {
+        setOnboardingActionLoading(false);
+      }
+    }
+  };
+
+  const handleOnboardingRetrySwitch = async () => {
+    const targetConn = onboardingConnector || connector;
+    if (!targetConn) return;
+    const currentOpId = ++activeOperationIdRef.current;
+    setOnboardingActionLoading(true);
+    setOnboardingError(null);
+    try {
+      await requestSepolia(targetConn);
+      if (connectAbortRef.current || isDisconnectingRef.current || activeOperationIdRef.current !== currentOpId) return;
+      await proceedToVerification(onboardingAddress || address, targetConn, currentOpId, true);
+    } catch (err: any) {
+      if (connectAbortRef.current || isDisconnectingRef.current || activeOperationIdRef.current !== currentOpId) return;
+      const isRejectedSwitch = isRejected(err) || err?.code === 4001 || err?.message?.includes('rejected') || err?.message?.includes('User rejected');
+      setOnboardingError(
+        isRejectedSwitch
+          ? 'Network switch to Sepolia was rejected. Sepolia is required to transact on SYNQ.'
+          : (err instanceof Error ? err.message : 'Unable to switch to Ethereum Sepolia.')
+      );
+    } finally {
+      setOnboardingActionLoading(false);
+    }
+  };
+
+  const handleSkipNetwork = () => {
+    // If user skips network switching, do not automatically request verification
+    proceedToVerification(onboardingAddress || address, onboardingConnector || connector, activeOperationIdRef.current, false);
+  };
+
+  const handleOnboardingVerify = async () => {
+    const addr = onboardingAddress || address;
+    if (!addr) return;
+    const currentOpId = ++activeOperationIdRef.current;
+    setOnboardingActionLoading(true);
+    setOnboardingError(null);
+    try {
+      await ensureAuthenticated(addr);
+      if (connectAbortRef.current || isDisconnectingRef.current || activeOperationIdRef.current !== currentOpId) return;
+      setIsAuthenticated(true);
+      completeOnboarding();
+    } catch (err: any) {
+      if (connectAbortRef.current || isDisconnectingRef.current || activeOperationIdRef.current !== currentOpId) return;
+      const isDeclined = err?.code === 4001 || err?.message?.includes('rejected') || err?.message?.includes('User rejected');
+      setOnboardingError(
+        isDeclined
+          ? 'SYNQ verification was declined. Your wallet remains connected, but some features require sign-in.'
+          : (err?.message || 'Verification failed')
+      );
+    } finally {
+      setOnboardingActionLoading(false);
+    }
+  };
+
+  const handleOnboardingSkip = useCallback(() => {
+    completeOnboarding();
+  }, [completeOnboarding]);
+
+  const handleConnect = async (targetConnector: Connector) => {
+    return handleStartOnboarding(targetConnector, getWalletDisplayName(targetConnector));
   };
 
   const handleSwitchToSepolia = async () => {
@@ -603,7 +1049,566 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
     onOpenChange?.(next);
   };
 
-  const isConnecting = connecting !== null || isVerifying;
+  const getStepStatus = (stepKey: 'connecting' | 'network' | 'verifying' | 'ready') => {
+    const stepsOrder: OnboardingStep[] = ['connecting', 'network', 'verifying', 'ready'];
+    const currentIndex = stepsOrder.indexOf(onboardingStep);
+    const targetIndex = stepsOrder.indexOf(stepKey);
+
+    if (targetIndex < currentIndex) return 'completed';
+    if (targetIndex === currentIndex) {
+      if (onboardingError) return 'error';
+      if (onboardingStep === 'ready') return 'completed';
+      return 'active';
+    }
+    return 'pending';
+  };
+
+  const isOnboarding = onboardingStep !== 'idle';
+  const isConnecting = connecting !== null || isVerifying || isOnboarding;
+
+  const renderWalletModal = () => {
+    if (!mounted || typeof document === 'undefined') return null;
+
+    return createPortal(
+      <AnimatePresence>
+        {showModal && (
+          <div key="wallet-modal-portal-root">
+            <div
+              key="wallet-modal-backdrop"
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100]"
+              onClick={handleCloseModal}
+              aria-hidden="true"
+            />
+            <motion.div
+              key="wallet-modal-panel"
+              initial={{ opacity: 0, scale: 0.95, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 16 }}
+              transition={{ duration: 0.15, ease: 'easeOut' }}
+              className="fixed inset-0 z-[101] flex items-center justify-center p-4 pointer-events-none"
+            >
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="wallet-modal-title"
+                className="w-full max-w-[500px] rounded-3xl bg-[#303030] border border-[#444444] shadow-2xl overflow-hidden pointer-events-auto flex flex-col max-h-[85vh]"
+              >
+                {/* Header */}
+                <div className="p-6 pb-4 border-b border-[#404040] relative shrink-0">
+                  {onboardingStep !== 'idle' && onboardingStep !== 'ready' && (
+                    <button
+                      type="button"
+                      onClick={resetOnboarding}
+                      className="absolute left-5 top-5 p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/5 transition-colors focus-visible:outline-none"
+                      aria-label="Back to wallet selection"
+                      title="Choose another wallet"
+                    >
+                      <ChevronLeft size={18} />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleCloseModal}
+                    className="absolute right-5 top-5 p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/5 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/50"
+                    aria-label="Close modal"
+                  >
+                    <X size={18} />
+                  </button>
+                  <h2
+                    id="wallet-modal-title"
+                    className={cn(
+                      pressStart2P.className,
+                      "text-[14px] sm:text-[15px] text-white tracking-normal leading-relaxed",
+                      onboardingStep !== 'idle' && onboardingStep !== 'ready' && "pl-7"
+                    )}
+                    style={{ wordSpacing: '-0.35em' }}
+                  >
+                    {onboardingStep === 'ready'
+                      ? 'Wallet Synqd!'
+                      : onboardingStep !== 'idle'
+                      ? 'Synq Onboarding'
+                      : 'Synq your wallet...'}
+                  </h2>
+                  <p
+                    className={cn(
+                      pressStart2P.className,
+                      "text-[9px] sm:text-[10px] text-zinc-400 mt-2.5 leading-relaxed tracking-tight",
+                      onboardingStep !== 'idle' && onboardingStep !== 'ready' && "pl-7"
+                    )}
+                  >
+                    {onboardingStep === 'connecting'
+                      ? `Step 1 of 3: Connecting to ${onboardingWalletName || 'Wallet'}`
+                      : onboardingStep === 'network'
+                      ? 'Step 2 of 3: Validating Sepolia Network'
+                      : onboardingStep === 'verifying'
+                      ? 'Step 3 of 3: SYNQ Wallet Verification'
+                      : onboardingStep === 'ready'
+                      ? 'Onboarding completed successfully'
+                      : 'Choose a wallet to connect, switch to Sepolia, and verify.'}
+                  </p>
+                </div>
+
+
+                {/* Connection error display (for idle mode) */}
+                {onboardingStep === 'idle' && connectionError && (
+                  <div className="mx-6 mt-3 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-300 flex items-center justify-between shrink-0">
+                    <span className="truncate">{connectionError}</span>
+                    <button
+                      type="button"
+                      onClick={() => setConnectionError('')}
+                      className="text-red-400 hover:text-red-200 ml-2 shrink-0"
+                      aria-label="Dismiss error"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                )}
+
+                {/* Body: Wallet Grid OR Guided Onboarding Stepper */}
+                {onboardingStep === 'idle' ? (
+                  <div className="p-6 py-5 overflow-y-auto flex-1 max-h-[380px]">
+                    {gridItems.length > 0 ? (
+                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-y-5 gap-x-3 sm:gap-x-4 place-items-center">
+                        {gridItems.map((item) => {
+                          const isConnectingThis = connecting === item.key;
+                          return (
+                            <button
+                              key={item.key}
+                              type="button"
+                              onClick={() => handleStartOnboarding(item.connector, item.name, item)}
+                              disabled={connecting !== null}
+                              className="group flex flex-col items-center focus-visible:outline-none w-full max-w-[80px]"
+                              aria-label={`Connect with ${item.name}`}
+                            >
+                              <div className="relative w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-white shadow-sm flex items-center justify-center p-2.5 shrink-0 transition-transform duration-150 group-hover:scale-105 group-focus-visible:ring-2 group-focus-visible:ring-white group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-[#303030] overflow-hidden">
+                                {isConnectingThis ? (
+                                  <Loader2 size={24} className="animate-spin text-zinc-700" />
+                                ) : (
+                                  <WalletItemIcon item={item} connector={item.connector} />
+                                )}
+                              </div>
+                              <span
+                                className={cn(
+                                  pressStart2P.className,
+                                  "mt-2 text-[8px] sm:text-[8.5px] text-zinc-300 font-normal text-center leading-snug line-clamp-2 w-full max-w-[76px] sm:max-w-[82px] break-words group-hover:text-white transition-colors select-none min-h-[22px] flex items-center justify-center tracking-tight"
+                                )}
+                                title={item.name}
+                              >
+                                {item.compactName}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="py-8 text-center">
+                        <p className={cn(pressStart2P.className, "text-[9px] text-zinc-400")}>No Web3 wallet extensions found</p>
+                        <p className="text-[11px] text-zinc-500 mt-2">Please install a supported browser wallet to continue.</p>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="p-6 py-5 flex flex-col flex-1">
+                    {/* Stepper Progress Bar */}
+                    <div className="px-2 pt-1 pb-4">
+                      <div className="flex items-center justify-between">
+                        {/* 1. Connect */}
+                        <div className="flex flex-col items-center gap-1.5 flex-1">
+                          <div
+                            className={cn(
+                              "w-7 h-7 rounded-full flex items-center justify-center transition-all",
+                              getStepStatus('connecting') === 'completed'
+                                ? "bg-emerald-500/20 border border-emerald-500/60 text-emerald-400"
+                                : getStepStatus('connecting') === 'error'
+                                ? "bg-red-500/20 border border-red-500/60 text-red-400"
+                                : "bg-white text-zinc-900 border border-white shadow-sm shadow-white/20"
+                            )}
+                          >
+                            {getStepStatus('connecting') === 'completed' ? (
+                              <Check size={13} className="stroke-[2.5]" />
+                            ) : getStepStatus('connecting') === 'error' ? (
+                              <AlertTriangle size={13} />
+                            ) : (
+                              <Loader2 size={13} className="animate-spin text-zinc-900" />
+                            )}
+                          </div>
+                          <span
+                            className={cn(
+                              pressStart2P.className,
+                              "text-[7px] sm:text-[7.5px] tracking-tight transition-colors",
+                              getStepStatus('connecting') === 'completed'
+                                ? "text-emerald-400"
+                                : getStepStatus('connecting') === 'error'
+                                ? "text-red-400"
+                                : "text-white"
+                            )}
+                          >
+                            Connect
+                          </span>
+                        </div>
+
+                        {/* Divider 1-2 */}
+                        <div
+                          className={cn(
+                            "h-[2px] w-6 sm:w-8 -mt-4 transition-colors",
+                            getStepStatus('connecting') === 'completed'
+                              ? "bg-emerald-500/60"
+                              : "bg-zinc-700/60"
+                          )}
+                        />
+
+                        {/* 2. Network */}
+                        <div className="flex flex-col items-center gap-1.5 flex-1">
+                          <div
+                            className={cn(
+                              "w-7 h-7 rounded-full flex items-center justify-center transition-all",
+                              getStepStatus('network') === 'completed'
+                                ? "bg-emerald-500/20 border border-emerald-500/60 text-emerald-400"
+                                : getStepStatus('network') === 'error'
+                                ? "bg-amber-500/20 border border-amber-500/60 text-amber-400"
+                                : getStepStatus('network') === 'active'
+                                ? "bg-white text-zinc-900 border border-white shadow-sm shadow-white/20"
+                                : "bg-zinc-800 border border-zinc-700/70 text-zinc-500"
+                            )}
+                          >
+                            {getStepStatus('network') === 'completed' ? (
+                              <Check size={13} className="stroke-[2.5]" />
+                            ) : getStepStatus('network') === 'error' ? (
+                              <AlertTriangle size={13} />
+                            ) : getStepStatus('network') === 'active' && onboardingActionLoading ? (
+                              <Loader2 size={13} className="animate-spin text-zinc-900" />
+                            ) : (
+                              <span className="text-[10px] font-bold">2</span>
+                            )}
+                          </div>
+                          <span
+                            className={cn(
+                              pressStart2P.className,
+                              "text-[7px] sm:text-[7.5px] tracking-tight transition-colors",
+                              getStepStatus('network') === 'completed'
+                                ? "text-emerald-400"
+                                : getStepStatus('network') === 'error'
+                                ? "text-amber-400"
+                                : getStepStatus('network') === 'active'
+                                ? "text-white"
+                                : "text-zinc-500"
+                            )}
+                          >
+                            Network
+                          </span>
+                        </div>
+
+                        {/* Divider 2-3 */}
+                        <div
+                          className={cn(
+                            "h-[2px] w-6 sm:w-8 -mt-4 transition-colors",
+                            getStepStatus('network') === 'completed'
+                              ? "bg-emerald-500/60"
+                              : "bg-zinc-700/60"
+                          )}
+                        />
+
+                        {/* 3. Verify */}
+                        <div className="flex flex-col items-center gap-1.5 flex-1">
+                          <div
+                            className={cn(
+                              "w-7 h-7 rounded-full flex items-center justify-center transition-all",
+                              getStepStatus('verifying') === 'completed'
+                                ? "bg-emerald-500/20 border border-emerald-500/60 text-emerald-400"
+                                : getStepStatus('verifying') === 'error'
+                                ? "bg-amber-500/20 border border-amber-500/60 text-amber-400"
+                                : getStepStatus('verifying') === 'active'
+                                ? "bg-indigo-500/30 border border-indigo-400/70 text-indigo-300 shadow-sm shadow-indigo-500/20"
+                                : "bg-zinc-800 border border-zinc-700/70 text-zinc-500"
+                            )}
+                          >
+                            {getStepStatus('verifying') === 'completed' ? (
+                              <Check size={13} className="stroke-[2.5]" />
+                            ) : getStepStatus('verifying') === 'error' ? (
+                              <AlertTriangle size={13} />
+                            ) : getStepStatus('verifying') === 'active' && onboardingActionLoading ? (
+                              <Loader2 size={13} className="animate-spin text-indigo-300" />
+                            ) : (
+                              <ShieldCheck size={13} />
+                            )}
+                          </div>
+                          <span
+                            className={cn(
+                              pressStart2P.className,
+                              "text-[7px] sm:text-[7.5px] tracking-tight transition-colors",
+                              getStepStatus('verifying') === 'completed'
+                                ? "text-emerald-400"
+                                : getStepStatus('verifying') === 'error'
+                                ? "text-amber-400"
+                                : getStepStatus('verifying') === 'active'
+                                ? "text-indigo-300"
+                                : "text-zinc-500"
+                            )}
+                          >
+                            Verify
+                          </span>
+                        </div>
+
+                        {/* Divider 3-4 */}
+                        <div
+                          className={cn(
+                            "h-[2px] w-6 sm:w-8 -mt-4 transition-colors",
+                            getStepStatus('verifying') === 'completed'
+                              ? "bg-emerald-500/60"
+                              : "bg-zinc-700/60"
+                          )}
+                        />
+
+                        {/* 4. Ready */}
+                        <div className="flex flex-col items-center gap-1.5 flex-1">
+                          <div
+                            className={cn(
+                              "w-7 h-7 rounded-full flex items-center justify-center transition-all",
+                              getStepStatus('ready') === 'completed'
+                                ? "bg-emerald-500/20 border border-emerald-500/60 text-emerald-400"
+                                : "bg-zinc-800 border border-zinc-700/70 text-zinc-500"
+                            )}
+                          >
+                            {getStepStatus('ready') === 'completed' ? (
+                              <Check size={13} className="stroke-[2.5]" />
+                            ) : (
+                              <span className="text-[10px] font-bold">4</span>
+                            )}
+                          </div>
+                          <span
+                            className={cn(
+                              pressStart2P.className,
+                              "text-[7px] sm:text-[7.5px] tracking-tight transition-colors",
+                              getStepStatus('ready') === 'completed'
+                                ? "text-emerald-400"
+                                : "text-zinc-500"
+                            )}
+                          >
+                            Ready
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Step Content */}
+                    <div className="mt-2 min-h-[220px] flex flex-col justify-center">
+                      {onboardingStep === 'connecting' && (
+                        <div className="flex flex-col items-center text-center py-2 px-4">
+                          <div className="relative w-16 h-16 rounded-2xl bg-white shadow-sm flex items-center justify-center p-2.5 mb-4 overflow-hidden">
+                            {onboardingWalletItem ? (
+                              <WalletItemIcon item={onboardingWalletItem} connector={onboardingConnector || undefined} />
+                            ) : (
+                              <Wallet size={28} className="text-zinc-800" />
+                            )}
+                            {!onboardingError && (
+                              <div className="absolute inset-0 bg-white/70 backdrop-blur-[1px] flex items-center justify-center">
+                                <Loader2 size={24} className="animate-spin text-zinc-900" />
+                              </div>
+                            )}
+                          </div>
+
+                          <h3 className={cn(pressStart2P.className, "text-[12px] sm:text-[13px] text-white tracking-tight mb-2")}>
+                            {onboardingError ? 'Connection Issue' : `Connecting to ${onboardingWalletName}...`}
+                          </h3>
+
+                          <p className="text-xs text-zinc-400 max-w-sm mb-4 leading-relaxed">
+                            {onboardingError
+                              ? onboardingError
+                              : `Please approve the connection prompt in ${onboardingWalletName} to continue.`}
+                          </p>
+
+                          {onboardingError && (
+                            <div className="flex items-center gap-3 mt-2 w-full max-w-xs">
+                              <button
+                                type="button"
+                                onClick={() => onboardingConnector && handleStartOnboarding(onboardingConnector, onboardingWalletName, onboardingWalletItem || undefined)}
+                                className="flex-1 h-9 px-4 rounded-xl bg-white text-zinc-900 font-medium text-xs hover:bg-zinc-100 transition-colors shadow-sm"
+                              >
+                                Try Again
+                              </button>
+                              <button
+                                type="button"
+                                onClick={resetOnboarding}
+                                className="flex-1 h-9 px-4 rounded-xl bg-zinc-800 text-zinc-300 font-medium text-xs hover:bg-zinc-700 border border-zinc-700 transition-colors"
+                              >
+                                Other Wallets
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {onboardingStep === 'network' && (
+                        <div className="flex flex-col items-center text-center py-2 px-4">
+                          <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center mb-4">
+                            {onboardingActionLoading ? (
+                              <Loader2 size={26} className="animate-spin text-amber-400" />
+                            ) : (
+                              <ArrowRightLeft size={24} />
+                            )}
+                          </div>
+
+                          <h3 className={cn(pressStart2P.className, "text-[12px] sm:text-[13px] text-white tracking-tight mb-2")}>
+                            {onboardingActionLoading ? 'Switching Network...' : 'Sepolia Network Required'}
+                          </h3>
+
+                          <p className="text-xs text-zinc-400 max-w-sm mb-4 leading-relaxed">
+                            {onboardingError ? (
+                              onboardingError
+                            ) : onboardingActionLoading ? (
+                              'Please confirm the network switch to Ethereum Sepolia in your wallet.'
+                            ) : (
+                              'SYNQ contracts and escrows operate on Ethereum Sepolia testnet. Please switch your wallet to Sepolia to continue.'
+                            )}
+                          </p>
+
+                          <div className="flex items-center gap-3 mt-2 w-full max-w-xs">
+                            <button
+                              type="button"
+                              onClick={handleOnboardingRetrySwitch}
+                              disabled={onboardingActionLoading}
+                              className="flex-1 h-9 px-4 rounded-xl bg-white text-zinc-900 font-medium text-xs hover:bg-zinc-100 transition-colors shadow-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                            >
+                              {onboardingActionLoading && <Loader2 size={13} className="animate-spin text-zinc-900" />}
+                              <span>Switch to Sepolia</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleSkipNetwork}
+                              disabled={onboardingActionLoading}
+                              className="flex-1 h-9 px-4 rounded-xl bg-zinc-800 text-zinc-300 font-medium text-xs hover:bg-zinc-700 border border-zinc-700 transition-colors disabled:opacity-50"
+                            >
+                              Skip for Now
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {onboardingStep === 'verifying' && (
+                        <div className="flex flex-col items-center text-center py-2 px-4">
+                          <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center mb-3">
+                            {onboardingActionLoading ? (
+                              <Loader2 size={26} className="animate-spin text-indigo-400" />
+                            ) : (
+                              <ShieldCheck size={26} />
+                            )}
+                          </div>
+
+                          <h3 className={cn(pressStart2P.className, "text-[12px] sm:text-[13px] text-white tracking-tight mb-1.5")}>
+                            {onboardingActionLoading ? 'Waiting for Signature...' : 'SYNQ Verification'}
+                          </h3>
+
+                          <p className="text-[11px] text-zinc-300 max-w-sm mb-3 leading-relaxed">
+                            {onboardingActionLoading
+                              ? `Confirm the free off-chain sign-in request in ${onboardingWalletName || 'your wallet'}.`
+                              : 'Sign a one-time cryptographic message to verify ownership of your wallet.'}
+                          </p>
+
+                          <div className="w-full max-w-sm bg-zinc-800/80 border border-zinc-700/70 rounded-xl p-2.5 mb-3 text-left">
+                            <div className="flex items-center gap-2 text-[10.5px] text-zinc-300 mb-1">
+                              <Check size={12} className="text-emerald-400 shrink-0 stroke-[2.5]" />
+                              <span>Zero gas fees · Free off-chain signature</span>
+                            </div>
+                            <div className="flex items-center gap-2 text-[10.5px] text-zinc-300 mb-1">
+                              <Check size={12} className="text-emerald-400 shrink-0 stroke-[2.5]" />
+                              <span>Cannot move funds or execute transactions</span>
+                            </div>
+                            <div className="flex items-center gap-2 text-[10.5px] text-zinc-300">
+                              <Check size={12} className="text-emerald-400 shrink-0 stroke-[2.5]" />
+                              <span>Enables messages, proposals & deals</span>
+                            </div>
+                          </div>
+
+                          {onboardingError && (
+                            <div className="w-full max-w-sm p-2 rounded-lg bg-red-500/10 border border-red-500/20 text-[11px] text-red-300 mb-3 text-left">
+                              {onboardingError}
+                            </div>
+                          )}
+
+                          <div className="flex items-center gap-3 w-full max-w-xs">
+                            {onboardingActionLoading ? (
+                              <div className="flex-1 h-9 px-3 rounded-xl bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 text-xs font-medium flex items-center justify-center gap-2 select-none">
+                                <Loader2 size={13} className="animate-spin text-indigo-400 shrink-0" />
+                                <span className="truncate">Confirm in wallet...</span>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={handleOnboardingVerify}
+                                className="flex-1 h-9 px-4 rounded-xl bg-white text-zinc-900 font-medium text-xs hover:bg-zinc-100 transition-colors shadow-sm flex items-center justify-center gap-2"
+                              >
+                                Sign In & Verify
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={handleOnboardingSkip}
+                              className="flex-1 h-9 px-4 rounded-xl bg-zinc-800 text-zinc-300 font-medium text-xs hover:bg-zinc-700 border border-zinc-700 transition-colors"
+                            >
+                              Skip for Now
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {onboardingStep === 'ready' && (
+                        <div className="flex flex-col items-center text-center py-2 px-4">
+                          <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center mb-3">
+                            <Check size={28} className="stroke-[2.5]" />
+                          </div>
+
+                          <h3 className={cn(pressStart2P.className, "text-[12px] sm:text-[13px] text-white tracking-tight mb-1.5")}>
+                            Wallet Synqd!
+                          </h3>
+
+                          <p className="text-xs text-zinc-400 max-w-sm mb-3 leading-relaxed">
+                            Your wallet is connected and ready to explore SYNQ.
+                          </p>
+
+                          <div className="w-full max-w-xs bg-zinc-800/80 border border-zinc-700/70 rounded-xl p-3 mb-1 space-y-1.5 text-left">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-zinc-400 text-[11px]">Address</span>
+                              <span className="font-mono text-white text-[11px]">{truncateAddress(onboardingAddress || address || '')}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-zinc-400 text-[11px]">Network</span>
+                              <span className="text-emerald-400 font-medium text-[11px]">Sepolia</span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-zinc-400 text-[11px]">Status</span>
+                              <span className={cn("font-medium text-[11px]", isAuthenticated ? "text-emerald-400" : "text-amber-400")}>
+                                {isAuthenticated ? "Verified" : "Connected (Unverified)"}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Footer */}
+                <div className="px-6 py-3.5 border-t border-[#404040] shrink-0">
+                  <p className={cn(pressStart2P.className, "text-[8px] text-zinc-400 text-center leading-relaxed tracking-tight select-none")}>
+                    {onboardingStep === 'idle'
+                      ? "Guided setup · Free off-chain signature · Terms apply"
+                      : onboardingStep === 'connecting'
+                      ? `Approve connection in ${onboardingWalletName || 'your wallet'}`
+                      : onboardingStep === 'network'
+                      ? 'Ethereum Sepolia testnet is required for SYNQ'
+                      : onboardingStep === 'verifying'
+                      ? 'Zero-gas cryptographic signature · Cannot move funds'
+                      : 'Setup complete · Welcome to SYNQ'}
+                  </p>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>,
+      document.body
+    );
+  };
 
   if (mounted && isConnected && !isConnecting) {
     return (
@@ -797,11 +1802,7 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
                       </Link>
                       <button
                         type="button"
-                        onClick={() => {
-                          if (address) clearAuthSession(address);
-                          disconnect();
-                          handleClose();
-                        }}
+                        onClick={handleDisconnect}
                         className="w-full flex items-center justify-center gap-1 sm:gap-1.5 h-9 px-1.5 sm:px-2 rounded-xl bg-white text-[#242424] hover:bg-zinc-100 transition-colors text-[8px] sm:text-[8.5px] font-normal tracking-tight select-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white whitespace-nowrap overflow-hidden"
                       >
                         <LogOut size={11} className="shrink-0 text-[#242424]" />
@@ -812,11 +1813,7 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
                     <div className="w-full pt-1">
                       <button
                         type="button"
-                        onClick={() => {
-                          if (address) clearAuthSession(address);
-                          disconnect();
-                          handleClose();
-                        }}
+                        onClick={handleDisconnect}
                         className="w-full flex items-center justify-center gap-1 sm:gap-1.5 h-9 px-1.5 sm:px-2 rounded-xl bg-white text-[#242424] hover:bg-zinc-100 transition-colors text-[8px] sm:text-[8.5px] font-normal tracking-tight select-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white whitespace-nowrap overflow-hidden"
                       >
                         <LogOut size={11} className="shrink-0 text-[#242424]" />
@@ -830,6 +1827,7 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
           </AnimatePresence>,
           document.body
         )}
+        {renderWalletModal()}
       </div>
     );
   }
@@ -847,7 +1845,11 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
         >
           <Loader2 size={15} className="animate-spin text-[#242424]/70 shrink-0" />
           <span className="text-[#242424]/80 font-medium">
-            {isVerifying ? 'Verifying Wallet...' : 'Connecting...'}
+            {onboardingStep === 'network'
+              ? 'Checking Network...'
+              : isVerifying || onboardingStep === 'verifying'
+              ? 'Verifying Wallet...'
+              : 'Connecting...'}
           </span>
         </button>
       ) : (
@@ -869,125 +1871,7 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
         </p>
       )}
 
-      {mounted && typeof document !== 'undefined' && createPortal(
-        <AnimatePresence>
-          {showModal && (
-            <div key="wallet-modal-portal-root">
-              <div
-                key="wallet-modal-backdrop"
-                className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100]"
-                onClick={handleCloseModal}
-                aria-hidden="true"
-              />
-              <motion.div
-                key="wallet-modal-panel"
-                initial={{ opacity: 0, scale: 0.95, y: 16 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95, y: 16 }}
-                transition={{ duration: 0.15, ease: 'easeOut' }}
-                className="fixed inset-0 z-[101] flex items-center justify-center p-4 pointer-events-none"
-              >
-                <div
-                  role="dialog"
-                  aria-modal="true"
-                  aria-labelledby="wallet-modal-title"
-                  className="w-full max-w-[500px] rounded-3xl bg-[#303030] border border-[#444444] shadow-2xl overflow-hidden pointer-events-auto flex flex-col max-h-[85vh]"
-                >
-                  {/* Header */}
-                  <div className="p-6 pb-4 border-b border-[#404040] relative shrink-0">
-                    <button
-                      type="button"
-                      onClick={handleCloseModal}
-                      className="absolute right-5 top-5 p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/5 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/50"
-                      aria-label="Close modal"
-                    >
-                      <X size={18} />
-                    </button>
-                    <h2
-                      id="wallet-modal-title"
-                      className={cn(pressStart2P.className, "text-[14px] sm:text-[15px] text-white tracking-normal leading-relaxed")}
-                      style={{ wordSpacing: '-0.35em' }}
-                    >
-                      Synq your wallet...
-                    </h2>
-                    <p className={cn(pressStart2P.className, "text-[9px] sm:text-[10px] text-zinc-400 mt-2.5 leading-relaxed tracking-tight")}>
-                      Choose a wallet to connect and continue.
-                    </p>
-                  </div>
-
-                  {/* Connection error display */}
-                  {connectionError && (
-                    <div className="mx-6 mt-4 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-300 flex items-center justify-between shrink-0">
-                      <span className="truncate">{connectionError}</span>
-                      <button
-                        type="button"
-                        onClick={() => setConnectionError('')}
-                        className="text-red-400 hover:text-red-200 ml-2 shrink-0"
-                        aria-label="Dismiss error"
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Wallet Grid - Bounded scrollable area */}
-                  <div className="p-6 py-5 overflow-y-auto flex-1 max-h-[380px]">
-                    {gridItems.length > 0 ? (
-                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-y-5 gap-x-3 sm:gap-x-4 place-items-center">
-                        {gridItems.map((item) => {
-                          const isConnectingThis = connecting === item.key;
-                          return (
-                            <button
-                              key={item.key}
-                              type="button"
-                              onClick={() => handleConnect(item.connector)}
-                              disabled={connecting !== null}
-                              className="group flex flex-col items-center focus-visible:outline-none w-full max-w-[80px]"
-                              aria-label={`Connect with ${item.name}`}
-                            >
-                              <div className="relative w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-white shadow-sm flex items-center justify-center p-2.5 shrink-0 transition-transform duration-150 group-hover:scale-105 group-focus-visible:ring-2 group-focus-visible:ring-white group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-[#303030] overflow-hidden">
-                                {isConnectingThis ? (
-                                  <Loader2 size={24} className="animate-spin text-zinc-700" />
-                                ) : (
-                                  <WalletItemIcon item={item} connector={item.connector} />
-                                )}
-                              </div>
-                              <span
-                                className={cn(
-                                  pressStart2P.className,
-                                  "mt-2 text-[8px] sm:text-[8.5px] text-zinc-300 font-normal text-center leading-snug line-clamp-2 w-full max-w-[76px] sm:max-w-[82px] break-words group-hover:text-white transition-colors select-none min-h-[22px] flex items-center justify-center tracking-tight"
-                                )}
-                                title={item.name}
-                              >
-                                {item.compactName}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="py-8 text-center">
-                        <p className={cn(pressStart2P.className, "text-[9px] text-zinc-400")}>No Web3 wallet extensions found</p>
-                        <p className="text-[11px] text-zinc-500 mt-2">Please install a supported browser wallet to continue.</p>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Footer */}
-                  <div className="px-6 py-3.5 border-t border-[#404040] shrink-0">
-                    <p className={cn(pressStart2P.className, "text-[8px] text-zinc-400 text-center leading-relaxed tracking-tight select-none")}>
-                      {isVerifying
-                        ? 'Approve signature in your wallet to continue...'
-                        : "By connecting, you agree to Synq's Terms of Service"}
-                    </p>
-                  </div>
-                </div>
-              </motion.div>
-            </div>
-          )}
-        </AnimatePresence>,
-        document.body
-      )}
+      {renderWalletModal()}
     </div>
   );
 }

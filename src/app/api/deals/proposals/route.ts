@@ -9,7 +9,9 @@ import {
   getDealProposalById,
   getDealProposalByClientNonce,
   getNextClientProposalNonce,
+  getPendingProposalsForParticipant,
   serializeDealProposal,
+  serializePendingProposalCard,
   ProposalAuthError,
   ProposalValidationError,
   ProposalConflictError,
@@ -18,6 +20,33 @@ import {
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
+
+    // Participant-scoped pending proposals listing
+    if (searchParams.get('mode') === 'pending') {
+      const authWallet = getAuthenticatedWallet(req);
+      if (!authWallet) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+
+      const limitParam = searchParams.get('limit');
+      const offsetParam = searchParams.get('offset');
+      const limit = limitParam ? Math.min(Math.max(1, parseInt(limitParam, 10) || 20), 50) : 20;
+      const offset = offsetParam ? Math.max(0, parseInt(offsetParam, 10) || 0) : 0;
+
+      const { proposals, total } = await getPendingProposalsForParticipant(authWallet, { limit, offset });
+      const cards = proposals.map(serializePendingProposalCard);
+
+      return NextResponse.json(
+        {
+          proposals: cards,
+          total,
+          limit,
+          offset,
+        },
+        { status: 200 }
+      );
+    }
+
     const client = searchParams.get('client');
     if (!client || !isAddress(client)) {
       return NextResponse.json({ error: 'Valid client address required' }, { status: 400 });
@@ -25,8 +54,8 @@ export async function GET(req: NextRequest) {
     const nextNonce = await getNextClientProposalNonce(client);
     return NextResponse.json({ client: getAddress(client), nextNonce: nextNonce.toString() }, { status: 200 });
   } catch (err: unknown) {
-    console.error('[GET /api/deals/proposals] Error fetching next nonce:', err);
-    return NextResponse.json({ error: 'Failed to retrieve proposal nonce' }, { status: 500 });
+    console.error('[GET /api/deals/proposals] Error processing proposal request:', err);
+    return NextResponse.json({ error: 'Failed to process proposal request' }, { status: 500 });
   }
 }
 

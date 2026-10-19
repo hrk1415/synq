@@ -82,10 +82,14 @@ import {
 } from '@/lib/deals/v2-deal';
 import { formatUsdcAmount, ZERO_BYTES32 } from '@/lib/deals/v2';
 import { V2MilestoneDispute } from '@/components/deals/V2MilestoneDispute';
+import { V2MilestoneClaim } from '@/components/deals/V2MilestoneClaim';
+import type { PremiumPolicyState } from '@/lib/deals/v2-protection';
 
 interface V2MilestoneLifecycleProps {
   dealData: StandardV2DealData;
   refetchDealData: () => Promise<void>;
+  policy?: PremiumPolicyState | null;
+  loadingProtection?: boolean;
 }
 
 interface EditableLink {
@@ -95,7 +99,12 @@ interface EditableLink {
   label: string;
 }
 
-export function V2MilestoneLifecycle({ dealData, refetchDealData }: V2MilestoneLifecycleProps) {
+export function V2MilestoneLifecycle({
+  dealData,
+  refetchDealData,
+  policy,
+  loadingProtection,
+}: V2MilestoneLifecycleProps) {
   const { address, chainId } = useAccount();
   const { ensureSepolia } = useSepoliaNetwork();
   const { writeContractAsync } = useWriteContract();
@@ -135,16 +144,33 @@ export function V2MilestoneLifecycle({ dealData, refetchDealData }: V2MilestoneL
   const [revisionRecordError, setRevisionRecordError] = useState<string | null>(null);
 
   if (dealData.state === DealState.Completed) {
+    const refundedMilestones = dealData.milestones.filter(
+      (m) => m.status === MilestoneStatus.SettledRefunded
+    );
+
     return (
-      <Card className="border-emerald-500/30 bg-emerald-950/20 backdrop-blur-md">
-        <CardContent className="pt-6 space-y-2 text-center">
-          <CheckCircle2 className="h-6 w-6 text-emerald-400 mx-auto" />
-          <h3 className="text-sm font-semibold text-white">Deal Completed</h3>
-          <p className="text-xs text-zinc-300">
-            All milestones have completed lifecycle settlement. Total settled: {formatUsdcAmount(dealData.totalSettled)} USDC.
-          </p>
-        </CardContent>
-      </Card>
+      <div className="space-y-4">
+        <Card className="border-emerald-500/30 bg-emerald-950/20 backdrop-blur-md">
+          <CardContent className="pt-6 space-y-2 text-center">
+            <CheckCircle2 className="h-6 w-6 text-emerald-400 mx-auto" />
+            <h3 className="text-sm font-semibold text-white">Deal Completed</h3>
+            <p className="text-xs text-zinc-300">
+              All milestones have completed lifecycle settlement. Total settled: {formatUsdcAmount(dealData.totalSettled)} USDC.
+            </p>
+          </CardContent>
+        </Card>
+
+        {refundedMilestones.map((m) => (
+          <V2MilestoneClaim
+            key={m.index}
+            dealData={dealData}
+            milestoneIndex={m.index}
+            policy={policy ?? null}
+            loadingPolicy={loadingProtection}
+            refetchDealData={refetchDealData}
+          />
+        ))}
+      </div>
     );
   }
 
@@ -192,14 +218,31 @@ export function V2MilestoneLifecycle({ dealData, refetchDealData }: V2MilestoneL
 
   const currentIndex = getCurrentMilestoneIndex(dealData.milestones);
   if (currentIndex === null) {
+    const refundedMilestones = dealData.milestones.filter(
+      (m) => m.status === MilestoneStatus.SettledRefunded
+    );
+
     return (
-      <Card className="border-emerald-500/30 bg-emerald-950/20 backdrop-blur-md">
-        <CardContent className="pt-6 space-y-2 text-center">
-          <CheckCircle2 className="h-6 w-6 text-emerald-400 mx-auto" />
-          <h3 className="text-sm font-semibold text-white">All Milestones Settled</h3>
-          <p className="text-xs text-zinc-400">All milestone deliverables for this deal have completed lifecycle settlement.</p>
-        </CardContent>
-      </Card>
+      <div className="space-y-4">
+        <Card className="border-emerald-500/30 bg-emerald-950/20 backdrop-blur-md">
+          <CardContent className="pt-6 space-y-2 text-center">
+            <CheckCircle2 className="h-6 w-6 text-emerald-400 mx-auto" />
+            <h3 className="text-sm font-semibold text-white">All Milestones Settled</h3>
+            <p className="text-xs text-zinc-400">All milestone deliverables for this deal have completed lifecycle settlement.</p>
+          </CardContent>
+        </Card>
+
+        {refundedMilestones.map((m) => (
+          <V2MilestoneClaim
+            key={m.index}
+            dealData={dealData}
+            milestoneIndex={m.index}
+            policy={policy ?? null}
+            loadingPolicy={loadingProtection}
+            refetchDealData={refetchDealData}
+          />
+        ))}
+      </div>
     );
   }
 
@@ -380,9 +423,10 @@ export function V2MilestoneLifecycle({ dealData, refetchDealData }: V2MilestoneL
     setSubmittedRecordError(null);
 
     try {
-      let token = getToken();
+      const token = getToken();
       if (!token) {
-        token = await ensureAuthenticated();
+        setLoadingSubmittedRecord(false);
+        return;
       }
 
       const res = await fetch(
@@ -430,7 +474,7 @@ export function V2MilestoneLifecycle({ dealData, refetchDealData }: V2MilestoneL
     } finally {
       setLoadingSubmittedRecord(false);
     }
-  }, [isSubmitted, isParticipant, dealData.dealAddress, currentIndex, currentMilestone.version, currentMilestone.evidenceRootHash, currentMilestone.specHash, getToken, ensureAuthenticated]);
+  }, [isSubmitted, isParticipant, dealData.dealAddress, currentIndex, currentMilestone.version, currentMilestone.evidenceRootHash, currentMilestone.specHash, getToken]);
 
   useEffect(() => {
     if (isSubmitted && isParticipant) {
@@ -445,9 +489,10 @@ export function V2MilestoneLifecycle({ dealData, refetchDealData }: V2MilestoneL
     setRevisionRecordError(null);
 
     try {
-      let token = getToken();
+      const token = getToken();
       if (!token) {
-        token = await ensureAuthenticated();
+        setLoadingRevisionRecord(false);
+        return;
       }
 
       const res = await fetch(
@@ -498,7 +543,6 @@ export function V2MilestoneLifecycle({ dealData, refetchDealData }: V2MilestoneL
     currentMilestone.specHash,
     currentMilestone.evidenceRootHash,
     getToken,
-    ensureAuthenticated,
   ]);
 
   useEffect(() => {
@@ -2375,6 +2419,20 @@ export function V2MilestoneLifecycle({ dealData, refetchDealData }: V2MilestoneL
           currentIndex={currentIndex}
           refetchDealData={refetchDealData}
         />
+
+        {/* PREMIUM PROTECTION CLAIM (Phase 3C) */}
+        {dealData.milestones
+          .filter((m) => m.status === MilestoneStatus.SettledRefunded)
+          .map((m) => (
+            <V2MilestoneClaim
+              key={m.index}
+              dealData={dealData}
+              milestoneIndex={m.index}
+              policy={policy ?? null}
+              loadingPolicy={loadingProtection}
+              refetchDealData={refetchDealData}
+            />
+          ))}
 
         {/* Transaction Explorer Link */}
         {lastTxHash && (

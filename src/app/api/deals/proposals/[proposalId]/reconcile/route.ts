@@ -60,6 +60,16 @@ export async function POST(req: NextRequest, context: RouteContext) {
       }
     }
 
+    // 4c. If proposal was newly transitioned to DECLINED, dispatch proposal_declined email
+    if (result.status === 'DECLINED' && !result.alreadyReconciled) {
+      try {
+        const { dispatchProposalDeclinedNotification } = await import('@/lib/deals/deal-lifecycle-notifications');
+        await dispatchProposalDeclinedNotification(result.proposal, txHash.trim(), result.blockNumber);
+      } catch (notifErr: any) {
+        console.warn('[POST /api/deals/proposals/reconcile] proposal_declined dispatch warning:', notifErr?.message || notifErr);
+      }
+    }
+
     return NextResponse.json(
       {
         proposal: serializeDealProposal(result.proposal),

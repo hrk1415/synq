@@ -16,7 +16,7 @@ import { useAuthSession } from '@/hooks/useAuthSession';
  */
 export default function MessagesButton() {
   const { address } = useAccount();
-  const { ensureAuthenticated, clearSession } = useAuthSession();
+  const { getToken, clearSession } = useAuthSession();
   const pathname = usePathname();
   const [unread, setUnread] = useState(0);
   const walletGeneration = useRef(0);
@@ -27,7 +27,11 @@ export default function MessagesButton() {
     const wallet = address.toLowerCase();
     const generation = walletGeneration.current;
     try {
-      const token = await ensureAuthenticated();
+      const token = getToken();
+      if (!token) {
+        setUnread(0);
+        return;
+      }
       if (walletGeneration.current !== generation) return;
       const res = await fetch(`/api/conversations?wallet=${address}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -45,7 +49,7 @@ export default function MessagesButton() {
         : 0;
       setUnread(total);
     } catch { setUnread(0); }
-  }, [address, clearSession, ensureAuthenticated]);
+  }, [address, clearSession, getToken]);
 
   useEffect(() => {
     walletGeneration.current += 1;

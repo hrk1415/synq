@@ -98,6 +98,7 @@ export const SYNQ_V2_SEPOLIA_CONFIG = {
   isProtected: sepoliaV2Deployment.protection.enabled as false,
   protectionModule: '0x0000000000000000000000000000000000000000' as `0x${string}`,
   policyId: '0x0000000000000000000000000000000000000000000000000000000000000000' as `0x${string}`,
+  premiumProtectionManagerV1_1: '0x462D1b8c1047d05FbE61e15809f4E6A26B12ED00' as `0x${string}`,
   eip712DomainName: sepoliaV2Deployment.consent.eip712DomainName,
   eip712DomainVersion: sepoliaV2Deployment.consent.eip712DomainVersion,
 } as const;

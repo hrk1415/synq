@@ -29,7 +29,7 @@ export default function NotificationSettingsSection({
   address,
   onEmailChange,
 }: NotificationSettingsSectionProps) {
-  const { ensureAuthenticated } = useAuthSession();
+  const { ensureAuthenticated, getToken } = useAuthSession();
 
   // Email State
   const [email, setEmail] = useState<string | null>(null);
@@ -60,6 +60,13 @@ export default function NotificationSettingsSection({
       return;
     }
 
+    const token = getToken();
+    if (!token) {
+      setLoadingEmail(false);
+      setLoadingPrefs(false);
+      return;
+    }
+
     const currentWallet = address.toLowerCase();
     let cancelled = false;
 
@@ -67,8 +74,6 @@ export default function NotificationSettingsSection({
     setLoadingEmail(true);
     void (async () => {
       try {
-        const token = await ensureAuthenticated();
-        if (cancelled) return;
         const res = await fetch(`/api/profile?wallet=${currentWallet}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -91,8 +96,6 @@ export default function NotificationSettingsSection({
     setLoadingPrefs(true);
     void (async () => {
       try {
-        const token = await ensureAuthenticated();
-        if (cancelled) return;
         const res = await fetch(`/api/notifications/preferences?wallet=${currentWallet}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -119,7 +122,7 @@ export default function NotificationSettingsSection({
     return () => {
       cancelled = true;
     };
-  }, [address, ensureAuthenticated, onEmailChange]);
+  }, [address, getToken, onEmailChange]);
 
   useEffect(() => {
     return loadData();

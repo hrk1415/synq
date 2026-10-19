@@ -1033,3 +1033,146 @@ export const otpRateLimits = pgTable('otp_rate_limits', {
 export type OtpRateLimitRow = typeof otpRateLimits.$inferSelect;
 export type NewOtpRateLimitRow = typeof otpRateLimits.$inferInsert;
 
+/**
+ * 26. PROTECTION CLAIMS TABLE (Phase 3C)
+ * Durable off-chain persistence for canonical protection claim manifests.
+ * Cryptographically committed on-chain via SynqPremiumProtectionManagerV1_1.submitClaim(address, uint256, bytes32).
+ *
+ * Lifecycle:
+ * - 'staged': Client prepared explanation and evidence links; awaiting on-chain submitClaim().
+ * - 'confirmed': submitClaim() confirmed on-chain and verified against ClaimSubmitted event.
+ *                Immutable audit record. Cannot be mutated or replaced.
+ */
+export type ProtectionClaimStatus = 'staged' | 'confirmed';
+
+export const protectionClaims = pgTable('protection_claims', {
+  id: text('id').$defaultFn(() => crypto.randomUUID()).primaryKey(),
+  chainId: integer('chain_id').notNull(),
+  managerAddress: text('manager_address').notNull(),
+  dealAddress: text('deal_address').notNull(),
+  milestoneId: integer('milestone_id').notNull(),
+  clientWallet: text('client_wallet').notNull(),
+  evidenceHash: text('evidence_hash').notNull(),
+  canonicalManifest: jsonb('canonical_manifest').$type<Record<string, unknown>>().notNull(),
+  status: text('status').$type<ProtectionClaimStatus>().default('staged').notNull(),
+  txHash: text('tx_hash'),
+  submittedAt: timestamp('submitted_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('uq_protection_claims_deal_ms').on(
+    table.chainId,
+    table.dealAddress,
+    table.milestoneId
+  ),
+  index('idx_protection_claims_deal').on(table.chainId, table.dealAddress),
+  index('idx_protection_claims_evidence_hash').on(table.evidenceHash),
+  index('idx_protection_claims_client').on(table.clientWallet),
+  check('chk_protection_claims_deal_lower', sql`deal_address = LOWER(deal_address)`),
+  check('chk_protection_claims_manager_lower', sql`manager_address = LOWER(manager_address)`),
+  check('chk_protection_claims_client_lower', sql`client_wallet = LOWER(client_wallet)`),
+  check('chk_protection_claims_evidence_lower', sql`evidence_hash = LOWER(evidence_hash)`),
+  check('chk_protection_claims_status_valid', sql`status IN ('staged', 'confirmed')`),
+]);
+
+export type ProtectionClaimRow = typeof protectionClaims.$inferSelect;
+export type NewProtectionClaimRow = typeof protectionClaims.$inferInsert;
+
+/**
+ * 27. PROTECTION CLAIM DECISIONS TABLE (Phase 3D.2)
+ * Stores immutable EIP-712 typed-data authorization records for 2-of-3 Protection Committee
+ * signatures. Binds directly to a canonical Protection Committee decision report.
+ *
+ * Status lifecycle:
+ * - 'collecting': Actively collecting signatures from verified active Protection Committee signers.
+ * - 'threshold_ready': Threshold (2 of 3) verified active signer signatures collected and validated.
+ * - 'executed': submitClaimDecision() confirmed on-chain on SynqProtectionCommittee.
+ * - 'invalidated': Claim status changed, committee rotated, or nonce became used.
+ * - 'expired': Chain timestamp passed validUntil boundary.
+ */
+export type ProtectionDecisionStatus = 'collecting' | 'threshold_ready' | 'executed' | 'expired' | 'invalidated';
+
+export const protectionClaimDecisions = pgTable('protection_claim_decisions', {
+  id: text('id').$defaultFn(() => crypto.randomUUID()).primaryKey(),
+  claimId: text('claim_id'),
+  chainId: integer('chain_id').notNull(),
+  committeeAddress: text('committee_address').notNull(),
+  managerAddress: text('manager_address').notNull(),
+  dealAddress: text('deal_address').notNull(),
+  milestoneId: integer('milestone_id').notNull(),
+  claimEvidenceHash: text('claim_evidence_hash').notNull(),
+  decision: integer('decision').notNull(), // 1 = Approve, 2 = Reject
+  decisionNonce: numeric('decision_nonce', { precision: 78, scale: 0 }).notNull(),
+  validUntil: numeric('valid_until', { precision: 78, scale: 0 }).notNull(),
+  decisionReportHash: text('decision_report_hash').notNull(),
+  canonicalReport: jsonb('canonical_report').$type<Record<string, unknown>>().notNull(),
+  typedData: jsonb('typed_data').$type<Record<string, unknown>>().notNull(),
+  typedDataHash: text('typed_data_hash').notNull(),
+  status: text('status').$type<ProtectionDecisionStatus>().default('collecting').notNull(),
+  createdBySigner: text('created_by_signer').notNull(),
+  executionTxHash: text('execution_tx_hash'),
+  executedByWallet: text('executed_by_wallet'),
+  executedAt: timestamp('executed_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('uq_prot_dec_nonce').on(
+    table.chainId,
+    table.managerAddress,
+    table.dealAddress,
+    table.milestoneId,
+    table.decisionNonce
+  ),
+  uniqueIndex('uq_prot_dec_active_claim').on(
+    table.chainId,
+    table.managerAddress,
+    table.dealAddress,
+    table.milestoneId
+  ).where(sql`status IN ('collecting', 'threshold_ready')`),
+  index('idx_prot_dec_deal_ms').on(table.chainId, table.dealAddress, table.milestoneId),
+  index('idx_prot_dec_committee').on(table.committeeAddress),
+  index('idx_prot_dec_report_hash').on(table.decisionReportHash),
+  index('idx_prot_dec_typed_hash').on(table.typedDataHash),
+  index('idx_prot_dec_status').on(table.status),
+  index('idx_prot_dec_execution_tx').on(table.executionTxHash),
+  index('idx_prot_dec_claim_id').on(table.claimId),
+  check('chk_prot_dec_committee_lower', sql`committee_address = LOWER(committee_address)`),
+  check('chk_prot_dec_manager_lower', sql`manager_address = LOWER(manager_address)`),
+  check('chk_prot_dec_deal_lower', sql`deal_address = LOWER(deal_address)`),
+  check('chk_prot_dec_created_by_lower', sql`created_by_signer = LOWER(created_by_signer)`),
+  check('chk_prot_dec_claim_evidence_lower', sql`claim_evidence_hash = LOWER(claim_evidence_hash)`),
+  check('chk_prot_dec_report_hash_lower', sql`decision_report_hash = LOWER(decision_report_hash)`),
+  check('chk_prot_dec_typed_hash_lower', sql`typed_data_hash = LOWER(typed_data_hash)`),
+  check('chk_prot_dec_executed_by_lower', sql`executed_by_wallet IS NULL OR executed_by_wallet = LOWER(executed_by_wallet)`),
+  check('chk_prot_dec_execution_tx_lower', sql`execution_tx_hash IS NULL OR execution_tx_hash = LOWER(execution_tx_hash)`),
+  check('chk_prot_dec_decision_valid', sql`decision IN (1, 2)`),
+  check('chk_prot_dec_status_valid', sql`status IN ('collecting', 'threshold_ready', 'executed', 'expired', 'invalidated')`),
+  check('chk_prot_dec_nonce_bounds', sql`decision_nonce >= 0 AND decision_nonce <= 18446744073709551615`),
+  check('chk_prot_dec_valid_until_bounds', sql`valid_until >= 0 AND valid_until <= 18446744073709551615`),
+  check('chk_prot_dec_milestone_valid', sql`milestone_id >= 0 AND milestone_id < 16`),
+]);
+
+export type ProtectionClaimDecisionRow = typeof protectionClaimDecisions.$inferSelect;
+export type NewProtectionClaimDecisionRow = typeof protectionClaimDecisions.$inferInsert;
+
+/**
+ * 28. PROTECTION CLAIM SIGNATURES TABLE (Phase 3D.2)
+ * Stores individual verified EIP-712 Protection Committee signer signatures for a claim decision.
+ * Guarantees at most 1 signature per signer per decision.
+ */
+export const protectionClaimSignatures = pgTable('protection_claim_signatures', {
+  id: text('id').$defaultFn(() => crypto.randomUUID()).primaryKey(),
+  decisionId: text('decision_id').notNull().references(() => protectionClaimDecisions.id, { onDelete: 'restrict' }),
+  signerWallet: text('signer_wallet').notNull(),
+  signature: text('signature').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('uq_prot_sig_decision_signer').on(table.decisionId, table.signerWallet),
+  index('idx_prot_sig_decision').on(table.decisionId),
+  index('idx_prot_sig_signer').on(table.signerWallet),
+  check('chk_prot_sig_signer_lower', sql`signer_wallet = LOWER(signer_wallet)`),
+]);
+
+export type ProtectionClaimSignatureRow = typeof protectionClaimSignatures.$inferSelect;
+export type NewProtectionClaimSignatureRow = typeof protectionClaimSignatures.$inferInsert;
+

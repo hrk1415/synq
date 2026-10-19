@@ -28,7 +28,9 @@ export type NotificationCategory =
 export const SUPPORTED_NOTIFICATION_EVENTS = [
   // 1. Deal proposals and confirmations
   'proposal_received',
+  'proposal_declined',
   'deal_confirmed',
+  'escrow_funded',
   'deal_cancelled',
   'order_confirmed',
   'order_inquiry',
@@ -67,7 +69,9 @@ export function getCategoryForEvent(event: string): NotificationCategory | null 
   const normalized = (event || '').trim().toLowerCase();
   switch (normalized) {
     case 'proposal_received':
+    case 'proposal_declined':
     case 'deal_confirmed':
+    case 'escrow_funded':
     case 'deal_cancelled':
     case 'order_confirmed':
     case 'order_inquiry':

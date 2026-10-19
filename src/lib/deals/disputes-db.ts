@@ -1,13 +1,23 @@
-import { isAddress, decodeEventLog } from 'viem';
+import { isAddress, getAddress, decodeEventLog } from 'viem';
 import { getDb } from '@/db';
-import { milestoneDisputes, type MilestoneDisputeRow, type NewMilestoneDisputeRow } from '@/db/schema';
+import {
+  milestoneDisputes,
+  milestoneResolutionReports,
+  type MilestoneDisputeRow,
+  type NewMilestoneDisputeRow,
+} from '@/db/schema';
 import { SEPOLIA_CHAIN_ID } from '@/lib/contracts/addresses';
 import {
   readStandardV2DealData,
+  readResolutionProposal,
   DealState,
   MilestoneStatus,
   type PublicClientLike,
 } from '@/lib/deals/v2-deal';
+import {
+  deriveAuthorizedCommittee,
+  synqResolutionCommitteeReadABI,
+} from '@/lib/deals/v2-resolution-report';
 import {
   normalizeSeriousDisputeManifest,
   hashSeriousDisputeManifest,
@@ -459,9 +469,13 @@ export interface GetMilestoneDisputeParams {
 /**
  * Retrieves the serious dispute record for a milestone.
  *
- * Privacy Enforcement:
- * Outsiders are strictly rejected with DisputeAuthError.
- * Only the client and freelancer can read the human explanation and manifest.
+ * Authorization Enforcement:
+ * - Deal Client and Freelancer have direct access.
+ * - Current signers on the authoritative resolution committee derived for that
+ *   specific milestone have access if the milestone is in an adjudication state
+ *   (Disputed, ResolutionProposed, FinalReview, or verified SettledSplit).
+ * - Outsiders, unassigned committee members, and invalid states are rejected with DisputeAuthError.
+ * - All authorization checks fail closed on RPC error, missing block timestamp, or unverified provenance.
  */
 export async function getMilestoneDispute(
   params: GetMilestoneDisputeParams
@@ -476,12 +490,121 @@ export async function getMilestoneDispute(
     throw new DisputeValidationError('Invalid address provided');
   }
 
+  if (!Number.isInteger(params.milestoneId) || params.milestoneId < 0) {
+    throw new DisputeValidationError('Invalid milestoneId provided');
+  }
+
   const dealData = await readStandardV2DealData(dealAddress, client);
   const isClient = callerWallet === dealData.client.toLowerCase();
   const isFreelancer = callerWallet === dealData.freelancer.toLowerCase();
 
-  if (!isClient && !isFreelancer) {
-    throw new DisputeAuthError('Outsiders cannot view milestone dispute details');
+  // 1. Participant Access Path
+  if (isClient || isFreelancer) {
+    return repo.getByMilestone(chainId, dealAddress, params.milestoneId);
+  }
+
+  // 2. Committee Caller Access Path
+  if (params.milestoneId >= dealData.milestones.length) {
+    throw new DisputeValidationError('Milestone does not exist');
+  }
+
+  const milestone = dealData.milestones[params.milestoneId];
+  let authorizedResolver: `0x${string}` | null = null;
+
+  if (milestone.status === MilestoneStatus.Disputed) {
+    // Read on-chain dispute-opened timestamp
+    const disputeOpenedAt = (await client.readContract({
+      address: dealData.dealAddress,
+      abi: synqDealV1ABI,
+      functionName: 'milestoneDisputeOpenedAt',
+      args: [BigInt(params.milestoneId)],
+    })) as bigint;
+
+    if (!disputeOpenedAt || disputeOpenedAt <= 0n) {
+      throw new DisputeAuthError('Dispute opened timestamp not recorded on-chain');
+    }
+
+    // Fail-closed: Must use authoritative latest block timestamp from RPC, never Date.now() or 0n
+    if (typeof (client as any).getBlock !== 'function') {
+      throw new DisputeAuthError('Unable to query authoritative block timestamp');
+    }
+    const latestBlock = await (client as any).getBlock({ blockTag: 'latest' });
+    if (!latestBlock || latestBlock.timestamp === undefined || latestBlock.timestamp === null) {
+      throw new DisputeAuthError('Authoritative block timestamp unavailable');
+    }
+    const latestBlockTimestamp = BigInt(latestBlock.timestamp);
+
+    const derivation = deriveAuthorizedCommittee({
+      primaryResolver: dealData.primaryResolver,
+      emergencyResolver: dealData.emergencyResolver,
+      phase: 'INITIAL_RESOLUTION',
+      milestoneDisputeOpenedAt: disputeOpenedAt,
+      latestBlockTimestamp,
+    });
+
+    if (
+      derivation.error ||
+      !derivation.authorizedCommittee ||
+      derivation.authorizedCommittee === '0x0000000000000000000000000000000000000000'
+    ) {
+      throw new DisputeAuthError(derivation.error || 'Failed to derive authorized resolution committee');
+    }
+
+    authorizedResolver = derivation.authorizedCommittee;
+  } else if (
+    milestone.status === MilestoneStatus.ResolutionProposed ||
+    milestone.status === MilestoneStatus.FinalReview
+  ) {
+    // Derive resolver strictly from stored on-chain resolution proposal
+    // Preserves the original proposing resolver for final review without 14-day re-derivation
+    const proposal = await readResolutionProposal(dealData.dealAddress, params.milestoneId, client);
+    if (
+      !proposal ||
+      !proposal.resolver ||
+      !isAddress(proposal.resolver) ||
+      proposal.resolver === '0x0000000000000000000000000000000000000000'
+    ) {
+      throw new DisputeAuthError('No valid resolution proposal recorded on-chain');
+    }
+    authorizedResolver = proposal.resolver.toLowerCase() as `0x${string}`;
+  } else if (milestone.status === MilestoneStatus.SettledSplit) {
+    // Only grant committee access if settlement actually followed a committee resolution
+    const db = getDb();
+    const confirmedReports = await db
+      .select()
+      .from(milestoneResolutionReports)
+      .where(
+        and(
+          eq(milestoneResolutionReports.chainId, chainId),
+          eq(milestoneResolutionReports.dealAddress, dealAddress),
+          eq(milestoneResolutionReports.milestoneId, params.milestoneId),
+          eq(milestoneResolutionReports.status, 'confirmed')
+        )
+      );
+
+    if (confirmedReports.length === 0) {
+      throw new DisputeAuthError('Committee provenance cannot be verified for this settled milestone');
+    }
+
+    const report = confirmedReports.find((r) => r.phase === 'FINAL_RESOLUTION') ?? confirmedReports[0];
+    if (!report.committeeAddress || !isAddress(report.committeeAddress)) {
+      throw new DisputeAuthError('Invalid committee address on confirmed resolution report');
+    }
+    authorizedResolver = report.committeeAddress.toLowerCase() as `0x${string}`;
+  } else {
+    throw new DisputeAuthError('Milestone is not in a dispute or resolution state');
+  }
+
+  // Live verification that caller is currently a signer on the derived authorized resolver contract
+  const isSigner = (await client.readContract({
+    address: getAddress(authorizedResolver),
+    abi: synqResolutionCommitteeReadABI,
+    functionName: 'isSigner',
+    args: [getAddress(callerWallet)],
+  })) as boolean;
+
+  if (!isSigner) {
+    throw new DisputeAuthError('Caller is not an active signer on the authorized resolution committee');
   }
 
   return repo.getByMilestone(chainId, dealAddress, params.milestoneId);

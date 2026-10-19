@@ -5,6 +5,7 @@ import {
   milestoneDisputes,
   milestoneResolutionReports,
   committeeResolutionAuthorizations,
+  committeeResolutionSignatures,
   type ResolutionReportPhase,
 } from '@/db/schema';
 import { SEPOLIA_CHAIN_ID, SYNQ_V2_SEPOLIA_CONFIG } from '@/lib/contracts/addresses';
@@ -25,13 +26,18 @@ import { sepoliaPublicClient } from '@/lib/chain';
 import { eq, and, desc, sql, isNotNull } from 'drizzle-orm';
 
 import {
-  type CommitteeQueueItem,
+  type CommitteeQueueItem as BaseCommitteeQueueItem,
   type CommitteeSignerStatus,
   checkCommitteeSignerStatus,
 } from './v2-committee-signer';
 
+export interface CommitteeQueueItem extends BaseCommitteeQueueItem {
+  hasUserSigned?: boolean;
+  signers?: string[];
+  authorizationValidUntil?: string;
+}
+
 export {
-  type CommitteeQueueItem,
   type CommitteeSignerStatus,
   checkCommitteeSignerStatus,
 };
@@ -105,6 +111,161 @@ export async function getCandidateDealAddresses(
 }
 
 /**
+ * Scopes authorization and signature coordination data for a specific deal milestone and phase.
+ * Guarantees that:
+ * 1. Progress is scoped to chainId, dealAddress, milestoneId, and phase.
+ * 2. Expired or invalidated authorizations are accurately marked and not labeled threshold_ready.
+ * 3. Signatures from another case cannot appear.
+ * 4. Caller wallet's signing status is accurately determined.
+ */
+async function enrichQueueItemWithProgress(params: {
+  db: any;
+  dealAddress: string;
+  milestoneId: number;
+  phase: ResolutionReportPhase;
+  callerWallet: string;
+  chainTimestamp: bigint;
+}): Promise<{
+  reportStatus?: 'staged' | 'confirmed' | null;
+  reportId?: string | null;
+  authorizationStatus?: 'collecting' | 'threshold_ready' | 'invalidated' | 'expired' | 'executed' | null;
+  authorizationId?: string | null;
+  signatureCount?: number;
+  hasUserSigned?: boolean;
+  signers?: string[];
+  authorizationValidUntil?: string;
+}> {
+  const { db, dealAddress, milestoneId, phase, callerWallet, chainTimestamp } = params;
+  const normalizedDeal = dealAddress.toLowerCase();
+  const normalizedCaller = callerWallet.toLowerCase();
+
+  try {
+    // 1. Fetch latest report
+    let reportId: string | null = null;
+    let reportStatus: 'staged' | 'confirmed' | null = null;
+    try {
+      const reports = await db
+        .select({
+          id: milestoneResolutionReports.id,
+          status: milestoneResolutionReports.status,
+        })
+        .from(milestoneResolutionReports)
+        .where(
+          and(
+            eq(milestoneResolutionReports.chainId, SEPOLIA_CHAIN_ID),
+            eq(milestoneResolutionReports.dealAddress, normalizedDeal),
+            eq(milestoneResolutionReports.milestoneId, milestoneId),
+            eq(milestoneResolutionReports.phase, phase)
+          )
+        )
+        .orderBy(desc(milestoneResolutionReports.createdAt))
+        .limit(1);
+
+      if (reports && reports.length > 0) {
+        reportId = reports[0].id;
+        reportStatus = reports[0].status as 'staged' | 'confirmed';
+      }
+    } catch {
+      // Graceful fallback if reports query encounters error
+    }
+
+    // 2. Fetch latest authorization for this specific chain, deal, milestone, and phase
+    // Deterministic ordering: createdAt DESC, resolutionNonce DESC, id DESC
+    const authRows = await db
+      .select({
+        id: committeeResolutionAuthorizations.id,
+        status: committeeResolutionAuthorizations.status,
+        validUntil: committeeResolutionAuthorizations.validUntil,
+        resolutionNonce: committeeResolutionAuthorizations.resolutionNonce,
+        createdAt: committeeResolutionAuthorizations.createdAt,
+      })
+      .from(committeeResolutionAuthorizations)
+      .where(
+        and(
+          eq(committeeResolutionAuthorizations.chainId, SEPOLIA_CHAIN_ID),
+          eq(committeeResolutionAuthorizations.dealAddress, normalizedDeal),
+          eq(committeeResolutionAuthorizations.milestoneId, milestoneId),
+          eq(committeeResolutionAuthorizations.phase, phase)
+        )
+      )
+      .orderBy(
+        desc(committeeResolutionAuthorizations.createdAt),
+        desc(committeeResolutionAuthorizations.resolutionNonce),
+        desc(committeeResolutionAuthorizations.id)
+      )
+      .limit(1);
+
+    if (!authRows || authRows.length === 0) {
+      return {
+        reportId,
+        reportStatus,
+        authorizationId: null,
+        authorizationStatus: null,
+        signatureCount: 0,
+        hasUserSigned: false,
+        signers: [],
+      };
+    }
+
+    // Always select latest authorization for this case and phase
+    const latestAuth = authRows[0];
+
+    // Check expiration against authoritative chain timestamp
+    const validUntilBn = BigInt(latestAuth.validUntil || '0');
+    const isExpired =
+      validUntilBn > 0n &&
+      chainTimestamp > 0n &&
+      validUntilBn <= chainTimestamp &&
+      latestAuth.status !== 'executed';
+
+    // 3. Fetch signatures strictly bound to this authorization ID
+    const sigRows = await db
+      .select({
+        signerWallet: committeeResolutionSignatures.signerWallet,
+      })
+      .from(committeeResolutionSignatures)
+      .where(eq(committeeResolutionSignatures.authorizationId, latestAuth.id));
+
+    const signers: string[] = (sigRows || []).map((s: any) => s.signerWallet.toLowerCase());
+    const signatureCount = signers.length;
+    const hasUserSigned = signers.includes(normalizedCaller);
+
+    let effectiveStatus: 'collecting' | 'threshold_ready' | 'invalidated' | 'expired' | 'executed' =
+      latestAuth.status;
+
+    if (isExpired) {
+      effectiveStatus = 'expired';
+    } else if (latestAuth.status === 'invalidated') {
+      effectiveStatus = 'invalidated';
+    } else if (latestAuth.status === 'executed') {
+      effectiveStatus = 'executed';
+    } else if (signatureCount >= 2) {
+      effectiveStatus = 'threshold_ready';
+    } else {
+      effectiveStatus = 'collecting';
+    }
+
+    return {
+      reportId,
+      reportStatus,
+      authorizationId: latestAuth.id,
+      authorizationStatus: effectiveStatus,
+      signatureCount,
+      hasUserSigned,
+      signers,
+      authorizationValidUntil: latestAuth.validUntil,
+    };
+  } catch {
+    return {
+      authorizationStatus: null,
+      signatureCount: 0,
+      hasUserSigned: false,
+      signers: [],
+    };
+  }
+}
+
+/**
  * Loads actionable committee queue items for an authenticated committee signer.
  *
  * Rules:
@@ -134,7 +295,8 @@ export async function getCommitteeQueueItems(params: {
     throw new Error('Caller is not an active signer on any resolution committee');
   }
 
-  const candidateAddresses = params.candidateDeals ?? (await getCandidateDealAddresses(50, params.dbInstance));
+  const db = params.dbInstance ?? getDb();
+  const candidateAddresses = params.candidateDeals ?? (await getCandidateDealAddresses(50, db));
   const queueItems: CommitteeQueueItem[] = [];
 
   // Get current chain block timestamp
@@ -192,6 +354,15 @@ export async function getCommitteeQueueItems(params: {
               (authCommittee === emergencyResolver && signerStatus.isEmergencySigner);
 
             if (isAuthorizedForSigner) {
+              const progress = await enrichQueueItemWithProgress({
+                db,
+                dealAddress: dealData.dealAddress,
+                milestoneId: msIdx,
+                phase: 'INITIAL_RESOLUTION',
+                callerWallet,
+                chainTimestamp,
+              });
+
               queueItems.push({
                 dealAddress: dealData.dealAddress,
                 milestoneId: msIdx,
@@ -206,6 +377,7 @@ export async function getCommitteeQueueItems(params: {
                 evidenceRootHash: ms.evidenceRootHash,
                 authorizedCommittee: derivation.authorizedCommittee,
                 disputeOpenedAt: disputeOpenedAt.toString(),
+                ...progress,
               });
             }
           }
@@ -237,6 +409,15 @@ export async function getCommitteeQueueItems(params: {
                 (authCommittee === emergencyResolver && signerStatus.isEmergencySigner);
 
               if (isAuthorizedForSigner) {
+                const progress = await enrichQueueItemWithProgress({
+                  db,
+                  dealAddress: dealData.dealAddress,
+                  milestoneId: msIdx,
+                  phase: 'FINAL_RESOLUTION',
+                  callerWallet,
+                  chainTimestamp,
+                });
+
                 queueItems.push({
                   dealAddress: dealData.dealAddress,
                   milestoneId: msIdx,
@@ -251,13 +432,14 @@ export async function getCommitteeQueueItems(params: {
                   evidenceRootHash: ms.evidenceRootHash,
                   authorizedCommittee: derivation.authorizedCommittee,
                   reconsiderationDeadline: proposal.reconsiderationDeadline.toString(),
+                  ...progress,
                 });
               }
             }
           }
         }
       }
-    } catch (dealErr) {
+    } catch {
       // Ignore unparseable deals
     }
   }

@@ -184,7 +184,7 @@ function NewDealForm() {
   const { address } = useAccount();
   const { collapsed } = useSidebar();
   const { ensureSepolia } = useSepoliaNetwork();
-  const { ensureAuthenticated } = useAuthSession();
+  const { ensureAuthenticated, getToken } = useAuthSession();
   const { signTypedDataAsync } = useSignTypedData();
 
   const directory = useDirectoryContract(address);
@@ -493,7 +493,14 @@ function NewDealForm() {
 
     (async () => {
       try {
-        const token = await ensureAuthenticated();
+        const token = getToken();
+        if (!token) {
+          if (!cancelled) {
+            setHandoffError('Wallet verification required to load negotiated deal draft. Please verify your wallet.');
+            setHandoffLoading(false);
+          }
+          return;
+        }
         if (cancelled) return;
 
         const isEditMode = negotiatorMode === 'edit';
@@ -2153,27 +2160,27 @@ function NewDealForm() {
                                 Coverage
                               </div>
                               <p className="text-[11px] text-[#A3A3A3] leading-relaxed pl-3">
-                                Up to 20% additional recovery on eligible failed milestones.
+                                Up to 20% additional recovery on eligible covered milestones that reach an expired refund.
                               </p>
                             </div>
 
                             <div className="space-y-0.5">
                               <div className="font-medium text-white flex items-center gap-1.5 text-[11px]">
                                 <span className="w-1.5 h-1.5 rounded-full bg-white shrink-0" />
-                                Claim
+                                Fee & Activation
                               </div>
                               <p className="text-[11px] text-[#A3A3A3] leading-relaxed pl-3">
-                                Submit a claim after an eligible milestone failure.
+                                A 2% fee based on covered milestone principal, paid separately after deal escrow is funded. The fee is non-refundable.
                               </p>
                             </div>
 
                             <div className="space-y-0.5">
                               <div className="font-medium text-white flex items-center gap-1.5 text-[11px]">
                                 <span className="w-1.5 h-1.5 rounded-full bg-white shrink-0" />
-                                Review
+                                Claim & Review
                               </div>
                               <p className="text-[11px] text-[#A3A3A3] leading-relaxed pl-3">
-                                Your protection claim is reviewed before payout.
+                                Claims require an eligible milestone to finalize as SettledRefunded. The Protection Committee evaluates submitted claims.
                               </p>
                             </div>
 
@@ -2183,7 +2190,7 @@ function NewDealForm() {
                                 Payout
                               </div>
                               <p className="text-[11px] text-[#A3A3A3] leading-relaxed pl-3">
-                                Approved claims are paid separately from your original deal escrow.
+                                Approved claims are paid from the Protection Pool, subject to policy caps and available liquidity.
                               </p>
                             </div>
                           </div>
@@ -2197,14 +2204,14 @@ function NewDealForm() {
                   </div>
 
                   <p className="text-xs text-white leading-relaxed font-medium">
-                    Get up to 20% additional recovery coverage when an eligible milestone fails.
+                    Supplemental recovery coverage for deliverables that expire without submission.
                   </p>
 
                   <div className="space-y-1.5 pt-1">
                     {[
-                      'Additional recovery coverage',
-                      'Priority dispute review',
-                      'Replacement freelancer assistance',
+                      'Up to 20% additional recovery on covered milestones',
+                      'Independent Protection Pool coverage',
+                      'Decentralized committee claim verification',
                     ].map((benefit, i) => (
                       <div key={i} className="flex items-center gap-2 text-[11px] text-[#A3A3A3]">
                         <Check size={12} className="text-white shrink-0" />
@@ -2214,7 +2221,7 @@ function NewDealForm() {
                   </div>
 
                   <div className="text-[11px] text-[#A3A3A3]/70 italic pt-1">
-                    Premium fee shown before activation
+                    2% fee paid separately after escrow funding (non-refundable)
                   </div>
                 </div>
 
@@ -2553,7 +2560,7 @@ function NewDealForm() {
                       </p>
                       {form.protectionSelection === 'PREMIUM' && (
                         <p className="text-[11px] text-zinc-400 text-center leading-relaxed px-2">
-                          Premium Protection will be activated when you fund this deal after the freelancer accepts.
+                          Premium Protection is activated in a separate transaction after deal escrow is funded.
                         </p>
                       )}
 

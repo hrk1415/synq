@@ -115,26 +115,11 @@ export function V2DealFunding({ dealData, refetchDealData }: V2DealFundingProps)
       setLoadingProtectionIntent(true);
       setProtectionIntentError(null);
 
-      // Attempt to retrieve active session token or prompt authenticated session
-      let token = getToken();
-      if (!token && isConnected && address) {
-        try {
-          token = await ensureAuthenticated();
-        } catch (authErr: any) {
-          const msg = authErr?.shortMessage || authErr?.message || 'Authentication required';
-          setProtectionSelection(null);
-          setProtectionIntentError(
-            msg.includes('cancelled') || msg.includes('rejected') || msg.includes('denied')
-              ? 'Authentication cancelled. Please sign in with your connected wallet to verify deal protection intent.'
-              : `Authentication required to verify deal protection: ${msg}`
-          );
-          return;
-        }
-      }
-
+      // Retrieve active session token if present
+      const token = getToken();
       if (!token) {
         setProtectionSelection(null);
-        setProtectionIntentError('Wallet not authenticated. Connect and sign in to verify deal protection.');
+        setLoadingProtectionIntent(false);
         return;
       }
 
@@ -178,7 +163,7 @@ export function V2DealFunding({ dealData, refetchDealData }: V2DealFundingProps)
     } finally {
       setLoadingProtectionIntent(false);
     }
-  }, [dealData.dealAddress, isConnected, address, getToken, ensureAuthenticated]);
+  }, [dealData.dealAddress, isConnected, address, getToken]);
 
   useEffect(() => {
     fetchProtectionIntent();
@@ -393,6 +378,25 @@ export function V2DealFunding({ dealData, refetchDealData }: V2DealFundingProps)
       const eventVerification = verifyFundingReceipt(receipt, dealData.dealAddress, dealData.totalEscrow);
       if (!eventVerification.valid) {
         throw new Error(eventVerification.error || 'Deal funding receipt validation failed');
+      }
+
+      // Direct in-band notification dispatch for escrow_funded
+      try {
+        const token = await ensureAuthenticated();
+        await fetch('/api/notify', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            dealId: dealData.dealAddress,
+            txHash,
+            event: 'escrow_funded',
+          }),
+        }).catch((e) => console.warn('[V2DealFunding] escrow_funded notify warning:', e));
+      } catch (notifyErr) {
+        console.warn('[V2DealFunding] escrow_funded notification dispatch failed:', notifyErr);
       }
 
       // Refresh on-chain Deal data

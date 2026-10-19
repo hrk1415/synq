@@ -80,9 +80,9 @@ export function generateCanonicalDealEventKey(params: CanonicalDealEventKeyParam
     return parts.join(':');
   }
 
-  // 2. Deal funding confirmation: exactly once per deal
-  if (event === 'deal_confirmed') {
-    const parts = [`${chain}:${deal}:deal_confirmed`];
+  // 2. Deal funding confirmation & proposal declined: exactly once per deal
+  if (event === 'deal_confirmed' || event === 'escrow_funded' || event === 'proposal_declined') {
+    const parts = [`${chain}:${deal}:${event}`];
     if (role) {
       parts.push(`role:${role}`);
     } else if (params.recipientWallet) {

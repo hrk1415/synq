@@ -278,10 +278,21 @@ export async function createMutualSettlementProposal(
     milestoneAmount,
   });
 
-  // 3. Expiration boundary check against current system time (conservative)
+  // 3. Expiration boundary check against current system time
+  // Governs proposals submitted through SYNQ's backend: 1 hour minimum, 72 hours maximum.
+  // A 5-minute (300s) buffer tolerance is allowed to accommodate signing and network request latency.
   const currentTimestampSec = BigInt(Math.floor(Date.now() / 1000));
+  const minValidUntilSec = currentTimestampSec + 3600n - 300n; // 1 hour minus 5m tolerance
+  const maxValidUntilSec = currentTimestampSec + (72n * 3600n) + 300n; // 72 hours plus 5m tolerance
+
   if (normalized.validUntil <= currentTimestampSec) {
     throw new MutualSettlementValidationError('Proposal validUntil timestamp is already in the past');
+  }
+  if (normalized.validUntil < minValidUntilSec) {
+    throw new MutualSettlementValidationError('Proposal expiration must be at least 1 hour from current time');
+  }
+  if (normalized.validUntil > maxValidUntilSec) {
+    throw new MutualSettlementValidationError('Proposal expiration cannot exceed 72 hours from current time');
   }
 
   // 4. On-chain Nonce verification: usedProposalNonces[milestoneId][proposer][nonce]

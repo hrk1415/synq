@@ -6,7 +6,7 @@ import {
   type NewMilestoneResolutionReportRow,
   type ResolutionReportPhase,
 } from '@/db/schema';
-import { SEPOLIA_CHAIN_ID } from '@/lib/contracts/addresses';
+import { SEPOLIA_CHAIN_ID, SYNQ_V2_SEPOLIA_CONFIG } from '@/lib/contracts/addresses';
 import {
   readStandardV2DealData,
   DealState,
@@ -31,7 +31,11 @@ import {
 } from '@/lib/deals/v2-resolution-report';
 import { synqDealV1ABI } from '@/lib/contracts/abis';
 import { sepoliaPublicClient } from '@/lib/chain';
-import { and, eq, desc } from 'drizzle-orm';
+import { and, eq, desc, or, inArray, sql } from 'drizzle-orm';
+import {
+  type CommitteeSignerStatus,
+  checkCommitteeSignerStatus,
+} from './v2-committee-signer';
 
 export {
   ResolutionReportValidationError,
@@ -812,4 +816,211 @@ export async function listResolutionReports(params: {
       stagedByWallet: r.stagedByWallet,
     })
   );
+}
+
+// ---------------------------------------------------------------------------
+// Committee Resolution History (Phase 2E.3)
+// ---------------------------------------------------------------------------
+
+export interface CommitteeHistoryItem {
+  id: string;
+  dealAddress: string;
+  milestoneId: number;
+  phase: ResolutionReportPhase;
+  committeeAddress: string;
+  freelancerAmount: string;
+  clientAmount: string;
+  totalAmount: string;
+  justificationHash: string;
+  summaryPreview: string;
+  summary: string;
+  findings: string;
+  justification: string;
+  evidenceReferences?: any[];
+  status: 'staged' | 'confirmed';
+  settlementState: 'initial_proposed' | 'final_confirmed' | 'settled_on_chain' | 'unverified';
+  settlementStateLabel: string;
+  txHash: string | null;
+  resolvedAt: string | null;
+  createdAt: string;
+  stagedByWallet: string;
+  isSuperseded: boolean;
+  supersedingTxHash?: string | null;
+  supersedingReportId?: string | null;
+  supersedingResolvedAt?: string | null;
+}
+
+export async function getCommitteeResolutionHistory(params: {
+  callerWallet: string;
+  signerStatus?: CommitteeSignerStatus;
+  limit?: number;
+  offset?: number;
+  phase?: ResolutionReportPhase;
+  publicClient?: PublicClientLike;
+  dbInstance?: any;
+}): Promise<{
+  items: CommitteeHistoryItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}> {
+  const { callerWallet } = params;
+  if (!isAddress(callerWallet)) {
+    throw new ResolutionReportAuthError('Invalid caller wallet address');
+  }
+
+  const db = params.dbInstance ?? getDb();
+  const caller = callerWallet.toLowerCase();
+  const limit = Math.min(Math.max(1, params.limit ?? 20), 50);
+  const offset = Math.max(0, params.offset ?? 0);
+
+  const client = params.publicClient ?? sepoliaPublicClient;
+  const signerStatus = params.signerStatus ?? (await checkCommitteeSignerStatus(caller, client));
+
+  if (!signerStatus.isAnySigner) {
+    throw new ResolutionReportAuthError('Caller is not an active signer on any resolution committee');
+  }
+
+  const primaryResolver = SYNQ_V2_SEPOLIA_CONFIG.primaryResolver.toLowerCase();
+  const emergencyResolver = SYNQ_V2_SEPOLIA_CONFIG.emergencyResolver.toLowerCase();
+
+  const allowedCommittees: string[] = [];
+  if (signerStatus.isPrimarySigner) allowedCommittees.push(primaryResolver);
+  if (signerStatus.isEmergencySigner) allowedCommittees.push(emergencyResolver);
+
+  if (allowedCommittees.length === 0) {
+    return { items: [], total: 0, limit, offset };
+  }
+
+  // Filter: Sepolia, confirmed status, authorized committee or stagedByWallet
+  const conditions = [
+    eq(milestoneResolutionReports.chainId, SEPOLIA_CHAIN_ID),
+    eq(milestoneResolutionReports.status, 'confirmed'),
+    or(
+      inArray(milestoneResolutionReports.committeeAddress, allowedCommittees),
+      eq(milestoneResolutionReports.stagedByWallet, caller)
+    ),
+  ];
+
+  if (params.phase) {
+    conditions.push(eq(milestoneResolutionReports.phase, params.phase));
+  }
+
+  const whereClause = and(...conditions);
+
+  // Total count
+  const countRes = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(milestoneResolutionReports)
+    .where(whereClause);
+  const total = countRes[0]?.count ?? 0;
+
+  // Rows query ordered newest first by resolvedAt desc, createdAt desc, id desc
+  const rows = await db
+    .select()
+    .from(milestoneResolutionReports)
+    .where(whereClause)
+    .orderBy(
+      desc(milestoneResolutionReports.resolvedAt),
+      desc(milestoneResolutionReports.createdAt),
+      desc(milestoneResolutionReports.id)
+    )
+    .limit(limit)
+    .offset(offset);
+
+  // Phase 2G.1: Cross-filter / cross-page check for superseded initial resolutions.
+  // Identifies whether any confirmed FINAL_RESOLUTION exists for the same chain, deal, and milestone.
+  const initialRows = rows.filter((r: any) => r.phase === 'INITIAL_RESOLUTION');
+  const supersededMap = new Map<
+    string,
+    { txHash: string | null; reportId: string; resolvedAt: string | null }
+  >();
+
+  if (initialRows.length > 0) {
+    const conditions = initialRows.map((ir: any) =>
+      and(
+        eq(milestoneResolutionReports.chainId, ir.chainId),
+        eq(milestoneResolutionReports.dealAddress, ir.dealAddress.toLowerCase()),
+        eq(milestoneResolutionReports.milestoneId, ir.milestoneId)
+      )
+    );
+
+    const finalMatches = await db
+      .select({
+        id: milestoneResolutionReports.id,
+        chainId: milestoneResolutionReports.chainId,
+        dealAddress: milestoneResolutionReports.dealAddress,
+        milestoneId: milestoneResolutionReports.milestoneId,
+        txHash: milestoneResolutionReports.txHash,
+        resolvedAt: milestoneResolutionReports.resolvedAt,
+      })
+      .from(milestoneResolutionReports)
+      .where(
+        and(
+          eq(milestoneResolutionReports.phase, 'FINAL_RESOLUTION'),
+          eq(milestoneResolutionReports.status, 'confirmed'),
+          or(...conditions)
+        )
+      );
+
+    for (const fm of finalMatches) {
+      const key = `${fm.chainId}:${fm.dealAddress.toLowerCase()}:${fm.milestoneId}`;
+      supersededMap.set(key, {
+        reportId: fm.id,
+        txHash: fm.txHash,
+        resolvedAt: fm.resolvedAt ? new Date(fm.resolvedAt).toISOString() : null,
+      });
+    }
+  }
+
+  const items: CommitteeHistoryItem[] = rows.map((r: any) => {
+    const canonical = (r.canonicalReport || {}) as Record<string, any>;
+    const freelancerAmount = String(r.freelancerAmount || '0');
+    const clientAmount = String(r.clientAmount || '0');
+    const totalAmount = (BigInt(freelancerAmount) + BigInt(clientAmount)).toString();
+    const summary = typeof canonical.summary === 'string' ? canonical.summary : '';
+    const findings = typeof canonical.findings === 'string' ? canonical.findings : '';
+    const justification = typeof canonical.justification === 'string' ? canonical.justification : '';
+    const evidenceReferences = Array.isArray(canonical.evidenceReferences) ? canonical.evidenceReferences : [];
+    const summaryPreview = summary.length > 200 ? summary.slice(0, 200).trim() + '…' : summary;
+
+    const isFinal = r.phase === 'FINAL_RESOLUTION';
+    const key = `${r.chainId}:${r.dealAddress.toLowerCase()}:${r.milestoneId}`;
+    const finalMatch = !isFinal ? supersededMap.get(key) : undefined;
+    const isSuperseded = Boolean(finalMatch);
+
+    const settlementState: 'initial_proposed' | 'final_confirmed' | 'settled_on_chain' | 'unverified' =
+      isFinal ? 'final_confirmed' : 'initial_proposed';
+    const settlementStateLabel = isFinal ? 'Final Decision Confirmed' : 'Initial Decision Proposed';
+
+    return {
+      id: r.id,
+      dealAddress: r.dealAddress,
+      milestoneId: r.milestoneId,
+      phase: r.phase,
+      committeeAddress: r.committeeAddress,
+      freelancerAmount,
+      clientAmount,
+      totalAmount,
+      justificationHash: r.justificationHash,
+      summaryPreview,
+      summary,
+      findings,
+      justification,
+      evidenceReferences,
+      status: r.status,
+      settlementState,
+      settlementStateLabel,
+      txHash: r.txHash,
+      resolvedAt: r.resolvedAt ? new Date(r.resolvedAt).toISOString() : null,
+      createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : new Date().toISOString(),
+      stagedByWallet: r.stagedByWallet,
+      isSuperseded,
+      supersedingTxHash: finalMatch?.txHash ?? null,
+      supersedingReportId: finalMatch?.reportId ?? null,
+      supersedingResolvedAt: finalMatch?.resolvedAt ?? null,
+    };
+  });
+
+  return { items, total, limit, offset };
 }
