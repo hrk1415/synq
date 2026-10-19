@@ -2046,7 +2046,7 @@ export function CommitteeResolutionWorkspace({
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div className="flex items-center gap-2 font-semibold text-amber-300">
                     <Scale className="h-4 w-4 text-amber-400 shrink-0" />
-                    <span>Transaction Recovery & Synchronization</span>
+                    <span>Advanced / Troubleshooting: Transaction Recovery</span>
                   </div>
                   {showManualRecovery && !isAmbiguousFailure && !reconciliationFailed && (
                     <Button
@@ -2176,7 +2176,7 @@ export function CommitteeResolutionWorkspace({
                   onClick={() => setShowManualRecovery(true)}
                   className="text-[11px] text-zinc-400 hover:text-zinc-200 underline flex items-center gap-1 cursor-pointer"
                 >
-                  <RotateCcw className="h-3 w-3" /> Lost connection or already broadcasted? Check on-chain status & recover
+                  <RotateCcw className="h-3 w-3" /> Advanced / Troubleshooting: Check on-chain status & recover
                 </button>
               </div>
             )}

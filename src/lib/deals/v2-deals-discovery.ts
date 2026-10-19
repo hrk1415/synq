@@ -7,6 +7,11 @@ import { isAddress, getAddress } from 'viem';
 import { synqFactoryV2ABI, synqDealV1ABI } from '@/lib/contracts/abis';
 import { ZERO_ADDRESS } from '@/lib/deals/v2';
 import { SEPOLIA_CHAIN_ID } from '@/lib/contracts/addresses';
+import {
+  type PremiumPolicyState,
+  type ProtectionTierStatus,
+  resolveProtectionTierStatus,
+} from '@/lib/deals/v2-protection';
 
 export interface DiscoveredV2Deal {
   dealAddress: `0x${string}`;
@@ -18,6 +23,8 @@ export interface DiscoveredV2Deal {
   createdAt?: string;
   protectionSelection?: string;
   proposalId?: string;
+  protectionStatus?: ProtectionTierStatus;
+  policy?: PremiumPolicyState;
 }
 
 export interface DealContractState {
@@ -404,6 +411,7 @@ export function enrichDealsWithMetadata(
   dealAddresses: readonly `0x${string}`[],
   onChainStates: Map<string, DealContractState>,
   metadataMap: Record<string, DealProposalMetadata>,
+  policiesMap?: Map<string, PremiumPolicyState>,
 ): DiscoveredV2Deal[] {
   const deals: DiscoveredV2Deal[] = [];
 
@@ -416,6 +424,14 @@ export function enrichDealsWithMetadata(
     }
 
     const meta = metadataMap[key];
+    const policy = policiesMap?.get(key);
+
+    const protectionStatus = resolveProtectionTierStatus({
+      protectionSelection: meta?.protectionSelection,
+      policy: policy ?? null,
+      isVerifying: false,
+    });
+
     deals.push({
       dealAddress: addr,
       client: contractState.client,
@@ -426,6 +442,8 @@ export function enrichDealsWithMetadata(
       createdAt: meta?.createdAt,
       protectionSelection: meta?.protectionSelection,
       proposalId: meta?.proposalId,
+      protectionStatus,
+      policy,
     });
   }
 

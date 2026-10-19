@@ -4,18 +4,19 @@ import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { Press_Start_2P } from 'next/font/google';
 import { motion } from 'framer-motion';
 import Link from 'next/link';
-import { Search, ArrowRight, Loader2, SlidersHorizontal, Check, RefreshCw, AlertCircle } from 'lucide-react';
+import { Search, ArrowRight, Loader2, SlidersHorizontal, Check, RefreshCw, AlertCircle, Shield, ShieldCheck } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { useAccount } from 'wagmi';
 import { shortenAddress } from '@/lib/utils';
-import { SYNQ_V2_SEPOLIA_CONFIG } from '@/lib/contracts/addresses';
+import { SYNQ_V2_SEPOLIA_CONFIG, getSynqPremiumConfig } from '@/lib/contracts/addresses';
 import { ChainGuard } from '@/components/shared/ChainGuard';
 import { useSynqIdentities } from '@/hooks/useSynqIdentity';
 import { useAuthSession } from '@/hooks/useAuthSession';
 import { sepoliaPublicClient } from '@/lib/chain';
 import { formatUsdcAmount } from '@/lib/deals/v2';
+import { batchReadDealPremiumPolicies, type PremiumPolicyState } from '@/lib/deals/v2-protection';
 import {
   type DiscoveredV2Deal,
   type DealProposalMetadata,
@@ -144,8 +145,23 @@ export default function DealsPage() {
           }
         }
 
-        // 5. Enrich with metadata while preserving authoritative on-chain contract state
-        const enriched = enrichDealsWithMetadata(uniqueAddresses, onChainStates, metadataMap);
+        // 5. Batch-read on-chain Premium Protection policies in a single multicall
+        let policiesMap = new Map<string, PremiumPolicyState>();
+        const premiumConfig = getSynqPremiumConfig();
+        if (premiumConfig.isConfigured && premiumConfig.manager) {
+          try {
+            policiesMap = await batchReadDealPremiumPolicies(
+              sepoliaPublicClient,
+              premiumConfig.manager,
+              uniqueAddresses
+            );
+          } catch (err) {
+            console.warn('[DealsPage] Error batch reading premium policies:', err);
+          }
+        }
+
+        // 6. Enrich with metadata & authoritative on-chain protection while preserving contract state
+        const enriched = enrichDealsWithMetadata(uniqueAddresses, onChainStates, metadataMap, policiesMap);
         setDeals(enriched);
         lastFetchedAddressRef.current = targetAddress.toLowerCase();
       } catch (err: any) {
@@ -361,12 +377,37 @@ export default function DealsPage() {
                           >
                             {deal.title}
                           </h3>
-                          <Badge
-                            variant={V2_STATUS_BADGE_VARIANT[statusStr] ?? 'secondary'}
-                            className="text-[10px] shrink-0 font-medium px-2 py-0.5"
-                          >
-                            {V2_DEAL_STATE_LABELS[statusStr] ?? 'Unknown'}
-                          </Badge>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {deal.protectionStatus === 'PREMIUM_ACTIVE' ? (
+                              <Badge
+                                className="bg-purple-500/20 text-purple-300 border-purple-500/40 text-[10px] font-medium px-2 py-0.5 flex items-center gap-1"
+                                title="Active Premium Protection V1.1 policy verified on-chain"
+                              >
+                                <ShieldCheck className="h-3 w-3 text-purple-400" /> Premium Active
+                              </Badge>
+                            ) : deal.protectionStatus === 'PREMIUM_SELECTED' ? (
+                              <Badge
+                                variant="outline"
+                                className="border-purple-500/40 bg-purple-500/10 text-purple-300 text-[10px] font-medium px-2 py-0.5 flex items-center gap-1"
+                                title="Premium Protection selected during proposal; policy activation pending"
+                              >
+                                <Shield className="h-3 w-3 text-purple-400" /> Premium Selected
+                              </Badge>
+                            ) : deal.protectionStatus === 'VERIFYING' ? (
+                              <Badge
+                                variant="outline"
+                                className="border-zinc-700 bg-zinc-800/40 text-zinc-400 text-[10px] font-medium px-2 py-0.5 flex items-center gap-1"
+                              >
+                                <Loader2 className="h-2.5 w-2.5 animate-spin text-purple-400" /> Verifying
+                              </Badge>
+                            ) : null}
+                            <Badge
+                              variant={V2_STATUS_BADGE_VARIANT[statusStr] ?? 'secondary'}
+                              className="text-[10px] font-medium px-2 py-0.5"
+                            >
+                              {V2_DEAL_STATE_LABELS[statusStr] ?? 'Unknown'}
+                            </Badge>
+                          </div>
                         </div>
                         <div className="text-xs font-mono text-[#A3A3A3]">
                           {shortenAddress(deal.dealAddress)}

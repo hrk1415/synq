@@ -169,6 +169,20 @@
       "when": 1791561412582,
       "tag": "0023_otp_rate_limits",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791570000000,
+      "tag": "0024_protection_claims",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1791580000000,
+      "tag": "0025_protection_claim_decisions",
+      "breakpoints": true
     }
   ]
 }

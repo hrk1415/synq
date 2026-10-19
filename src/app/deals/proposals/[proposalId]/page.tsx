@@ -17,6 +17,7 @@ import {
   Copy,
   Check,
   ExternalLink,
+  Shield,
   ShieldCheck,
   Info,
   Loader2,
@@ -383,6 +384,11 @@ export default function DealProposalPage() {
           <Badge variant="outline" className="border-blue-500/30 bg-blue-500/10 text-xs text-blue-400">
             Standard V2
           </Badge>
+          {proposal.protectionSelection === 'PREMIUM' && (
+            <Badge variant="outline" className="border-purple-500/40 bg-purple-500/10 text-xs text-purple-300 flex items-center gap-1">
+              <Shield className="h-3 w-3 text-purple-400" /> Premium Selected
+            </Badge>
+          )}
           {status === 'PENDING' && (
             <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-xs text-amber-400">
               Pending Review
@@ -696,7 +702,71 @@ export default function DealProposalPage() {
         </CardContent>
       </Card>
 
-      {/* Section 2: Proposal Details (Unsigned Application Metadata) */}
+      {/* Section 2: Protection Tier */}
+      <Card className="border border-white/75 bg-[#1B1B1B] shadow-xl">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <CardTitle className="text-base text-white flex items-center gap-2">
+                {proposal.protectionSelection === 'PREMIUM' ? (
+                  <>
+                    <Shield className="h-4 w-4 text-purple-400" />
+                    <span>Protection Tier: Premium Protection Selected</span>
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck className="h-4 w-4 text-zinc-400" />
+                    <span>Protection Tier: Standard Protection</span>
+                  </>
+                )}
+              </CardTitle>
+              <p className="text-xs text-[#A3A3A3]">
+                {proposal.protectionSelection === 'PREMIUM'
+                  ? 'The client requested decentralized milestone protection under Synq Premium Protection V1.1.'
+                  : 'Standard milestone escrow terms apply to deliverables in this proposal.'}
+              </p>
+            </div>
+            {proposal.protectionSelection === 'PREMIUM' ? (
+              <Badge variant="outline" className="border-purple-500/40 bg-purple-500/10 text-xs text-purple-300">
+                Awaiting Post-Funding Activation
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="border-white/20 bg-[#252525] text-xs text-zinc-400">
+                Standard
+              </Badge>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3 pt-0 text-xs">
+          {proposal.protectionSelection === 'PREMIUM' ? (
+            <div className="rounded-lg border border-purple-500/20 bg-purple-950/10 p-3.5 space-y-2 text-zinc-300">
+              <div className="flex items-start gap-2.5 text-purple-200">
+                <Info className="h-4 w-4 text-purple-400 shrink-0 mt-0.5" />
+                <div className="space-y-1.5">
+                  <p className="font-semibold text-purple-200">
+                    Important: Premium selection does not mean an active policy yet.
+                  </p>
+                  <p className="text-[#A3A3A3] text-[11px] leading-relaxed">
+                    If you accept this proposal, the deal contract clone is deployed on-chain. The client must first fund the full {formattedUsdc} USDC deal escrow. After escrow funding, the client activates the Premium Protection policy in a separate transaction.
+                  </p>
+                  <p className="text-[#A3A3A3] text-[11px] leading-relaxed">
+                    <span className="text-white font-medium">Freelancer Notice:</span> The 2% protection fee is paid exclusively by the client. The freelancer does not pay any fee.
+                  </p>
+                  <p className="text-[#A3A3A3] text-[11px] leading-relaxed">
+                    If activated, covered milestones that reach an expired refund may qualify for up to 20% supplemental recovery from the decentralized Protection Pool, subject to Protection Committee review.
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="text-[#A3A3A3] text-[11px] leading-relaxed">
+              Standard escrow rules apply. Client deposits 100% of escrow before work begins. Deliverables are approved by the client or resolved through the Resolution Committee in case of a dispute.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Section 3: Proposal Details (Unsigned Application Metadata) */}
       <Card className="border-zinc-800 bg-zinc-900/60 backdrop-blur-md">
         <CardHeader>
           <div className="flex items-center justify-between">

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAccount } from 'wagmi';
 import {
   ArrowLeft,
+  Shield,
   ShieldCheck,
   CheckCircle2,
   AlertTriangle,
@@ -41,6 +42,7 @@ import { formatUsdcAmount, ZERO_BYTES32 } from '@/lib/deals/v2';
 import { V2DealFunding } from '@/components/deals/V2DealFunding';
 import { V2MilestoneLifecycle } from '@/components/deals/V2MilestoneLifecycle';
 import { MilestoneSettledSplitCard } from '@/components/deals/settlement/MilestoneSettledSplitCard';
+import { useDealProtectionStatus } from '@/hooks/useDealProtectionStatus';
 
 interface V2DealDetailViewProps {
   dealAddress: `0x${string}`;
@@ -55,19 +57,31 @@ export function V2DealDetailView({ dealAddress }: V2DealDetailViewProps) {
   const [error, setError] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
+  // Authoritative Premium Protection V1.1 status
+  const {
+    status: protectionStatus,
+    policy: premiumPolicy,
+    isLoading: loadingProtection,
+    refetch: refetchProtection,
+  } = useDealProtectionStatus({
+    dealAddress,
+    refreshTrigger: dealData?.state,
+  });
+
   const loadDealData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
       const data = await readStandardV2DealData(dealAddress, sepoliaPublicClient);
       setDealData(data);
+      refetchProtection().catch(() => {});
     } catch (err: any) {
       console.error('[V2DealDetailView] Load error:', err);
       setError(err?.message || 'Unable to load current Deal state from chain');
     } finally {
       setLoading(false);
     }
-  }, [dealAddress]);
+  }, [dealAddress, refetchProtection]);
 
   useEffect(() => {
     loadDealData();
@@ -264,16 +278,60 @@ export function V2DealDetailView({ dealAddress }: V2DealDetailViewProps) {
               <div className="text-[10px] font-mono text-[#A3A3A3]">{shortenAddress(dealData.usdc)}</div>
             </div>
 
-            <div className="rounded-lg border border-white/20 bg-[#252525] p-2.5 space-y-0.5">
-              <span className="text-[10px] uppercase tracking-wider text-[#A3A3A3]">Protection Status</span>
-              <div className="font-semibold text-[#A3A3A3]">
-                {dealData.isProtected ? (
-                  <span className="text-emerald-400">Active Protection</span>
-                ) : (
-                  'Not enabled / Standard Deal'
+            <div
+              className={cn(
+                'rounded-lg border p-2.5 space-y-0.5 transition-colors',
+                protectionStatus === 'PREMIUM_ACTIVE'
+                  ? 'border-purple-500/40 bg-purple-950/20'
+                  : protectionStatus === 'PREMIUM_SELECTED'
+                  ? 'border-purple-500/20 bg-[#252525]'
+                  : 'border-white/20 bg-[#252525]'
+              )}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] uppercase tracking-wider text-[#A3A3A3]">Protection Tier</span>
+                {protectionStatus === 'PREMIUM_ACTIVE' && (
+                  <Badge className="bg-purple-500/20 text-purple-300 border-purple-500/40 text-[9px] px-1.5 py-0 font-medium">
+                    Active
+                  </Badge>
+                )}
+                {protectionStatus === 'PREMIUM_SELECTED' && (
+                  <Badge variant="outline" className="border-purple-500/40 bg-purple-500/10 text-purple-300 text-[9px] px-1.5 py-0 font-medium">
+                    Pending
+                  </Badge>
                 )}
               </div>
-              <div className="text-[10px] text-[#A3A3A3]/70">Protection module disabled in V2 Standard</div>
+              <div className="font-semibold text-white flex items-center gap-1.5 text-xs">
+                {protectionStatus === 'PREMIUM_ACTIVE' ? (
+                  <>
+                    <ShieldCheck className="h-3.5 w-3.5 text-purple-400 shrink-0" />
+                    <span className="text-purple-200">Premium Protection</span>
+                  </>
+                ) : protectionStatus === 'PREMIUM_SELECTED' ? (
+                  <>
+                    <Shield className="h-3.5 w-3.5 text-purple-400 shrink-0" />
+                    <span className="text-purple-200">Premium Selected</span>
+                  </>
+                ) : protectionStatus === 'VERIFYING' ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-purple-400 shrink-0" />
+                    <span className="text-zinc-400">Verifying Status…</span>
+                  </>
+                ) : (
+                  <span className="text-[#A3A3A3]">Standard Deal</span>
+                )}
+              </div>
+              <div className="text-[10px] text-[#A3A3A3]/70">
+                {protectionStatus === 'PREMIUM_ACTIVE'
+                  ? `${formatUsdcAmount(premiumPolicy?.maxCoverage ?? 0n)} USDC pool-backed coverage`
+                  : protectionStatus === 'PREMIUM_SELECTED'
+                  ? dealData.state === DealState.Draft
+                    ? 'Awaiting escrow funding before policy purchase'
+                    : 'Funded — policy activation pending in escrow section'
+                  : protectionStatus === 'VERIFYING'
+                  ? 'Checking on-chain policy'
+                  : 'Core milestone escrow rules apply'}
+              </div>
             </div>
 
             <div className="rounded-lg border border-white/20 bg-[#252525] p-2.5 space-y-0.5">
@@ -289,7 +347,12 @@ export function V2DealDetailView({ dealAddress }: V2DealDetailViewProps) {
       <V2DealFunding dealData={dealData} refetchDealData={loadDealData} />
 
       {/* Milestone Lifecycle Section */}
-      <V2MilestoneLifecycle dealData={dealData} refetchDealData={loadDealData} />
+      <V2MilestoneLifecycle
+        dealData={dealData}
+        refetchDealData={loadDealData}
+        policy={premiumPolicy}
+        loadingProtection={loadingProtection}
+      />
 
       {/* On-Chain Milestones Section */}
       <Card className="border border-white/75 bg-[#1B1B1B] shadow-xl">

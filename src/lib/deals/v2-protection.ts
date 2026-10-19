@@ -592,3 +592,111 @@ export function validatePremiumActivationPreflight(
 
   return { valid: true };
 }
+
+/**
+ * Authoritative protection tier status.
+ * - STANDARD: Deal/proposal has no Premium selection and no active policy.
+ * - PREMIUM_SELECTED: Premium selection was made, but no active V1.1 policy exists on-chain yet.
+ * - PREMIUM_ACTIVE: Active V1.1 policy verified on-chain.
+ * - VERIFYING: On-chain policy verification is in flight or pending resolution.
+ */
+export type ProtectionTierStatus =
+  | 'STANDARD'
+  | 'PREMIUM_SELECTED'
+  | 'PREMIUM_ACTIVE'
+  | 'VERIFYING';
+
+/**
+ * Resolves the authoritative protection tier status.
+ * Contract state is the ultimate authority: an active verified policy always yields PREMIUM_ACTIVE.
+ */
+export function resolveProtectionTierStatus(params: {
+  protectionSelection?: string | null;
+  policy?: PremiumPolicyState | null;
+  isVerifying?: boolean;
+}): ProtectionTierStatus {
+  // 1. If an on-chain policy is active and verified, that is the ultimate authority
+  if (params.policy?.active && params.policy.purchasedAt > 0n) {
+    return 'PREMIUM_ACTIVE';
+  }
+
+  // 2. If on-chain verification is currently in progress
+  if (params.isVerifying) {
+    return 'VERIFYING';
+  }
+
+  // 3. If proposal selection is explicitly PREMIUM
+  if (params.protectionSelection === 'PREMIUM') {
+    return 'PREMIUM_SELECTED';
+  }
+
+  // 4. Default to STANDARD
+  return 'STANDARD';
+}
+
+/**
+ * Batch reads V1.1 policies for a list of deal addresses using a single multicall.
+ * Bounded and efficient: protects public RPC rate limits by avoiding per-card queries.
+ */
+export async function batchReadDealPremiumPolicies(
+  publicClient: any,
+  managerAddress: string | null | undefined,
+  dealAddresses: string[]
+): Promise<Map<string, PremiumPolicyState>> {
+  const result = new Map<string, PremiumPolicyState>();
+  if (!isValidContractAddress(managerAddress) || !dealAddresses || dealAddresses.length === 0) {
+    return result;
+  }
+
+  const checksummedManager = getAddress(managerAddress.toLowerCase());
+  const validAddresses: `0x${string}`[] = [];
+
+  for (const addr of dealAddresses) {
+    if (isValidContractAddress(addr)) {
+      validAddresses.push(getAddress(addr.toLowerCase()));
+    }
+  }
+
+  if (validAddresses.length === 0) return result;
+
+  try {
+    if (typeof publicClient?.multicall === 'function') {
+      const calls = validAddresses.map((addr) => ({
+        address: checksummedManager,
+        abi: synqPremiumProtectionManagerV1_1ABI,
+        functionName: 'getPolicy',
+        args: [addr],
+      }));
+
+      const multicallResults = await publicClient.multicall({
+        contracts: calls,
+        allowFailure: true,
+      });
+
+      if (Array.isArray(multicallResults)) {
+        multicallResults.forEach((res: any, idx: number) => {
+          const addrKey = validAddresses[idx].toLowerCase();
+          const raw = res?.status === 'success' ? res.result : (res && typeof res === 'object' && 'purchasedAt' in res ? res : null);
+          if (raw) {
+            result.set(addrKey, {
+              client: isAddress(raw.client) ? getAddress(raw.client) : undefined,
+              purchasedAt: BigInt(raw.purchasedAt || 0),
+              coveredBitmap: Number(raw.coveredBitmap || 0),
+              active: Boolean(raw.active),
+              eligiblePrincipal: BigInt(raw.eligiblePrincipal || 0),
+              premiumPaid: BigInt(raw.premiumPaid || 0),
+              maxCoverage: BigInt(raw.maxCoverage || 0),
+              totalPaid: BigInt(raw.totalPaid || 0),
+              version: 'V1_1',
+            });
+          }
+        });
+        return result;
+      }
+    }
+  } catch (err) {
+    console.warn('[v2-protection] Multicall batch read policies failed:', err);
+  }
+
+  return result;
+}

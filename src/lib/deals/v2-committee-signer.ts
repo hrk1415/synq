@@ -1,9 +1,13 @@
 import { isAddress, getAddress } from 'viem';
-import { SYNQ_V2_SEPOLIA_CONFIG } from '@/lib/contracts/addresses';
+import { SYNQ_V2_SEPOLIA_CONFIG, getSynqPremiumConfig } from '@/lib/contracts/addresses';
 import {
   type ResolutionReportPhase,
   synqResolutionCommitteeReadABI,
 } from '@/lib/deals/v2-resolution-report';
+import {
+  CANONICAL_PROTECTION_COMMITTEE_SEPOLIA,
+  synqProtectionCommitteeFullABI,
+} from '@/lib/deals/v2-protection-committee';
 import { MilestoneStatus, type PublicClientLike } from '@/lib/deals/v2-deal';
 import { sepoliaPublicClient } from '@/lib/chain';
 
@@ -32,26 +36,37 @@ export interface CommitteeQueueItem {
 export interface CommitteeSignerStatus {
   isPrimarySigner: boolean;
   isEmergencySigner: boolean;
+  isProtectionSigner: boolean;
   isAnySigner: boolean;
 }
 
 /**
- * Checks on-chain whether a wallet is an active signer on Primary and/or Emergency resolvers.
+ * Checks on-chain whether a wallet is an active signer on Primary, Emergency,
+ * or Protection Committee resolvers.
  * Pure contract read — completely client-safe (no DB imports).
+ * Fails closed on any RPC or network error.
  */
 export async function checkCommitteeSignerStatus(
   walletAddress: string,
   publicClient: PublicClientLike = sepoliaPublicClient
 ): Promise<CommitteeSignerStatus> {
   if (!walletAddress || !isAddress(walletAddress)) {
-    return { isPrimarySigner: false, isEmergencySigner: false, isAnySigner: false };
+    return {
+      isPrimarySigner: false,
+      isEmergencySigner: false,
+      isProtectionSigner: false,
+      isAnySigner: false,
+    };
   }
 
   const checksummed = getAddress(walletAddress);
   const primaryResolver = SYNQ_V2_SEPOLIA_CONFIG.primaryResolver as `0x${string}`;
   const emergencyResolver = SYNQ_V2_SEPOLIA_CONFIG.emergencyResolver as `0x${string}`;
+  const protectionCommittee = (
+    getSynqPremiumConfig().committee || CANONICAL_PROTECTION_COMMITTEE_SEPOLIA
+  ) as `0x${string}`;
 
-  const [isPrimary, isEmergency] = await Promise.all([
+  const [isPrimary, isEmergency, isProtection] = await Promise.all([
     publicClient.readContract({
       address: primaryResolver,
       abi: synqResolutionCommitteeReadABI,
@@ -64,11 +79,18 @@ export async function checkCommitteeSignerStatus(
       functionName: 'isSigner',
       args: [checksummed],
     }).catch(() => false) as Promise<boolean>,
+    publicClient.readContract({
+      address: protectionCommittee,
+      abi: synqProtectionCommitteeFullABI,
+      functionName: 'isSigner',
+      args: [checksummed],
+    }).catch(() => false) as Promise<boolean>,
   ]);
 
   return {
     isPrimarySigner: Boolean(isPrimary),
     isEmergencySigner: Boolean(isEmergency),
-    isAnySigner: Boolean(isPrimary || isEmergency),
+    isProtectionSigner: Boolean(isProtection),
+    isAnySigner: Boolean(isPrimary || isEmergency || isProtection),
   };
 }
