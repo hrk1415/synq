@@ -536,9 +536,7 @@ export async function createCommitteeAuthorization(params: {
     });
 
     if (latestNonceUsedOnChain) {
-      if (latestAuth.status !== 'executed') {
-        await authRepo.updateAuthStatus(latestAuth.id, 'executed');
-      }
+      await authRepo.updateAuthStatus(latestAuth.id, 'executed');
       throw new CommitteeAuthConflictError(
         `Resolution authorization nonce ${latestAuth.resolutionNonce} has already been consumed on-chain. Resolution is executed; recovery prohibited.`
       );
