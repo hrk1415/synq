@@ -1111,10 +1111,8 @@ export async function submitProtectionDecisionSignature(params: {
   let thresholdBundle: ReturnType<typeof serializeProtectionThresholdBundleForJson> | undefined;
 
   if (distinctSigners.size >= 2) {
-    if (decision.status !== 'threshold_ready') {
-      updatedStatus = 'threshold_ready';
-      await repo.updateDecisionStatus(decision.id, 'threshold_ready');
-    }
+    updatedStatus = 'threshold_ready';
+    await repo.updateDecisionStatus(decision.id, 'threshold_ready');
 
     const [first, second] = allSigs;
     const rawBundle = await verifyProtectionThresholdBundle({
