@@ -16,7 +16,7 @@ import { useSepoliaNetwork } from '@/hooks/useSepoliaNetwork';
 import type { CommitteeQueueItem } from '@/lib/deals/committee-queue';
 import { getCommitteeTimingInfo, CommitteeTimingBadge } from '@/components/committee/CommitteeQueue';
 import type { CanonicalResolutionReportV1 } from '@/lib/deals/v2-resolution-report';
-import type { MilestoneDisputeRow, MilestoneResolutionReportRow } from '@/db/schema';
+import type { MilestoneDisputeRow, MilestoneResolutionReportRow, ResolutionReportPhase } from '@/db/schema';
 import {
   Scale,
   AlertTriangle,
