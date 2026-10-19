@@ -932,7 +932,7 @@ export default function WalletStatus({ onOpenChange, className }: WalletStatusPr
 
     let currentChainId: number | null = null;
     try {
-      currentChainId = (await getConnectorChainId(targetConnector, config)) ?? null;
+      currentChainId = (await getConnectorChainId(targetConnector)) ?? null;
     } catch {
       // ignore
     }
