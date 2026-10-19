@@ -24,11 +24,11 @@ export const HUB_MODULES: HubModule[] = [
     id: 'agent-controller',
     title: 'Agent Controller',
     description:
-      'Configure AI agent credentials, model presets, and operational boundaries. Tooling is currently undergoing scheduled backend upgrades.',
+      'Explore the future of AI-assisted deal monitoring, agent permissions, and workflow automation.',
     href: '/agent-controller',
     icon: Cpu,
     cta: 'Open Agent Controller',
-    badge: 'AI Tooling',
+    badge: 'Coming Soon',
   },
   {
     id: 'swap',

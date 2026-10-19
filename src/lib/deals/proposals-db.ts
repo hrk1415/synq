@@ -46,7 +46,7 @@ import {
   validateStandardV2UxRules,
 } from '@/lib/deals/v2';
 import { normalizeWallet } from '@/lib/utils';
-import { eq, and, or, inArray, isNotNull } from 'drizzle-orm';
+import { eq, and, or, inArray, isNotNull, desc, sql } from 'drizzle-orm';
 import { synqFactoryV2ABI } from '@/lib/contracts/abis';
 import { sepoliaPublicClient } from '@/lib/chain';
 import { canonicalizeConversationPair } from '@/lib/conversation-pair';
@@ -540,12 +540,62 @@ export function serializeDealProposal(row: DealProposalRow): SerializedDealPropo
   };
 }
 
+export interface ProposalPaginationOptions {
+  limit?: number;
+  offset?: number;
+}
+
+export interface PaginatedPendingProposals {
+  proposals: DealProposalRow[];
+  total: number;
+}
+
+export interface PendingProposalCardData {
+  proposalId: string;
+  chainId: number;
+  factoryAddress: string;
+  clientWallet: string;
+  freelancerWallet: string;
+  title: string;
+  totalAmount: string;
+  milestonesCount: number;
+  protectionSelection: 'STANDARD' | 'PREMIUM';
+  proposalNonce: string;
+  expiry: string;
+  cachedStatus: string;
+  dealAddress: string | null;
+  createdAt: string;
+}
+
+export function serializePendingProposalCard(row: DealProposalRow): PendingProposalCardData {
+  return {
+    proposalId: row.proposalId,
+    chainId: row.chainId,
+    factoryAddress: row.factoryAddress,
+    clientWallet: row.clientWallet,
+    freelancerWallet: row.freelancerWallet,
+    title: row.title,
+    totalAmount: row.totalAmount.toString(),
+    milestonesCount: Array.isArray(row.milestones) ? row.milestones.length : 0,
+    protectionSelection: (row.protectionSelection as 'STANDARD' | 'PREMIUM') || 'STANDARD',
+    proposalNonce: row.proposalNonce.toString(),
+    expiry: row.expiry.toString(),
+    cachedStatus: row.cachedStatus,
+    dealAddress: row.dealAddress ?? null,
+    createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Database Operations / Repository Pattern
 // ---------------------------------------------------------------------------
 
 export interface IDealProposalRepository {
   getById(proposalId: string): Promise<DealProposalRow | null>;
+  getPendingProposalsForParticipant(
+    userWallet: string,
+    options?: ProposalPaginationOptions,
+  ): Promise<PaginatedPendingProposals>;
   getByClientNonce(
     chainId: number,
     factoryAddress: string,
@@ -639,6 +689,44 @@ export class DrizzleDealProposalRepository implements IDealProposalRepository {
         ),
       );
     return rows;
+  }
+
+  async getPendingProposalsForParticipant(
+    userWallet: string,
+    options: ProposalPaginationOptions = {},
+  ): Promise<PaginatedPendingProposals> {
+    const db = getDb();
+    if (!db) {
+      return { proposals: [], total: 0 };
+    }
+    const normUser = normalizeWallet(userWallet);
+    const limit = Math.min(Math.max(1, options.limit ?? 20), 50);
+    const offset = Math.max(0, options.offset ?? 0);
+
+    const whereClause = and(
+      or(
+        eq(dealProposals.clientWallet, normUser),
+        eq(dealProposals.freelancerWallet, normUser),
+      ),
+      eq(dealProposals.cachedStatus, 'PENDING'),
+    );
+
+    const [countResult] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(dealProposals)
+      .where(whereClause);
+
+    const total = Number(countResult?.count || 0);
+
+    const rows = await db
+      .select()
+      .from(dealProposals)
+      .where(whereClause)
+      .orderBy(desc(dealProposals.createdAt), desc(dealProposals.proposalId))
+      .limit(limit)
+      .offset(offset);
+
+    return { proposals: rows, total };
   }
 
   async getAcceptedDeals(chainId?: number): Promise<DealProposalRow[]> {
@@ -896,6 +984,38 @@ export class InMemoryDealProposalRepository implements IDealProposalRepository {
     return results;
   }
 
+  async getPendingProposalsForParticipant(
+    userWallet: string,
+    options: ProposalPaginationOptions = {},
+  ): Promise<PaginatedPendingProposals> {
+    const normUser = normalizeWallet(userWallet);
+    const limit = Math.min(Math.max(1, options.limit ?? 20), 50);
+    const offset = Math.max(0, options.offset ?? 0);
+
+    const matches: DealProposalRow[] = [];
+    for (const record of this.records.values()) {
+      if (
+        record.cachedStatus === 'PENDING' &&
+        (normalizeWallet(record.clientWallet) === normUser || normalizeWallet(record.freelancerWallet) === normUser)
+      ) {
+        matches.push({ ...record });
+      }
+    }
+
+    matches.sort((a, b) => {
+      const timeA = a.createdAt instanceof Date ? a.createdAt.getTime() : new Date(a.createdAt).getTime();
+      const timeB = b.createdAt instanceof Date ? b.createdAt.getTime() : new Date(b.createdAt).getTime();
+      if (timeB !== timeA) {
+        return timeB - timeA;
+      }
+      return b.proposalId.localeCompare(a.proposalId);
+    });
+
+    const total = matches.length;
+    const paginated = matches.slice(offset, offset + limit);
+    return { proposals: paginated, total };
+  }
+
   async getAcceptedDeals(chainId?: number): Promise<DealProposalRow[]> {
     const results: DealProposalRow[] = [];
     for (const record of this.records.values()) {
@@ -1119,6 +1239,14 @@ export async function getDealProposalsByDealAddresses(
   repo: IDealProposalRepository = activeRepo,
 ): Promise<DealProposalRow[]> {
   return repo.getByDealAddressesForParticipant(dealAddresses, userWallet);
+}
+
+export async function getPendingProposalsForParticipant(
+  userWallet: string,
+  options?: ProposalPaginationOptions,
+  repo: IDealProposalRepository = activeRepo,
+): Promise<PaginatedPendingProposals> {
+  return repo.getPendingProposalsForParticipant(userWallet, options);
 }
 
 export async function getDealProposalByClientNonce(
