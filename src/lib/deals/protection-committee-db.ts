@@ -1382,6 +1382,12 @@ export async function reconcileProtectionDecision(params: {
     }
   }
 
+  if (!verifiedTxHash) {
+    throw new ProtectionCommitteeExecutionError(
+      'Transaction hash could not be verified for execution reconciliation'
+    );
+  }
+
   // Update record to executed
   const executedRecord = await repo.updateDecisionExecution(decision.id, {
     executionTxHash: verifiedTxHash,
