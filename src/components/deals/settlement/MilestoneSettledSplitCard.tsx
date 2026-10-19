@@ -70,10 +70,18 @@ async function fetchMilestoneSettledLog(
   dealAddress: `0x${string}`,
   milestoneIndex: number
 ): Promise<VerifiedSettlementLog | null> {
+  const targetMilestoneId = BigInt(milestoneIndex);
+
   const parseLog = (log: any): VerifiedSettlementLog | null => {
     if (!log || !log.args) return null;
     const args = log.args as any;
-    if (args.paidToFreelancer !== undefined && args.refundedToClient !== undefined) {
+    if (
+      args.milestoneId !== undefined &&
+      args.milestoneId !== null &&
+      BigInt(args.milestoneId) === targetMilestoneId &&
+      args.paidToFreelancer !== undefined &&
+      args.refundedToClient !== undefined
+    ) {
       return {
         paidToFreelancer: BigInt(args.paidToFreelancer),
         refundedToClient: BigInt(args.refundedToClient),
@@ -90,15 +98,15 @@ async function fetchMilestoneSettledLog(
       address: dealAddress,
       abi: synqDealV1ABI,
       eventName: 'MilestoneSettled',
-      args: {
-        milestoneId: BigInt(milestoneIndex),
-      },
       fromBlock: V2_DEPLOYMENT_BLOCK,
       toBlock: 'latest',
     });
 
     if (logs && logs.length > 0) {
-      return parseLog(logs[logs.length - 1]);
+      for (let i = logs.length - 1; i >= 0; i--) {
+        const parsed = parseLog(logs[i]);
+        if (parsed) return parsed;
+      }
     }
     return null;
   } catch (err: any) {
@@ -132,15 +140,15 @@ async function fetchMilestoneSettledLog(
           address: dealAddress,
           abi: synqDealV1ABI,
           eventName: 'MilestoneSettled',
-          args: {
-            milestoneId: BigInt(milestoneIndex),
-          },
           fromBlock: currentFrom,
           toBlock: currentTo,
         });
 
         if (chunkLogs && chunkLogs.length > 0) {
-          return parseLog(chunkLogs[chunkLogs.length - 1]);
+          for (let i = chunkLogs.length - 1; i >= 0; i--) {
+            const parsed = parseLog(chunkLogs[i]);
+            if (parsed) return parsed;
+          }
         }
 
         if (currentFrom <= V2_DEPLOYMENT_BLOCK) break;
