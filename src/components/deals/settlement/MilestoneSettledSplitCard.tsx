@@ -12,12 +12,11 @@ import {
   Loader2,
   Info,
 } from 'lucide-react';
-import { isAddress } from 'viem';
+import { isAddress, parseAbiItem } from 'viem';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { sepoliaPublicClient } from '@/lib/chain';
-import { synqDealV1ABI } from '@/lib/contracts/abis';
 import {
   MilestoneStatus,
   StandardV2OnChainMilestone,
@@ -66,6 +65,10 @@ const V2_DEPLOYMENT_BLOCK = 11833190n;
 const RPC_CHUNK_SIZE = 20000n;
 const MAX_BACKWARD_CHUNKS = 25;
 
+const milestoneSettledEvent = parseAbiItem(
+  'event MilestoneSettled(uint256 indexed milestoneId, uint256 paidToFreelancer, uint256 refundedToClient, uint8 settlementType)'
+);
+
 async function fetchMilestoneSettledLog(
   dealAddress: `0x${string}`,
   milestoneIndex: number
@@ -96,8 +99,7 @@ async function fetchMilestoneSettledLog(
   try {
     const logs = await sepoliaPublicClient.getLogs({
       address: dealAddress,
-      abi: synqDealV1ABI,
-      eventName: 'MilestoneSettled',
+      event: milestoneSettledEvent,
       fromBlock: V2_DEPLOYMENT_BLOCK,
       toBlock: 'latest',
     });
@@ -138,8 +140,7 @@ async function fetchMilestoneSettledLog(
 
         const chunkLogs = await sepoliaPublicClient.getLogs({
           address: dealAddress,
-          abi: synqDealV1ABI,
-          eventName: 'MilestoneSettled',
+          event: milestoneSettledEvent,
           fromBlock: currentFrom,
           toBlock: currentTo,
         });
