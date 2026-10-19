@@ -9,6 +9,8 @@ import { shortenAddress } from '@/lib/utils';
 import { formatUsdcAmount } from '@/lib/deals/v2';
 import { useAuthSession } from '@/hooks/useAuthSession';
 import type { PendingSyncItem } from '@/lib/deals/committee-pending-sync';
+import type { ResolutionReportPhase } from '@/db/schema';
+import type { HighlightedCaseTarget } from './CommitteeHistory';
 import {
   RotateCcw,
   Loader2,
@@ -26,7 +28,7 @@ export interface ReconciledConfirmation {
   authorizationId: string;
   dealAddress: string;
   milestoneId: number;
-  phase: string;
+  phase: ResolutionReportPhase;
   phaseLabel: string;
   resolutionNonce: string;
   freelancerAmount: string;
@@ -41,7 +43,7 @@ interface CommitteePendingSyncProps {
   isLoading: boolean;
   error?: string | null;
   onRefresh: () => void;
-  onViewInHistory?: (caseInfo: { dealAddress: string; milestoneId: number; phase: string }) => void;
+  onViewInHistory?: (caseInfo: HighlightedCaseTarget) => void;
   connectedWallet?: string | null;
 }
 
