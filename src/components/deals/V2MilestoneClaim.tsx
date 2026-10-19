@@ -1138,7 +1138,7 @@ export function V2MilestoneClaim({
 
                 {payoutTxHash && (
                   <a
-                    href={getSepoliaExplorerUrl(payoutTxHash, 'tx')}
+                    href={getSepoliaExplorerUrl('tx', payoutTxHash)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-emerald-400 hover:text-emerald-300 inline-flex items-center gap-1 font-mono text-[11px] underline underline-offset-2"
