@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Scale,
   Handshake,
@@ -70,6 +70,9 @@ export interface ActiveDisputeWorkspaceProps {
   onCancelProposal: (proposal: MutualSettlementProposalView) => void;
   onRequestReconsideration: () => void;
   onExecuteResolution: () => void;
+  onAgreeToCommitteeSplit?: () => void;
+  agreeToSplitInProgress?: boolean;
+  agreeToSplitError?: string | null;
   className?: string;
 }
 
@@ -113,6 +116,21 @@ function formatCountdown(diffSeconds: bigint | null | undefined): string {
   return `${hours.toString().padStart(2, '0')}h ${minutes.toString().padStart(2, '0')}m ${secs.toString().padStart(2, '0')}s`;
 }
 
+export function parseTimestampSec(val: Date | string | number | undefined | null): number | null {
+  if (!val) return null;
+  if (typeof val === 'number') {
+    if (isNaN(val) || val <= 0) return null;
+    return val > 1e11 ? Math.floor(val / 1000) : Math.floor(val);
+  }
+  const d = typeof val === 'string' ? new Date(val) : val;
+  if (d instanceof Date) {
+    const ms = d.getTime();
+    if (isNaN(ms) || ms <= 0) return null;
+    return Math.floor(ms / 1000);
+  }
+  return null;
+}
+
 export function ActiveDisputeWorkspace({
   dealAddress,
   currentIndex,
@@ -150,6 +168,9 @@ export function ActiveDisputeWorkspace({
   onCancelProposal,
   onRequestReconsideration,
   onExecuteResolution,
+  onAgreeToCommitteeSplit,
+  agreeToSplitInProgress,
+  agreeToSplitError,
   className,
 }: ActiveDisputeWorkspaceProps) {
   const [showReportDrawer, setShowReportDrawer] = useState<boolean>(false);
@@ -159,6 +180,35 @@ export function ActiveDisputeWorkspace({
   const isResolutionProposed = milestone.status === MilestoneStatus.ResolutionProposed;
   const isFinalReview = milestone.status === MilestoneStatus.FinalReview;
   const isSettledSplit = milestone.status === MilestoneStatus.SettledSplit;
+
+  // Detect matching active mutual settlement proposal for the exact committee split
+  const matchingCommitteeProposal = useMemo(() => {
+    if (!resolutionProposal || !proposals) return null;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const proposedAtSec = Number(resolutionProposal.proposedAt);
+
+    return (
+      proposals.find((p) => {
+        if (p.status !== 'pending' || p.isExpired || Number(p.validUntil) < nowSec) {
+          return false;
+        }
+        if (
+          BigInt(p.freelancerAmount) !== resolutionProposal.freelancerAmount ||
+          BigInt(p.clientAmount) !== resolutionProposal.clientAmount
+        ) {
+          return false;
+        }
+
+        // Conservative timestamp check: proposal must have been created at or after the committee resolution
+        const createdAtSec = parseTimestampSec(p.createdAt);
+        if (createdAtSec === null || (proposedAtSec > 0 && createdAtSec < proposedAtSec)) {
+          return false;
+        }
+
+        return true;
+      }) || null
+    );
+  }, [resolutionProposal, proposals]);
 
   // ---------------------------------------------------------------------------
   // Render Improved Mutual Settlement Proposals List
@@ -561,12 +611,113 @@ export function ActiveDisputeWorkspace({
                 </div>
               </div>
 
-              {/* Reconsideration Window Panel */}
+              {/* Early Agreement with Committee Split (Section 2) */}
+              {isParticipant && !isReconsiderationWindowClosed && (
+                <div className="rounded-lg border border-purple-500/30 bg-purple-950/20 p-3.5 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 font-semibold text-xs text-white">
+                      <Handshake className="h-4 w-4 text-purple-400" />
+                      <span>Early Agreement Option</span>
+                    </div>
+                    {matchingCommitteeProposal && (
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          'text-[10px]',
+                          matchingCommitteeProposal.proposerWallet.toLowerCase() === currentUserAddress?.toLowerCase()
+                            ? 'border-purple-500/40 text-purple-300 bg-purple-500/10'
+                            : 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10'
+                        )}
+                      >
+                        {matchingCommitteeProposal.proposerWallet.toLowerCase() === currentUserAddress?.toLowerCase()
+                          ? 'You Agreed • Awaiting Counterparty'
+                          : 'Counterparty Agreed • Ready to Settle'}
+                      </Badge>
+                    )}
+                  </div>
+
+                  <p className="text-[11px] text-zinc-300 leading-relaxed">
+                    {matchingCommitteeProposal
+                      ? matchingCommitteeProposal.proposerWallet.toLowerCase() === currentUserAddress?.toLowerCase()
+                        ? 'You have signed an agreement accepting the committee’s proposed split. If the other participant accepts it, this milestone will settle immediately on-chain.'
+                        : 'The other participant has agreed to the committee’s proposed split. You can accept now to settle this milestone immediately on-chain without waiting for the 72-hour review window.'
+                      : 'Satisfied with the committee’s split? You can agree to it now. If both participants agree, the funds settle immediately on-chain via mutual settlement without waiting for the 72-hour window.'}
+                  </p>
+
+                  {agreeToSplitError && (
+                    <div className="rounded-lg border border-red-500/40 bg-red-950/30 p-2 text-xs text-red-300 flex items-start gap-1.5">
+                      <AlertTriangle className="h-3.5 w-3.5 text-red-400 shrink-0 mt-0.5" />
+                      <span>{agreeToSplitError}</span>
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2 pt-1">
+                    {matchingCommitteeProposal ? (
+                      matchingCommitteeProposal.proposerWallet.toLowerCase() !== currentUserAddress?.toLowerCase() ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="h-8 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-medium flex items-center gap-1.5"
+                          onClick={() => onAcceptProposal(matchingCommitteeProposal)}
+                          disabled={actionInProgress}
+                        >
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          <span>Accept Split & Settle Immediately</span>
+                        </Button>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled
+                            className="h-8 text-xs bg-purple-900/40 border border-purple-500/30 text-purple-300 opacity-90 cursor-default flex items-center gap-1.5"
+                          >
+                            <Check className="h-3.5 w-3.5 text-purple-400" />
+                            <span>Agreed to Committee Split</span>
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-8 text-[11px] text-zinc-400 hover:text-red-300 hover:bg-red-950/20"
+                            onClick={() => onCancelProposal(matchingCommitteeProposal)}
+                            disabled={actionInProgress}
+                          >
+                            Withdraw Agreement
+                          </Button>
+                        </div>
+                      )
+                    ) : (
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="h-8 text-xs bg-purple-600 hover:bg-purple-500 text-white font-medium flex items-center gap-1.5"
+                        onClick={onAgreeToCommitteeSplit}
+                        disabled={agreeToSplitInProgress || actionInProgress}
+                      >
+                        {agreeToSplitInProgress ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            <span>Signing Agreement…</span>
+                          </>
+                        ) : (
+                          <>
+                            <Handshake className="h-3.5 w-3.5" />
+                            <span>Agree to Committee Split</span>
+                          </>
+                        )}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Reconsideration Window Panel (Section 1 & 4) */}
               <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3 space-y-2 text-xs">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-zinc-200 flex items-center gap-1.5 font-semibold">
                     <Clock className="h-3.5 w-3.5 text-purple-400" />
-                    <span>{isReconsiderationWindowClosed ? 'Reconsideration Period Closed' : '72-Hour Reconsideration Window'}</span>
+                    <span>{isReconsiderationWindowClosed ? 'Reconsideration Period Ended' : '72-Hour Reconsideration Window'}</span>
                   </span>
 
                   <div>
@@ -580,7 +731,7 @@ export function ActiveDisputeWorkspace({
                       </Badge>
                     ) : (
                       <Badge variant="outline" className="border-purple-500/40 bg-purple-500/10 text-purple-300 text-[10px]">
-                        Window Active
+                        Appeal Window Active
                       </Badge>
                     )}
                   </div>
@@ -603,8 +754,8 @@ export function ActiveDisputeWorkspace({
 
                 <p className="text-[11px] text-zinc-400 leading-relaxed pt-0.5">
                   {isReconsiderationWindowClosed
-                    ? 'The 72-hour reconsideration period has concluded without an appeal. Either participant can now execute this binding distribution on-chain.'
-                    : 'During the review window, either party can request final reconsideration. If neither does, the resolution becomes executable after the deadline. A transaction is still required to release the funds.'}
+                    ? 'The 72-hour reconsideration period has concluded without an appeal. The committee’s Initial Resolution can now be finalized on-chain by either participant. No further committee decision is required.'
+                    : 'Reconsideration is optional. If neither participant appeals before the deadline, this proposed resolution becomes final and ready to execute on-chain. If you agree with the split, no appeal is required.'}
                 </p>
               </div>
 
@@ -625,30 +776,46 @@ export function ActiveDisputeWorkspace({
                 )}
 
                 <div className="flex items-center gap-2 ml-auto">
+                  {/* Secondary/Outline Reconsideration (Appeal) Action */}
                   {canRequestReconsideration && (
                     <Button
                       type="button"
                       size="sm"
                       variant="outline"
-                      className="h-8 text-xs border-amber-500/40 text-amber-300 hover:bg-amber-950/40 hover:border-amber-500/70 font-medium"
+                      className="h-8 text-xs border-zinc-700 text-zinc-400 hover:text-amber-300 hover:border-amber-500/60 hover:bg-amber-950/20 font-normal flex items-center gap-1"
                       onClick={onRequestReconsideration}
                       disabled={actionInProgress}
                     >
-                      <AlertTriangle className="h-3.5 w-3.5 mr-1" />
-                      <span>Request Final Reconsideration</span>
+                      <AlertTriangle className="h-3 w-3" />
+                      <span>Request Reconsideration (Appeal)</span>
                     </Button>
                   )}
 
-                  {canExecuteResolution && (
+                  {/* Prominent Execute Resolution when closed, or disabled indicator while window active */}
+                  {canExecuteResolution ? (
                     <Button
                       type="button"
                       size="sm"
-                      className="h-8 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-medium flex items-center gap-1.5"
+                      className="h-8 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-medium flex items-center gap-1.5 shadow-sm"
                       onClick={onExecuteResolution}
                       disabled={actionInProgress}
                     >
                       <CheckCircle2 className="h-3.5 w-3.5" />
                       <span>Execute Resolution</span>
+                    </Button>
+                  ) : !isReconsiderationWindowClosed && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled
+                      className="h-8 text-xs bg-zinc-800/80 border border-zinc-700/60 text-zinc-400 cursor-not-allowed flex items-center gap-1.5 opacity-80"
+                      title="Unlocks automatically when the 72-hour reconsideration period concludes without an appeal."
+                    >
+                      <Clock className="h-3 w-3 text-zinc-500" />
+                      <span>
+                        Execute Resolution (Unlocks in{' '}
+                        {formatCountdown(remainingReconsiderationSeconds)})
+                      </span>
                     </Button>
                   )}
                 </div>

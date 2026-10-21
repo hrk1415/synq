@@ -62,7 +62,7 @@ import {
 import type { MutualSettlementProposalView } from '@/lib/deals/mutual-settlements-db';
 import { DisputeOverviewHeader } from '@/components/deals/dispute/DisputeOverviewHeader';
 import { PaymentDisputeResolutionSection } from '@/components/deals/dispute/PaymentDisputeResolutionSection';
-import { ActiveDisputeWorkspace } from '@/components/deals/dispute/ActiveDisputeWorkspace';
+import { ActiveDisputeWorkspace, parseTimestampSec } from '@/components/deals/dispute/ActiveDisputeWorkspace';
 
 interface V2MilestoneDisputeProps {
   dealData: StandardV2DealData;
@@ -153,6 +153,10 @@ export function V2MilestoneDispute({
   const [proposalDurationHours, setProposalDurationHours] = useState<number>(24);
   const [proposeError, setProposeError] = useState<string | null>(null);
   const [proposeInProgress, setProposeInProgress] = useState<boolean>(false);
+
+  // Early Agreement to Committee Split State
+  const [agreeToSplitInProgress, setAgreeToSplitInProgress] = useState<boolean>(false);
+  const [agreeToSplitError, setAgreeToSplitError] = useState<string | null>(null);
 
   // Copy helper
   const [copiedHash, setCopiedHash] = useState(false);
@@ -865,6 +869,162 @@ export function V2MilestoneDispute({
       }
     } finally {
       setProposeInProgress(false);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // ACTION: Agree to Committee Split (Early Settlement Offer)
+  // ---------------------------------------------------------------------------
+  const handleAgreeToCommitteeSplit = async () => {
+    if (!address || !resolutionProposal) return;
+
+    const flBaseUnits = resolutionProposal.freelancerAmount;
+    const clBaseUnits = resolutionProposal.clientAmount;
+    const milestoneAmount = BigInt(currentMilestone.amount);
+
+    if (flBaseUnits + clBaseUnits !== milestoneAmount) {
+      setAgreeToSplitError('Resolution proposal split does not sum to milestone escrow amount.');
+      return;
+    }
+
+    // Default duration: 72 hours matching reconsideration window duration
+    const validUntilSec = BigInt(Math.floor(Date.now() / 1000) + 72 * 3600);
+
+    setAgreeToSplitInProgress(true);
+    setAgreeToSplitError(null);
+
+    try {
+      await ensureSepolia();
+
+      const authWallet = await ensureAuthenticated();
+      if (!authWallet) {
+        setAgreeToSplitError('Please sign in with your connected wallet session to continue.');
+        return;
+      }
+
+      // 1. Fresh read to verify Deal & Milestone eligibility on-chain
+      const freshDeal = await readStandardV2DealData(dealData.dealAddress, sepoliaPublicClient);
+      if (freshDeal.state !== DealState.Active) {
+        throw new Error('Deal is no longer in Active state on-chain.');
+      }
+      const freshMilestone = freshDeal.milestones[currentIndex];
+      if (freshMilestone.status !== MilestoneStatus.ResolutionProposed) {
+        throw new Error('Milestone is no longer in ResolutionProposed status on-chain.');
+      }
+
+      // 2. Prevent duplicate proposal if active match already exists from this user
+      const nowSec = Math.floor(Date.now() / 1000);
+      const proposedAtSec = Number(resolutionProposal.proposedAt);
+      const existingMatch = proposals.find((p) => {
+        if (p.proposerWallet.toLowerCase() !== address.toLowerCase()) return false;
+        if (p.status !== 'pending' || p.isExpired || Number(p.validUntil) < nowSec) return false;
+        if (
+          BigInt(p.freelancerAmount) !== flBaseUnits ||
+          BigInt(p.clientAmount) !== clBaseUnits
+        ) {
+          return false;
+        }
+
+        // Conservative timestamp check: must be at or after the on-chain resolution proposal
+        const createdAtSec = parseTimestampSec(p.createdAt);
+        if (createdAtSec === null || (proposedAtSec > 0 && createdAtSec < proposedAtSec)) {
+          return false;
+        }
+
+        return true;
+      });
+      if (existingMatch) {
+        throw new Error('You have already submitted an active early agreement for this split.');
+      }
+
+      // 3. Determine next proposal nonce for this proposer on this milestone
+      const userProposals = proposals.filter(
+        (p) => p.proposerWallet.toLowerCase() === address.toLowerCase()
+      );
+      let nextNonce = 1n;
+      if (userProposals.length > 0) {
+        const maxNonce = userProposals.reduce(
+          (max, p) => (BigInt(p.proposalNonce) > max ? BigInt(p.proposalNonce) : max),
+          0n
+        );
+        nextNonce = maxNonce + 1n;
+      }
+
+      // Check on-chain nonce state to guarantee it has not been used or cancelled
+      let isNonceUsed = true;
+      while (isNonceUsed) {
+        try {
+          isNonceUsed = (await sepoliaPublicClient.readContract({
+            address: dealData.dealAddress as `0x${string}`,
+            abi: synqDealV1ABI,
+            functionName: 'usedProposalNonces',
+            args: [BigInt(currentIndex), address as `0x${string}`, nextNonce],
+          })) as boolean;
+
+          if (isNonceUsed) {
+            nextNonce += 1n;
+          }
+        } catch {
+          break;
+        }
+      }
+
+      // 4. Prepare EIP-712 Typed Data
+      const proposalPayload: MutualSettlementProposalData = {
+        dealAddress: dealData.dealAddress.toLowerCase() as `0x${string}`,
+        chainId: BigInt(SEPOLIA_CHAIN_ID),
+        milestoneId: BigInt(currentIndex),
+        proposer: address.toLowerCase() as `0x${string}`,
+        freelancerAmount: flBaseUnits,
+        clientAmount: clBaseUnits,
+        proposalNonce: nextNonce,
+        validUntil: validUntilSec,
+      };
+
+      const typedData = getMutualSettlementTypedData(proposalPayload);
+
+      // 5. Prompt Wallet EIP-712 Signature
+      const signature = await signTypedDataAsync({
+        domain: typedData.domain,
+        types: typedData.types,
+        primaryType: typedData.primaryType,
+        message: typedData.message,
+      });
+
+      // 6. Submit Proposal to Backend API
+      const token = await getToken();
+      const createRes = await fetch(
+        `/api/deals/${dealData.dealAddress}/milestones/${currentIndex}/settlements`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            freelancerAmount: flBaseUnits.toString(),
+            clientAmount: clBaseUnits.toString(),
+            proposalNonce: nextNonce.toString(),
+            validUntil: validUntilSec.toString(),
+            signature,
+          }),
+        }
+      );
+
+      if (!createRes.ok) {
+        const errorData = await createRes.json().catch(() => ({}));
+        throw new Error(errorData.error || `Proposal submission failed with HTTP ${createRes.status}`);
+      }
+
+      await loadProposals();
+    } catch (err: any) {
+      if (isRejected(err)) {
+        setAgreeToSplitError('Signature request was rejected in your wallet. Agreement offer was not created.');
+      } else {
+        setAgreeToSplitError(err?.message || 'Failed to submit agreement for committee split');
+      }
+    } finally {
+      setAgreeToSplitInProgress(false);
     }
   };
 
@@ -1594,6 +1754,9 @@ export function V2MilestoneDispute({
             setShowExecuteModal(true);
             setExecuteError(null);
           }}
+          onAgreeToCommitteeSplit={handleAgreeToCommitteeSplit}
+          agreeToSplitInProgress={agreeToSplitInProgress}
+          agreeToSplitError={agreeToSplitError}
         />
       )}
 
@@ -2082,10 +2245,11 @@ export function V2MilestoneDispute({
             <div className="rounded-lg border border-amber-500/30 bg-amber-950/20 p-3 space-y-2 text-xs">
               <div className="font-semibold text-amber-300">Important Consequences</div>
               <ul className="list-disc pl-4 space-y-1 text-[11px] text-zinc-300 leading-relaxed">
-                <li>This milestone will transition into <strong>Final Review</strong>.</li>
+                <li>Reconsideration is <strong>optional</strong>. If you agree with the proposed resolution, no action is needed—it becomes ready to execute on-chain once the 72-hour window closes.</li>
+                <li>Requesting reconsideration will appeal this proposal and transition the milestone into <strong>Final Review</strong>.</li>
                 <li>The current proposed resolution will <strong>not</strong> execute.</li>
-                <li>The resolution committee must review and submit a final resolution.</li>
-                <li>Direct mutual settlement remains available while in Final Review.</li>
+                <li>The resolution committee will re-examine all evidence and issue a final, binding decision.</li>
+                <li>Requesting reconsideration does not automatically cancel any mutual settlement offer you previously signed. If you no longer agree to that offer, cancel it separately.</li>
               </ul>
             </div>
 
