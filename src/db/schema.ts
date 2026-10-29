@@ -1176,3 +1176,37 @@ export const protectionClaimSignatures = pgTable('protection_claim_signatures', 
 export type ProtectionClaimSignatureRow = typeof protectionClaimSignatures.$inferSelect;
 export type NewProtectionClaimSignatureRow = typeof protectionClaimSignatures.$inferInsert;
 
+/**
+ * 26. HISTORICAL RECONCILIATION AUDITS TABLE
+ * Stores immutable audit records for exceptional historical on-chain attestations
+ * where consensus occurred on-chain but the off-chain draft was overwritten prior
+ * to transactional authorization-bound report locking.
+ */
+export const historicalReconciliationAudits = pgTable('historical_reconciliation_audits', {
+  id: text('id').$defaultFn(() => crypto.randomUUID()).primaryKey(),
+  chainId: integer('chain_id').notNull(),
+  dealAddress: text('deal_address').notNull(),
+  milestoneId: integer('milestone_id').notNull(),
+  phase: text('phase').notNull(),
+  authorizationId: text('authorization_id').notNull().references(() => committeeResolutionAuthorizations.id, { onDelete: 'restrict' }),
+  boundReportId: text('bound_report_id').notNull().references(() => milestoneResolutionReports.id, { onDelete: 'restrict' }),
+  onChainTxHash: text('on_chain_tx_hash').notNull(),
+  onChainJustificationHash: text('on_chain_justification_hash').notNull(),
+  boundReportJustificationHash: text('bound_report_justification_hash').notNull(),
+  recoveredByWallet: text('recovered_by_wallet').notNull(),
+  narrativeAuditStatus: text('narrative_audit_status').default('unrecoverable_offchain_hash_committed').notNull(),
+  notificationStatus: text('notification_status').default('suppressed_historical_sync').notNull(),
+  notificationSuppressionReason: text('notification_suppression_reason').default('historical_synchronization_notification_suppressed').notNull(),
+  recoveredAt: timestamp('recovered_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('uq_hist_recon_auth').on(table.authorizationId),
+  index('idx_hist_recon_deal_ms').on(table.chainId, table.dealAddress, table.milestoneId),
+  check('chk_hist_recon_deal_lower', sql`deal_address = LOWER(deal_address)`),
+  check('chk_hist_recon_tx_lower', sql`on_chain_tx_hash = LOWER(on_chain_tx_hash)`),
+  check('chk_hist_recon_onchain_hash_lower', sql`on_chain_justification_hash = LOWER(on_chain_justification_hash)`),
+  check('chk_hist_recon_report_hash_lower', sql`bound_report_justification_hash = LOWER(bound_report_justification_hash)`),
+  check('chk_hist_recon_recovered_by_lower', sql`recovered_by_wallet = LOWER(recovered_by_wallet)`),
+]);
+
+export type HistoricalReconciliationAuditRow = typeof historicalReconciliationAudits.$inferSelect;
+export type NewHistoricalReconciliationAuditRow = typeof historicalReconciliationAudits.$inferInsert;
