@@ -2441,8 +2441,12 @@ export interface PublicClientLike {
     abi: any;
     functionName: string;
     args?: any[];
+    blockNumber?: bigint;
   }) => Promise<any>;
   getTransactionReceipt?: (params: {
+    hash: `0x${string}`;
+  }) => Promise<any>;
+  getTransaction?: (params: {
     hash: `0x${string}`;
   }) => Promise<any>;
   getLogs?: (params: any) => Promise<any>;

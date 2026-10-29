@@ -183,6 +183,13 @@
       "when": 1791580000000,
       "tag": "0025_protection_claim_decisions",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1791590000000,
+      "tag": "0026_historical_reconciliation_audits",
+      "breakpoints": true
     }
   ]
 }
