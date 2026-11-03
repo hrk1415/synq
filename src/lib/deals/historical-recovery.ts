@@ -371,6 +371,11 @@ export async function verifyHistoricalAuthorizationSignatures(params: {
   // falling back to 2n if RPC historical state is pruned.
   let historicalThreshold = 2n;
   if (client?.readContract && historicalBlockNumber && historicalBlockNumber > 0n) {
+    console.log('[synq-recovery-diag] [rpc:THRESHOLD:start]', {
+      committeeAddress: `${target.committeeAddress.slice(0, 6)}...${target.committeeAddress.slice(-4)}`,
+      historicalBlockNumber: historicalBlockNumber.toString(),
+    });
+    const tThresh0 = Date.now();
     try {
       const rawThreshold = await client.readContract({
         address: target.committeeAddress as `0x${string}`,
@@ -381,9 +386,20 @@ export async function verifyHistoricalAuthorizationSignatures(params: {
       if (rawThreshold) {
         historicalThreshold = BigInt(rawThreshold as any);
       }
-    } catch {
+      console.log('[synq-recovery-diag] [rpc:THRESHOLD:done]', {
+        threshold: historicalThreshold.toString(),
+        fallbackUsed: false,
+        durationMs: Date.now() - tThresh0,
+      });
+    } catch (threshErr: any) {
       // Historical state may be pruned on non-archive RPCs; fallback safely to contract constant 2n
       historicalThreshold = 2n;
+      console.log('[synq-recovery-diag] [rpc:THRESHOLD:done]', {
+        threshold: historicalThreshold.toString(),
+        fallbackUsed: true,
+        errorName: threshErr?.name || 'ThresholdHistoricalReadFallback',
+        durationMs: Date.now() - tThresh0,
+      });
     }
   }
 
@@ -403,6 +419,10 @@ export async function verifyHistoricalAuthorizationSignatures(params: {
   }
 
   // 7. Cryptographically recover and verify distinct signers over the exact EIP-712 digest
+  console.log('[synq-recovery-diag] [crypto:recover_signatures:start]', {
+    signaturesCount: signatures?.length ?? 0,
+  });
+  const tCrypto0 = Date.now();
   const recoveredSigners = new Set<string>();
   const storedSigMap = new Map<string, string>(); // signature.toLowerCase() -> signerWallet.toLowerCase()
 
@@ -417,6 +437,11 @@ export async function verifyHistoricalAuthorizationSignatures(params: {
     });
 
     if (!verified.valid || !verified.recoveredSigner) {
+      console.log('[synq-recovery-diag] [crypto:recover_signatures:failed_signer]', {
+        signer: `${sig.signerWallet.slice(0, 6)}...${sig.signerWallet.slice(-4)}`,
+        errorLabel: 'SIGNER_RECOVERY_FAILED',
+        durationMs: Date.now() - tCrypto0,
+      });
       return {
         valid: false,
         error: `Invalid signature for signer ${sig.signerWallet}: ${verified.error}`,
@@ -427,6 +452,11 @@ export async function verifyHistoricalAuthorizationSignatures(params: {
     recoveredSigners.add(signer);
     storedSigMap.set(sig.signature.toLowerCase(), signer);
   }
+
+  console.log('[synq-recovery-diag] [crypto:recover_signatures:done]', {
+    recoveredCount: recoveredSigners.size,
+    durationMs: Date.now() - tCrypto0,
+  });
 
   if (BigInt(recoveredSigners.size) < historicalThreshold) {
     return {
@@ -514,18 +544,45 @@ export class DrizzleHistoricalRecoveryRepository implements IHistoricalRecoveryD
     const { target, callerWallet, onChainBlockTimestamp, historicalBlockNumber, publicClient, submittedSignatures } = params;
     const db = getDb();
 
-    return await db.transaction(async (tx) => {
+    console.log('[synq-recovery-diag] [db:pool:acquire_start]', {
+      timestamp: new Date().toISOString(),
+      authId: target.authorizationId,
+    });
+    const tDbTx0 = Date.now();
+
+    const txResult = await db.transaction(async (tx) => {
+      const txAcquiredMs = Date.now() - tDbTx0;
+      console.log('[synq-recovery-diag] [db:tx:acquired]', {
+        txAcquisitionMs: txAcquiredMs,
+      });
+
       // 1. Bounded lock timeout to prevent indefinite blocking
+      console.log('[synq-recovery-diag] [db:set_lock_timeout:start]');
+      const tLockTimeout0 = Date.now();
       await tx.execute(sql`SET LOCAL lock_timeout = '5000ms';`);
+      console.log('[synq-recovery-diag] [db:set_lock_timeout:done]', {
+        durationMs: Date.now() - tLockTimeout0,
+      });
 
       // 2. Consistent Row-Lock Ordering: Lock Report row FIRST
+      console.log('[synq-recovery-diag] [db:lock_report:start]', {
+        reportId: target.boundReportId,
+      });
+      const tLockRep0 = Date.now();
       const lockedReports = await tx
         .select()
         .from(milestoneResolutionReports)
         .where(eq(milestoneResolutionReports.id, target.boundReportId))
         .for('update');
+      const lockRepDurationMs = Date.now() - tLockRep0;
 
       const boundReport = lockedReports[0];
+      console.log('[synq-recovery-diag] [db:lock_report:done]', {
+        found: !!boundReport,
+        status: boundReport?.status,
+        durationMs: lockRepDurationMs,
+      });
+
       if (!boundReport) {
         throw new HistoricalRecoveryIntegrityError(
           `Bound report ${target.boundReportId} not found in database`
@@ -551,6 +608,8 @@ export class DrizzleHistoricalRecoveryRepository implements IHistoricalRecoveryD
       }
 
       // Cryptographically verify stored 20/5 canonical report hashes to boundReport.justificationHash
+      console.log('[synq-recovery-diag] [db:verify_report_hash:start]');
+      const tRepHash0 = Date.now();
       try {
         const computedReportHash = hashResolutionReport(
           boundReport.canonicalReport as unknown as CanonicalResolutionReportV1
@@ -560,6 +619,9 @@ export class DrizzleHistoricalRecoveryRepository implements IHistoricalRecoveryD
             `Bound report canonical JSON hash mismatch: stored ${boundReport.justificationHash}, computed ${computedReportHash}`
           );
         }
+        console.log('[synq-recovery-diag] [db:verify_report_hash:done]', {
+          durationMs: Date.now() - tRepHash0,
+        });
       } catch (err: any) {
         if (err instanceof HistoricalRecoveryIntegrityError) throw err;
         throw new HistoricalRecoveryIntegrityError(
@@ -568,13 +630,24 @@ export class DrizzleHistoricalRecoveryRepository implements IHistoricalRecoveryD
       }
 
       // 3. Lock Authorization row SECOND
+      console.log('[synq-recovery-diag] [db:lock_auth:start]', {
+        authId: target.authorizationId,
+      });
+      const tLockAuth0 = Date.now();
       const lockedAuths = await tx
         .select()
         .from(committeeResolutionAuthorizations)
         .where(eq(committeeResolutionAuthorizations.id, target.authorizationId))
         .for('update');
+      const lockAuthDurationMs = Date.now() - tLockAuth0;
 
       const auth = lockedAuths[0];
+      console.log('[synq-recovery-diag] [db:lock_auth:done]', {
+        found: !!auth,
+        status: auth?.status,
+        durationMs: lockAuthDurationMs,
+      });
+
       if (!auth) {
         throw new HistoricalRecoveryIntegrityError(
           `Authorization ${target.authorizationId} not found in database`
@@ -602,6 +675,7 @@ export class DrizzleHistoricalRecoveryRepository implements IHistoricalRecoveryD
 
       // 4. Idempotency and Inconsistent State Handling
       if (auth.status === 'executed') {
+        console.log('[synq-recovery-diag] [db:auth_already_executed:check_audits]');
         if (auth.executionTxHash?.toLowerCase() !== target.executionTxHash.toLowerCase()) {
           throw new HistoricalRecoveryInconsistentStateError(
             `Authorization ${target.authorizationId} is executed with unexpected transaction ${auth.executionTxHash}; expected ${target.executionTxHash}. Manual review required.`
@@ -634,6 +708,12 @@ export class DrizzleHistoricalRecoveryRepository implements IHistoricalRecoveryD
           );
         }
 
+        console.log('[synq-recovery-diag] [db:tx:callback_done]', {
+          isIdempotentNoop: true,
+          existingAuditId: existingAudit.id,
+          callbackDurationMs: Date.now() - tDbTx0,
+        });
+
         return {
           isIdempotentNoop: true,
           authorization: auth,
@@ -662,18 +742,33 @@ export class DrizzleHistoricalRecoveryRepository implements IHistoricalRecoveryD
       }
 
       // 5. Cryptographic Verification of Authorization Signatures
+      console.log('[synq-recovery-diag] [db:select_signatures:start]', {
+        authId: target.authorizationId,
+      });
+      const tSigs0 = Date.now();
       const sigRows: CommitteeResolutionSignatureRow[] = await tx
         .select()
         .from(committeeResolutionSignatures)
         .where(eq(committeeResolutionSignatures.authorizationId, target.authorizationId))
         .orderBy(committeeResolutionSignatures.createdAt);
+      console.log('[synq-recovery-diag] [db:select_signatures:done]', {
+        count: sigRows.length,
+        durationMs: Date.now() - tSigs0,
+      });
 
+      console.log('[synq-recovery-diag] [db:verify_signatures:start]');
+      const tSigVerify0 = Date.now();
       const sigCheck = await verifyHistoricalAuthorizationSignatures({
         auth,
         signatures: sigRows,
         client: publicClient,
         historicalBlockNumber,
         submittedSignatures,
+      });
+      console.log('[synq-recovery-diag] [db:verify_signatures:done]', {
+        valid: sigCheck.valid,
+        recoveredCount: sigCheck.recoveredSigners?.length,
+        durationMs: Date.now() - tSigVerify0,
       });
 
       if (!sigCheck.valid) {
@@ -683,6 +778,11 @@ export class DrizzleHistoricalRecoveryRepository implements IHistoricalRecoveryD
       }
 
       // 6. Update Authorization to executed (WITHOUT modifying bound report row)
+      console.log('[synq-recovery-diag] [db:update_auth:start]', {
+        authId: target.authorizationId,
+        newStatus: 'executed',
+      });
+      const tUpd0 = Date.now();
       const now = new Date();
       const [updatedAuth] = await tx
         .update(committeeResolutionAuthorizations)
@@ -695,8 +795,16 @@ export class DrizzleHistoricalRecoveryRepository implements IHistoricalRecoveryD
         })
         .where(eq(committeeResolutionAuthorizations.id, target.authorizationId))
         .returning();
+      console.log('[synq-recovery-diag] [db:update_auth:done]', {
+        updatedId: updatedAuth?.id,
+        durationMs: Date.now() - tUpd0,
+      });
 
       // 7. Insert immutable audit record with explicit notification suppression
+      console.log('[synq-recovery-diag] [db:insert_audit:start]', {
+        authId: target.authorizationId,
+      });
+      const tIns0 = Date.now();
       const [auditRecord] = await tx
         .insert(historicalReconciliationAudits)
         .values({
@@ -716,6 +824,15 @@ export class DrizzleHistoricalRecoveryRepository implements IHistoricalRecoveryD
           recoveredAt: now,
         })
         .returning();
+      console.log('[synq-recovery-diag] [db:insert_audit:done]', {
+        auditId: auditRecord?.id,
+        durationMs: Date.now() - tIns0,
+      });
+
+      console.log('[synq-recovery-diag] [db:tx:callback_done]', {
+        isIdempotentNoop: false,
+        callbackDurationMs: Date.now() - tDbTx0,
+      });
 
       return {
         isIdempotentNoop: false,
@@ -724,6 +841,13 @@ export class DrizzleHistoricalRecoveryRepository implements IHistoricalRecoveryD
         auditRecord,
       };
     });
+
+    console.log('[synq-recovery-diag] [db:tx:committed]', {
+      isIdempotentNoop: txResult.isIdempotentNoop,
+      totalCommittedDurationMs: Date.now() - tDbTx0,
+    });
+
+    return txResult;
   }
 }
 
@@ -741,6 +865,15 @@ export async function executeHistoricalAuthorizationRecovery(params: {
   dbRepo?: IHistoricalRecoveryDbRepository;
   adminOverrideForTest?: boolean;
 }): Promise<HistoricalRecoveryResult> {
+  const tServiceStart = Date.now();
+  console.log('[synq-recovery-diag] [service:entry]', {
+    timestamp: new Date().toISOString(),
+    dealAddress: `${params.dealAddress.slice(0, 6)}...${params.dealAddress.slice(-4)}`,
+    milestoneId: params.milestoneId,
+    authId: params.authorizationId,
+    callerWallet: `${params.callerWallet.slice(0, 6)}...${params.callerWallet.slice(-4)}`,
+  });
+
   const target = HISTORICAL_RECOVERY_TARGET;
 
   // 1. Strict Target Allowlisting
@@ -765,11 +898,23 @@ export async function executeHistoricalAuthorizationRecovery(params: {
     );
   }
 
+  console.log('[synq-recovery-diag] [service:target_checks_passed]', {
+    durationMs: Date.now() - tServiceStart,
+  });
+
   // 2. Exceptional Administrative Authorization Check
+  console.log('[synq-recovery-diag] [service:admin_check:start]', {
+    callerWallet: `${params.callerWallet.slice(0, 6)}...${params.callerWallet.slice(-4)}`,
+  });
+  const tAdmin0 = Date.now();
   const client = params.publicClient ?? sepoliaPublicClient;
   const isAuthorizedAdmin =
     params.adminOverrideForTest ||
     (await isAuthorizedAdminForHistoricalRecovery(params.callerWallet));
+  console.log('[synq-recovery-diag] [service:admin_check:done]', {
+    isAuthorizedAdmin,
+    durationMs: Date.now() - tAdmin0,
+  });
 
   if (!isAuthorizedAdmin) {
     throw new HistoricalRecoveryAdminError(
@@ -780,7 +925,13 @@ export async function executeHistoricalAuthorizationRecovery(params: {
   // 3. Live On-Chain Pre-Flight Assertions
   // A. Chain ID & Transaction Receipt Verification
   if ((client as any).getChainId) {
+    console.log('[synq-recovery-diag] [rpc:getChainId:start]');
+    const tRpc1 = Date.now();
     const chainId = await (client as any).getChainId();
+    console.log('[synq-recovery-diag] [rpc:getChainId:done]', {
+      chainId: Number(chainId),
+      durationMs: Date.now() - tRpc1,
+    });
     if (Number(chainId) !== target.chainId) {
       throw new HistoricalRecoveryOnChainError(
         `Connected RPC client chainId (${chainId}) does not match expected target chainId ${target.chainId} (Sepolia)`
@@ -794,12 +945,24 @@ export async function executeHistoricalAuthorizationRecovery(params: {
       'Client does not implement getTransaction for calldata verification'
     );
   }
+  console.log('[synq-recovery-diag] [rpc:getTransaction:start]', {
+    txHash: `${target.executionTxHash.slice(0, 10)}...${target.executionTxHash.slice(-8)}`,
+  });
+  const tRpc2 = Date.now();
   let tx: any;
   try {
     tx = await client.getTransaction({
       hash: target.executionTxHash as `0x${string}`,
     });
+    console.log('[synq-recovery-diag] [rpc:getTransaction:done]', {
+      found: !!tx,
+      durationMs: Date.now() - tRpc2,
+    });
   } catch (err: any) {
+    console.error('[synq-recovery-diag] [rpc:getTransaction:failed]', {
+      errorName: err?.name || 'RpcGetTransactionError',
+      durationMs: Date.now() - tRpc2,
+    });
     throw new HistoricalRecoveryOnChainError(
       `Transaction calldata unavailable for ${target.executionTxHash}: ${err?.message || err}`
     );
@@ -810,9 +973,16 @@ export async function executeHistoricalAuthorizationRecovery(params: {
     );
   }
 
+  console.log('[synq-recovery-diag] [service:calldata_verify:start]');
+  const tCalldata0 = Date.now();
   const calldataCheck = verifyCommitteeResolutionProposalCalldata({
     transaction: tx,
     target,
+  });
+  console.log('[synq-recovery-diag] [service:calldata_verify:done]', {
+    valid: calldataCheck.valid,
+    errorLabel: calldataCheck.valid ? undefined : 'CALLDATA_MISMATCH',
+    durationMs: Date.now() - tCalldata0,
   });
   if (!calldataCheck.valid || !calldataCheck.decoded) {
     throw new HistoricalRecoveryOnChainError(
@@ -826,8 +996,18 @@ export async function executeHistoricalAuthorizationRecovery(params: {
       'Client does not implement getTransactionReceipt for pre-flight verification'
     );
   }
+  console.log('[synq-recovery-diag] [rpc:getTransactionReceipt:start]', {
+    txHash: `${target.executionTxHash.slice(0, 10)}...${target.executionTxHash.slice(-8)}`,
+  });
+  const tRpc3 = Date.now();
   const receipt = await client.getTransactionReceipt({
     hash: target.executionTxHash as `0x${string}`,
+  });
+  console.log('[synq-recovery-diag] [rpc:getTransactionReceipt:done]', {
+    found: !!receipt,
+    status: receipt?.status,
+    blockNumber: receipt?.blockNumber ? String(receipt.blockNumber) : undefined,
+    durationMs: Date.now() - tRpc3,
   });
 
   if (!receipt) {
@@ -847,6 +1027,8 @@ export async function executeHistoricalAuthorizationRecovery(params: {
   }
 
   // B. Verify both committee and deal event logs using production dual-event verifier
+  console.log('[synq-recovery-diag] [service:receipt_verify:start]');
+  const tReceipt0 = Date.now();
   const receiptCheck = verifyCommitteeResolutionProposalReceipt({
     receipt: receipt as any,
     committeeAddress: target.committeeAddress,
@@ -856,6 +1038,11 @@ export async function executeHistoricalAuthorizationRecovery(params: {
     expectedClientAmount: BigInt(target.clientAmount),
     expectedJustificationHash: target.justificationHash,
     expectedNonce: BigInt(target.resolutionNonce),
+  });
+  console.log('[synq-recovery-diag] [service:receipt_verify:done]', {
+    valid: receiptCheck.valid,
+    errorLabel: receiptCheck.valid ? undefined : 'RECEIPT_EVENT_MISMATCH',
+    durationMs: Date.now() - tReceipt0,
   });
 
   if (!receiptCheck.valid) {
@@ -879,6 +1066,11 @@ export async function executeHistoricalAuthorizationRecovery(params: {
   }
 
   // C. Verify On-Chain Proposal State & Account for Post-Proposal Progression
+  console.log('[synq-recovery-diag] [rpc:readContract:resolutionProposals:start]', {
+    dealAddress: `${target.dealAddress.slice(0, 6)}...${target.dealAddress.slice(-4)}`,
+    milestoneId: target.milestoneId,
+  });
+  const tRpc4 = Date.now();
   const onChainProposal = (await client.readContract({
     address: target.dealAddress as `0x${string}`,
     abi: synqDealV1ABI,
@@ -892,6 +1084,13 @@ export async function executeHistoricalAuthorizationRecovery(params: {
     reconsiderationDeadline: bigint,
     resolver: `0x${string}`,
   ];
+  console.log('[synq-recovery-diag] [rpc:readContract:resolutionProposals:done]', {
+    freelancerAmount: String(onChainProposal[0]),
+    clientAmount: String(onChainProposal[1]),
+    justificationHash: `${onChainProposal[2].slice(0, 10)}...${onChainProposal[2].slice(-8)}`,
+    resolver: `${onChainProposal[5].slice(0, 6)}...${onChainProposal[5].slice(-4)}`,
+    durationMs: Date.now() - tRpc4,
+  });
 
   const onChainFlAmount = onChainProposal[0];
   const onChainClAmount = onChainProposal[1];
@@ -936,6 +1135,10 @@ export async function executeHistoricalAuthorizationRecovery(params: {
 
   type OnChainMilestone = OnChainMilestoneStruct | OnChainMilestoneTuple;
 
+  console.log('[synq-recovery-diag] [rpc:readContract:getMilestone:start]', {
+    milestoneId: target.milestoneId,
+  });
+  const tRpc5 = Date.now();
   const onChainMilestone = (await client.readContract({
     address: target.dealAddress as `0x${string}`,
     abi: synqDealV1ABI,
@@ -950,6 +1153,11 @@ export async function executeHistoricalAuthorizationRecovery(params: {
       ? Number(onChainMilestone.status)
       : Number((onChainMilestone as OnChainMilestoneTuple)[4]);
 
+  console.log('[synq-recovery-diag] [rpc:readContract:getMilestone:done]', {
+    milestoneStatus,
+    durationMs: Date.now() - tRpc5,
+  });
+
   // Milestone must have at least reached ResolutionProposed (5) or progressed further (SettledSplit = 9, FinalReview = 6)
   if (
     Number.isNaN(milestoneStatus) ||
@@ -963,6 +1171,10 @@ export async function executeHistoricalAuthorizationRecovery(params: {
   }
 
   // E. Verify On-Chain Nonce Permanence
+  console.log('[synq-recovery-diag] [rpc:isNonceUsedOnChain:start]', {
+    nonce: target.resolutionNonce,
+  });
+  const tRpc6 = Date.now();
   const isNonceUsed = await isNonceUsedOnChain({
     committeeAddress: target.committeeAddress,
     dealAddress: target.dealAddress,
@@ -970,6 +1182,10 @@ export async function executeHistoricalAuthorizationRecovery(params: {
     phase: target.phase,
     nonce: BigInt(target.resolutionNonce),
     publicClient: client,
+  });
+  console.log('[synq-recovery-diag] [rpc:isNonceUsedOnChain:done]', {
+    isNonceUsed,
+    durationMs: Date.now() - tRpc6,
   });
 
   if (!isNonceUsed) {
@@ -979,6 +1195,7 @@ export async function executeHistoricalAuthorizationRecovery(params: {
   }
 
   // 4. Atomic Database Execution
+  console.log('[synq-recovery-diag] [service:db_dispatch:start]');
   const dbRepo = params.dbRepo ?? new DrizzleHistoricalRecoveryRepository();
   const blockTimestamp = new Date(); // If receipt has blockNumber/timestamp, use it; fallback to current time
 
@@ -989,6 +1206,13 @@ export async function executeHistoricalAuthorizationRecovery(params: {
     historicalBlockNumber,
     publicClient: client,
     submittedSignatures: calldataCheck.decoded.submittedSignatures,
+  });
+
+  const totalServiceDurationMs = Date.now() - tServiceStart;
+  console.log('[synq-recovery-diag] [service:done]', {
+    isIdempotentNoop: txResult.isIdempotentNoop,
+    onChainMilestoneStatus: milestoneStatus,
+    totalServiceDurationMs,
   });
 
   return {
